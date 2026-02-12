@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
+import { useLocation, useNavigate, Link } from 'react-router-dom'
+import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore'
 import { db } from '../firebase/config'
 
 const PROPERTY_TYPES = ['Single Family', 'Condo', 'Townhome', '2-4 Unit']
@@ -25,8 +26,37 @@ const initialFormData = {
 }
 
 function ScenarioCreator() {
-  const [formData, setFormData] = useState(initialFormData)
-  const [showBorrower2, setShowBorrower2] = useState(false)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const editScenario = location.state?.editScenario || null
+  const isEditing = !!editScenario
+
+  const [formData, setFormData] = useState(() => {
+    if (editScenario) {
+      return {
+        borrower1FirstName: editScenario.borrower1FirstName || '',
+        borrower1LastName: editScenario.borrower1LastName || '',
+        borrower2FirstName: editScenario.borrower2FirstName || '',
+        borrower2LastName: editScenario.borrower2LastName || '',
+        loanAmount: editScenario.loanAmount?.toString() || '',
+        propertyValue: editScenario.propertyValue?.toString() || '',
+        street: editScenario.street || '',
+        city: editScenario.city || '',
+        state: editScenario.state || '',
+        zip: editScenario.zip || '',
+        propertyType: editScenario.propertyType || '',
+        occupancy: editScenario.occupancy || '',
+        creditScore: editScenario.creditScore?.toString() || '',
+        monthlyIncome: editScenario.monthlyIncome?.toString() || '',
+        monthlyDebts: editScenario.monthlyDebts?.toString() || '',
+        loanPurpose: editScenario.loanPurpose || 'Purchase',
+      }
+    }
+    return initialFormData
+  })
+  const [showBorrower2, setShowBorrower2] = useState(
+    !!(editScenario?.borrower2FirstName || editScenario?.borrower2LastName)
+  )
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null) // { type: 'success' | 'error', text: string }
 
@@ -48,7 +78,7 @@ function ScenarioCreator() {
     setSaving(true)
     setMessage(null)
 
-    const scenario = {
+    const scenarioData = {
       ...formData,
       ltv: parseFloat(ltv),
       dti: parseFloat(dti),
@@ -57,16 +87,27 @@ function ScenarioCreator() {
       monthlyIncome,
       monthlyDebts,
       creditScore: parseInt(formData.creditScore) || 0,
-      status: 'draft',
-      createdAt: serverTimestamp(),
     }
 
     try {
-      const docRef = await addDoc(collection(db, 'scenarios'), scenario)
-      console.log('Scenario saved with ID:', docRef.id)
-      setMessage({ type: 'success', text: `Scenario saved successfully! (ID: ${docRef.id})` })
-      setFormData(initialFormData)
-      setShowBorrower2(false)
+      if (isEditing) {
+        const { id, createdAt, ...existing } = editScenario
+        await updateDoc(doc(db, 'scenarios', editScenario.id), {
+          ...scenarioData,
+          updatedAt: serverTimestamp(),
+        })
+        navigate(`/scenario/${editScenario.id}`)
+      } else {
+        const docRef = await addDoc(collection(db, 'scenarios'), {
+          ...scenarioData,
+          status: 'draft',
+          createdAt: serverTimestamp(),
+        })
+        console.log('Scenario saved with ID:', docRef.id)
+        setMessage({ type: 'success', text: `Scenario saved successfully! (ID: ${docRef.id})` })
+        setFormData(initialFormData)
+        setShowBorrower2(false)
+      }
     } catch (error) {
       console.error('Error saving scenario:', error)
       setMessage({ type: 'error', text: `Failed to save scenario: ${error.message}` })
@@ -80,8 +121,20 @@ function ScenarioCreator() {
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Page Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Scenario Creator</h1>
-          <p className="text-gray-500 mt-1">Build a complete loan scenario for your borrower.</p>
+          {isEditing && (
+            <Link
+              to={`/scenario/${editScenario.id}`}
+              className="text-blue-600 hover:text-blue-800 font-medium text-sm inline-flex items-center gap-1 mb-3"
+            >
+              &larr; Back to Scenario
+            </Link>
+          )}
+          <h1 className="text-3xl font-bold text-gray-900">
+            {isEditing ? 'Edit Scenario' : 'Scenario Creator'}
+          </h1>
+          <p className="text-gray-500 mt-1">
+            {isEditing ? 'Update the loan scenario details below.' : 'Build a complete loan scenario for your borrower.'}
+          </p>
         </div>
 
         {/* Success / Error Message */}
@@ -205,7 +258,7 @@ function ScenarioCreator() {
               disabled={saving}
               className="w-full sm:w-auto bg-blue-700 hover:bg-blue-600 disabled:bg-blue-400 disabled:cursor-not-allowed text-white font-bold px-10 py-3 rounded-lg transition-colors text-lg shadow-md hover:shadow-lg"
             >
-              {saving ? 'Saving...' : 'Save Scenario'}
+              {saving ? 'Saving...' : isEditing ? 'Update Scenario' : 'Save Scenario'}
             </button>
           </div>
         </form>
