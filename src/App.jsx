@@ -1,3 +1,4 @@
+import DebtConsolidation from './pages/DebtConsolidation'
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
@@ -20,7 +21,8 @@ function App() {
           <Route path="/scenario/:id" element={<ScenarioDetail />} />
           <Route path="/rate-buydown" element={<RateBuydownCalculator />} />
           <Route path="/mi-optimizer" element={<MIOptimizer />} />
-          <Route path="/fha-streamline" element={<FHAStreamline />} />
+          <Route path="/fha-streamline" element={<FHAStreamline />} /> 
+	  <Route path="/debt-consolidation" element={<DebtConsolidation />} />
         </Routes>
         <Footer />
       </div>
