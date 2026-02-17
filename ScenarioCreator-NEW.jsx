@@ -3,47 +3,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { collection, addDoc, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
-const LoanTypeSection = ({ loanType, setLoanType, conventionalInvestor, setConventionalInvestor, loanPurpose, setLoanPurpose }) => (
-  <div className="bg-white rounded-xl border border-gray-200 p-5 mt-4">
-    <h3 className="font-bold text-gray-800 mb-4">Loan Program Details</h3>
-    <div className="grid grid-cols-2 gap-4">
-      <div>
-        <label className="block text-xs text-gray-500 mb-1">Loan Purpose *</label>
-        <select value={loanPurpose} onChange={e=>setLoanPurpose(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-          <option value="">Select Purpose</option>
-          <option value="PURCHASE">Purchase</option>
-          <option value="REFINANCE">Rate/Term Refinance</option>
-          <option value="CASH_OUT">Cash-Out Refinance</option>
-          <option value="STREAMLINE">Streamline Refinance</option>
-        </select>
-      </div>
-      <div>
-        <label className="block text-xs text-gray-500 mb-1">Loan Type *</label>
-        <select value={loanType} onChange={e=>{setLoanType(e.target.value);setConventionalInvestor('');}} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-          <option value="">Select Type</option>
-          <option value="FHA">FHA</option>
-          <option value="VA">VA</option>
-          <option value="CONVENTIONAL">Conventional</option>
-          <option value="USDA">USDA</option>
-          <option value="JUMBO">Jumbo</option>
-          <option value="NON_QM">Non-QM</option>
-          <option value="OTHER">Other</option>
-        </select>
-      </div>
-      {loanType==='CONVENTIONAL'&&<div>
-        <label className="block text-xs text-gray-500 mb-1">Conventional Investor * <span className="ml-1 text-red-500">(Required)</span></label>
-        <select value={conventionalInvestor} onChange={e=>setConventionalInvestor(e.target.value)} className="w-full border border-red-300 rounded-lg px-3 py-2 text-sm">
-          <option value="">Select Investor</option>
-          <option value="FANNIE">Fannie Mae</option>
-          <option value="FREDDIE">Freddie Mac</option>
-        </select>
-      </div>}
-      {loanType==='FHA'&&loanPurpose==='STREAMLINE'&&<div className="col-span-2 mt-2 bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center justify-between"><div><div className="font-semibold text-blue-800 text-sm">FHA Streamline Detected</div><div className="text-xs text-blue-600 mt-0.5">Use FHA Streamline Intelligence for full eligibility</div></div><a href="/fha-streamline" className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-2 rounded-lg">Open Module</a></div>}
-      {loanType==='VA'&&loanPurpose==='STREAMLINE'&&<div className="col-span-2 mt-2 bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between"><div><div className="font-semibold text-red-800 text-sm">VA IRRRL Detected</div><div className="text-xs text-red-600 mt-0.5">Use VA IRRRL Intelligence for seasoning, NTB & recoupment</div></div><span className="bg-red-200 text-red-700 text-xs font-bold px-3 py-2 rounded-lg">Coming Soon</span></div>}
-    </div>
-  </div>
-);
-
 function ScenarioCreator() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -69,8 +28,6 @@ function ScenarioCreator() {
   const [monthlyDebts, setMonthlyDebts] = useState('');
   const [dtiRatio, setDtiRatio] = useState('');
   const [loanPurpose, setLoanPurpose] = useState('Purchase');
-const [loanType, setLoanType] = useState('');
-const [conventionalInvestor, setConventionalInvestor] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -481,10 +438,29 @@ const [conventionalInvestor, setConventionalInvestor] = useState('');
               <span>🎯</span>
               Loan Purpose
             </h2>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  value="Purchase"
+                  checked={loanPurpose === 'Purchase'}
+                  onChange={(e) => setLoanPurpose(e.target.value)}
+                  className="w-4 h-4"
+                />
+                <span>Purchase</span>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  value="Refinance"
+                  checked={loanPurpose === 'Refinance'}
+                  onChange={(e) => setLoanPurpose(e.target.value)}
+                  className="w-4 h-4"
+                />
+                <span>Refinance</span>
+              </label>
             </div>
-
-<LoanTypeSection loanType={loanType} setLoanType={setLoanType} conventionalInvestor={conventionalInvestor} setConventionalInvestor={setConventionalInvestor} loanPurpose={loanPurpose} setLoanPurpose={setLoanPurpose} />
-       
+          </div>
 
           <div className="flex gap-4">
             <button
@@ -503,7 +479,6 @@ const [conventionalInvestor, setConventionalInvestor] = useState('');
             </button>
           </div>
 
-        
         </form>
 
       </div>

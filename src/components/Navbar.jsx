@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router-dom';
+import BeaconLogo from './BeaconLogo';
 
 function Navbar() {
   return (
@@ -6,8 +7,13 @@ function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <Link to="/" className="flex items-center gap-2">
-            <span className="text-2xl">🏠</span>
-            <span className="text-xl font-bold tracking-tight">LoanBeacons</span>
+            <BeaconLogo size={32} />
+            <div>
+              <span className="text-2xl font-bold tracking-tight">LoanBeacons</span>
+              <div className="text-yellow-400 text-[9px] font-semibold tracking-wider uppercase">
+                Patent Pending
+              </div>
+            </div>
           </Link>
           <div className="hidden md:flex items-center gap-8">
             <Link to="/" className="hover:text-blue-300 transition-colors font-medium">Home</Link>
@@ -21,7 +27,7 @@ function Navbar() {
         </div>
       </div>
     </nav>
-  )
+  );
 }
 
-export default Navbar
+export default Navbar;

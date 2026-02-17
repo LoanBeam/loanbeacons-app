@@ -5,9 +5,7 @@ import Dashboard from './components/Dashboard'
 import ScenarioCreator from './pages/ScenarioCreator'
 import ScenarioList from './pages/ScenarioList'
 import ScenarioDetail from './pages/ScenarioDetail'
-import RateBuydownCalculator from './pages/RateBuydownCalculator'
-import MIOptimizer from './pages/MIOptimizer'
-import FHAStreamline from './pages/FHAStreamline'
+
 function App() {
   return (
     <Router>
@@ -18,13 +16,11 @@ function App() {
           <Route path="/scenario-creator" element={<ScenarioCreator />} />
           <Route path="/scenarios" element={<ScenarioList />} />
           <Route path="/scenario/:id" element={<ScenarioDetail />} />
-          <Route path="/rate-buydown" element={<RateBuydownCalculator />} />
-          <Route path="/mi-optimizer" element={<MIOptimizer />} />
-          <Route path="/fha-streamline" element={<FHAStreamline />} />
         </Routes>
         <Footer />
       </div>
     </Router>
   )
 }
+
 export default App

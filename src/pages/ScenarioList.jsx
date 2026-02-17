@@ -11,7 +11,7 @@ function ScenarioList() {
   useEffect(() => {
     async function fetchScenarios() {
       try {
-        const q = query(collection(db, 'scenarios'), orderBy('createdAt', 'desc'))
+        const q = query(collection(db, 'scenarios'))
         const snapshot = await getDocs(q)
         const docs = snapshot.docs.map(doc => ({
           id: doc.id,
