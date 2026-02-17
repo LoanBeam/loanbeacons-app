@@ -18,7 +18,7 @@ const modules = {
       icon: '💳',
       description: 'Clean duplicate debts, apply student loan payment rules, and calculate accurate qualifying DTI.',
       badge: 'NEW',
-      status: 'planned',
+      status: 'live',
       path: '/debt-consolidation',
       color: 'blue',
     },
