@@ -60,8 +60,8 @@ const modules = {
       icon: '🎯',
       description: 'Match your scenario to the best lender based on guidelines and pricing.',
       badge: null,
-      status: 'planned',
-      path: null,
+      status: 'live',
+      path: '/lender-match',
       color: 'blue',
     },
     {
