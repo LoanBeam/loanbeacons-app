@@ -9,7 +9,7 @@ const modules = {
       description: 'Build your loan scenario. All data flows to every module automatically.',
       badge: null,
       status: 'live',
-      path: '/scenarios/new',
+      path: '/scenario-creator',
       color: 'blue',
     },
     {
@@ -52,17 +52,7 @@ const modules = {
       path: null,
       color: 'green',
     },
-    {
-      id: 'debt-consolidation',
-      title: 'Debt Consolidation Intelligence™',
-      icon: '💳',
-      description: 'Clean duplicate debts, apply student loan payment rules, and calculate accurate qualifying DTI.',
-      badge: 'NEW',
-      status: 'planned',
-      path: '/debt-consolidation',
-      color: 'blue',
-    },
-  ],
+     ],
   stage2: [
     {
       id: 'lender-match',
