@@ -51,7 +51,7 @@ function ScenarioDetail() {
           <div className="inline-block w-8 h-8 border-4 border-blue-200 border-t-blue-700 rounded-full animate-spin"></div>
           <p className="text-gray-500 mt-4">Loading scenario...</p>
         </div>
-      </main>
+     </main>
     )
   }
 
@@ -258,6 +258,16 @@ function ScenarioDetail() {
               </p>
             </div>
           </Section>
+        </div>
+      </div>
+<div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-6 mx-4 sm:mx-6 lg:mx-8">
+        <h2 className="text-lg font-bold text-gray-900 mb-1">🧭 What's Next?</h2>
+        <p className="text-sm text-gray-500 mb-4">Continue the Canonical Sequence with this scenario pre-loaded.</p>
+        <div className="flex flex-wrap gap-3">
+          <a href={`/lender-match?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">🎯 Lender Match™</a>
+          <a href={`/rate-buydown?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">📉 Rate Buydown™</a>
+          <a href={`/mi-optimizer?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">🛡️ MI Optimizer™</a>
+          <a href={`/debt-consolidation?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-800 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">💳 Debt Consolidation™</a>
         </div>
       </div>
     </main>
