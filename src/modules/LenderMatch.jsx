@@ -24,11 +24,10 @@
  * amber accents, structured data density, no generic aesthetics.
  * ============================================================
  */
-
+import { useSearchParams } from 'react-router-dom'
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { db } from "../firebase/config";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-
+import { collection, addDoc, serverTimestamp, doc, getDoc } from "firebase/firestore";
 import {
   runLenderMatch,
   buildDecisionRecord,
@@ -1085,6 +1084,29 @@ export default function LenderMatch() {
   const [savingRecord, setSavingRecord]     = useState(false);
 
   const resultsRef = useRef(null);
+const [searchParams] = useSearchParams()
+useEffect(() => {
+  const scenarioId = searchParams.get('scenarioId')
+  if (!scenarioId) return
+  async function loadScenario() {
+    try {
+      const snap = await getDoc(doc(db, 'scenarios', scenarioId))
+      if (snap.exists()) {
+        const s = snap.data()
+        if (s.loanAmount) set('loanAmount', String(s.loanAmount))
+        if (s.propertyValue) set('propertyValue', String(s.propertyValue))
+        if (s.creditScore) set('creditScore', String(s.creditScore))
+        if (s.state) set('state', s.state)
+        if (s.loanType) set('loanType', s.loanType)
+        if (s.propertyType) set('propertyType', s.propertyType)
+        if (s.occupancy) set('occupancy', s.occupancy)
+        if (s.monthlyIncome) set('monthlyIncome', String(s.monthlyIncome))
+        if (s.monthlyDebts) set('monthlyDebts', String(s.monthlyDebts))
+      }
+    } catch(err) { console.error('Scenario load:', err) }
+  }
+  loadScenario()
+}, [searchParams])
 
   // ── Form field handler ─────────────────────────────────────────────────────
   const set = useCallback((field, value) => {
