@@ -126,6 +126,16 @@ const modules = {
       path: '/mi-optimizer',
       color: 'blue',
     },
+   {
+      id: 'arm-structure',
+      title: 'ARM Structure Intelligence™',
+      icon: '📈',
+      description: 'ARM product comparison, cap simulation, payment shock modeling, and lifecycle projections.',
+      badge: null,
+      status: 'planned',
+      path: null,
+      color: 'orange',
+    },
     {
       id: 'piggyback',
       title: 'Piggyback 2nd Optimizer™',
