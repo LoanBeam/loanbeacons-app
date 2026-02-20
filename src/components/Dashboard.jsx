@@ -80,7 +80,7 @@ const modules = {
       icon: '🚨',
       description: 'Diagnose AUS findings and identify paths to approval.',
       badge: null,
-      status: 'planned',
+      status: 'live',
       path: null,
       color: 'red',
     },
