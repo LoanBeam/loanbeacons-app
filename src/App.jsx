@@ -10,6 +10,7 @@ import ScenarioDetail from './pages/ScenarioDetail'
 import RateBuydownCalculator from './pages/RateBuydownCalculator'
 import MIOptimizer from './pages/MIOptimizer'
 import FHAStreamline from './pages/FHAStreamline'
+import DPAIntelligence from './modules/dpa-intelligence/DPAIntelligence';
 function App() {
   return (
     <Router>
@@ -25,6 +26,7 @@ function App() {
           <Route path="/fha-streamline" element={<FHAStreamline />} /> 
 	  <Route path="/debt-consolidation" element={<DebtConsolidation />} />
           <Route path="/lender-match" element={<LenderMatch />} />
+          <Route path="/dpa-intelligence" element={<DPAIntelligence />} />
         </Routes>
         <Footer />
       </div>

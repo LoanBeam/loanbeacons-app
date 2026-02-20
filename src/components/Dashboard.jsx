@@ -67,11 +67,11 @@ const modules = {
     {
       id: 'dpa-intelligence',
       title: 'DPA Intelligence™',
-      icon: '🏠',
+      icon: '💰',
       description: 'Find eligible down payment assistance programs for your borrower.',
       badge: null,
-      status: 'planned',
-      path: null,
+      status: 'live',
+      path: '/dpa-intelligence',
       color: 'green',
     },
     {

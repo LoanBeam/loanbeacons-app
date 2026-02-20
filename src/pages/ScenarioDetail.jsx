@@ -265,6 +265,7 @@ function ScenarioDetail() {
         <p className="text-sm text-gray-500 mb-4">Continue the Canonical Sequence with this scenario pre-loaded.</p>
         <div className="flex flex-wrap gap-3">
           <a href={`/lender-match?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">🎯 Lender Match™</a>
+          <a href={`/dpa-intelligence?scenarioId=${scenario.id}`} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">💰 DPA Intelligence™</a>
           <a href={`/rate-buydown?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">📉 Rate Buydown™</a>
           <a href={`/arm-structure?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">📈 ARM Structure™</a>
           <a href={`/mi-optimizer?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">🛡️ MI Optimizer™</a>
