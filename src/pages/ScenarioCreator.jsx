@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { collection, addDoc, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
-
+import AddressAutocomplete from '../components/AddressAutocomplete';
+import { lookupCensusTract } from '../utils/censusLookup';
 const LoanTypeSection = ({ loanType, setLoanType, conventionalInvestor, setConventionalInvestor, loanPurpose, setLoanPurpose }) => (
   <div className="bg-white rounded-xl border border-gray-200 p-5 mt-4">
     <h3 className="font-bold text-gray-800 mb-4">Loan Program Details</h3>
@@ -62,6 +63,8 @@ function ScenarioCreator() {
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
   const [zipCode, setZipCode] = useState('');
+  const [unit, setUnit] = useState('');
+  const [censusTract, setCensusTract] = useState(null);
   const [propertyType, setPropertyType] = useState('Single Family');
   const [occupancy, setOccupancy] = useState('Primary Residence');
   const [creditScore, setCreditScore] = useState('');
@@ -78,7 +81,19 @@ const [conventionalInvestor, setConventionalInvestor] = useState('');
       loadScenario();
     }
   }, [id]);
+const handleAddressSelect = async (addressData) => {
+  setStreetAddress(addressData.streetAddress || '');
+  setCity(addressData.city || '');
+  setState(addressData.state || '');
+  setZipCode(addressData.zipCode || '');
+  setUnit(addressData.unit || '');
 
+  // Run census tract lookup automatically
+  if (addressData.streetAddress && addressData.city && addressData.state && addressData.zipCode) {
+    const tractData = await lookupCensusTract(addressData);
+    setCensusTract(tractData);
+  }
+};
   const loadScenario = async () => {
     try {
       const docRef = doc(db, 'scenarios', id);
@@ -327,7 +342,8 @@ const [conventionalInvestor, setConventionalInvestor] = useState('');
               <span>🏠</span>
               Property Information
             </h2>
-            <div className="space-y-4">
+            <AddressAutocomplete value={{ streetAddress, city, state, zipCode, unit }} onAddressSelect={handleAddressSelect} />
+            <div className="space-y-4" style={{display:'none'}}>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Street Address
