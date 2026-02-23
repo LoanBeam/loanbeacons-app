@@ -12,6 +12,8 @@ import MIOptimizer from './pages/MIOptimizer'
 import FHAStreamline from './pages/FHAStreamline'
 import DPAIntelligence from './modules/dpa-intelligence/DPAIntelligence'
 import AUSRescue from './pages/AUSRescue';
+import VAIRRRLIntelligence from './modules/VAIRRRLIntelligence';
+import ARMStructureIntelligence from './modules/ARMStructureIntelligence';
 function App() {
   return (
     <Router>
@@ -29,6 +31,8 @@ function App() {
           <Route path="/lender-match" element={<LenderMatch />} />
           <Route path="/dpa-intelligence" element={<DPAIntelligence />} />
 	  <Route path="/aus-rescue" element={<AUSRescue />} />
+    <Route path="/va-irrrl" element={<VAIRRRLIntelligence />} />
+    <Route path="/arm-structure" element={<ARMStructureIntelligence />} />
         </Routes>
         <Footer />
       </div>
