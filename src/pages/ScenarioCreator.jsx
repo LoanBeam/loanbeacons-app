@@ -4,6 +4,7 @@ import { collection, addDoc, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import AddressAutocomplete from '../components/AddressAutocomplete';
 import { lookupCensusTract } from '../utils/censusLookup';
+import { checkUsdaEligibility } from '../utils/usdaLookup';
 const LoanTypeSection = ({ loanType, setLoanType, conventionalInvestor, setConventionalInvestor, loanPurpose, setLoanPurpose }) => (
   <div className="bg-white rounded-xl border border-gray-200 p-5 mt-4">
     <h3 className="font-bold text-gray-800 mb-4">Loan Program Details</h3>
@@ -65,6 +66,7 @@ function ScenarioCreator() {
   const [zipCode, setZipCode] = useState('');
   const [unit, setUnit] = useState('');
   const [censusTract, setCensusTract] = useState(null);
+  const [usdaEligibility, setUsdaEligibility] = useState(null);
   const [propertyType, setPropertyType] = useState('Single Family');
   const [occupancy, setOccupancy] = useState('Primary Residence');
   const [creditScore, setCreditScore] = useState('');
@@ -90,8 +92,14 @@ const handleAddressSelect = async (addressData) => {
 
   // Run census tract lookup automatically
   if (addressData.streetAddress && addressData.city && addressData.state && addressData.zipCode) {
-    const tractData = await lookupCensusTract(addressData);
-    setCensusTract(tractData);
+    if (addressData.lat && addressData.lng) {
+      const [usda, tract] = await Promise.all([
+        checkUsdaEligibility({ lat: addressData.lat, lng: addressData.lng }),
+        lookupCensusTract({ lat: addressData.lat, lng: addressData.lng })
+      ]);
+      setUsdaEligibility(usda);
+      setCensusTract(tract);
+    }
   }
 };
   const loadScenario = async () => {
@@ -119,6 +127,8 @@ const handleAddressSelect = async (addressData) => {
         setMonthlyDebts(data.monthlyDebts || '');
         setDtiRatio(data.dtiRatio || '');
         setLoanPurpose(data.loanPurpose || 'Purchase');
+        setUnit(data.unit || '');
+        setCensusTract(data.censusTract || null);
       }
     } catch (error) {
       console.error('Error loading scenario:', error);
@@ -346,6 +356,24 @@ const handleAddressSelect = async (addressData) => {
               Property Information
             </h2>
             <AddressAutocomplete value={{ streetAddress, city, state, zipCode, unit }} onAddressSelect={handleAddressSelect} />
+        {censusTract && !censusTract.error && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-3">
+            <p className="text-xs font-semibold text-blue-800 mb-2 uppercase tracking-wide">Property Intelligence</p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-blue-900">
+              <span><strong>Census Tract:</strong> {censusTract.tract}</span>
+              <span><strong>County:</strong> {censusTract.county}</span>
+              <span><strong>Tract ID:</strong> {censusTract.tractId}</span>
+              <span><strong>Block Group:</strong> {censusTract.blockGroup || "n/a"}</span>
+            </div>
+            {usdaEligibility && (
+              <div className="mt-2 pt-2 border-t text-xs font-medium">
+                {usdaEligibility.eligible === true && "USDA Rural - Property appears eligible for USDA financing"}
+                {usdaEligibility.eligible === false && "USDA Ineligible - Property is in an ineligible urban area"}
+                {usdaEligibility.eligible === null && "USDA status could not be determined"}
+              </div>
+            )}
+          </div>
+        )}
             <div className="space-y-4" style={{display:'none'}}>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
