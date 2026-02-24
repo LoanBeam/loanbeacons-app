@@ -174,9 +174,20 @@ function DocItem({d,warn}) {
 export default function VAIRRRLIntelligence() {
   const [sp] = useSearchParams();
   const scenarioId = sp.get("scenarioId");
+  const [mode, setMode] = useState("irrrl"); // "irrrl" | "cashout"
   const [step, setStep] = useState(0);
   const [scenario, setScenario] = useState(null);
   const [saved, setSaved] = useState(false);
+
+  // ── Cash-Out Refi state ──
+  const [co, setCo] = useState({
+    appraisedValue:"", existingBalance:"", cashOutAmount:"",
+    purpose:"", purposeNote:"", firstUse:true,
+    proposedRate:"", newTerm:"360", closingCosts:"",
+    coFfEx:false, coFfReason:"",
+  });
+  const [coStep, setCoStep] = useState(0);
+  const [coSaved, setCoSaved] = useState(false);
 
   const [gates, setGates] = useState({hasVALoan:null,propertyListed:null,priorOccupancy:null,latePayments:""});
   const [sea, setSea] = useState({firstPaymentDate:"",paymentsOnTime:""});
@@ -310,6 +321,48 @@ export default function VAIRRRLIntelligence() {
   })();
   const lifetime=piSavings>0?piSavings*(parseInt(prop.term)||0)-totalDisc:0;
 
+  // ── Rate Sensitivity Table ──
+  const sensitivityRows = [-0.50,-0.25,0,+0.25,+0.50].map(delta => {
+    const r = propRate + delta;
+    const pi = calcPI(loanBal, r, parseInt(prop.term)||360);
+    const sav = curPI - pi;
+    const drop = curRate - r;
+    const passRate = path==="fixed-to-fixed"?drop>=0.5:path==="fixed-to-arm"?drop>=2.0:path==="arm-to-arm"?drop>0:true;
+    const recoup = sav>0&&netFees>0?Math.ceil(netFees/sav):sav>0&&netFees===0?0:Infinity;
+    const passRecoup = isFinite(recoup)?recoup<=36:netFees===0;
+    const ok = passRate&&passRecoup;
+    return {delta, rate:r, pi, sav, drop, passRate, recoup, passRecoup, ok, isCurrent:delta===0};
+  });
+
+  // ── Cash-Out Refi calcs ──
+  const coApprVal = parseFloat(co.appraisedValue)||0;
+  const coExistBal = parseFloat(co.existingBalance)||0;
+  const coCashOut = parseFloat(co.cashOutAmount)||0;
+  const coNewBal = coExistBal + coCashOut;
+  const coLTV = coApprVal>0?(coNewBal/coApprVal)*100:0;
+  const coLTVOK = coLTV<=100;
+  const coEquity = coApprVal - coExistBal;
+  const coRate = parseFloat(co.proposedRate)||0;
+  const coTerm = parseInt(co.newTerm)||360;
+  const coNewPI = calcPI(coNewBal, coRate, coTerm);
+  const coExistPI = calcPI(coExistBal, curRate, parseInt(cur.remainingMonths)||360);
+  const coPaymentIncrease = coNewPI - coExistPI;
+  const coFfPct = co.coFfEx?0:co.firstUse?0.0215:0.033;
+  const coFf = coNewBal*coFfPct;
+  const coClosingCosts = parseFloat(co.closingCosts)||0;
+  const coTotalCosts = coFf + coClosingCosts;
+  const coNetProceeds = coCashOut - coClosingCosts;
+  const CO_STEPS = ["Eligibility","Property & Equity","Loan Details","Funding Fee","Purpose","Results"];
+  const CO_PURPOSES = [
+    {id:"home_improve",label:"Home Improvement / Renovation",icon:"🏠"},
+    {id:"debt_consolidation",label:"Debt Consolidation",icon:"💳"},
+    {id:"education",label:"Education Expenses",icon:"🎓"},
+    {id:"medical",label:"Medical Expenses",icon:"🏥"},
+    {id:"emergency",label:"Emergency Reserve",icon:"🚨"},
+    {id:"investment",label:"Investment / Business",icon:"📈"},
+    {id:"other",label:"Other (describe below)",icon:"📝"},
+  ];
+
   // ── Seasoning ──
   const seaResult=(()=>{
     if(!sea.firstPaymentDate)return null;
@@ -329,6 +382,19 @@ export default function VAIRRRLIntelligence() {
   };
   const gPass=Object.values(gs).every(v=>v==="pass");
   const gFail=Object.values(gs).some(v=>v==="fail");
+
+  const saveCashOut = async() => {
+    if(!scenarioId)return;
+    try{
+      await addDoc(collection(db,"scenarios",scenarioId,"decision_log"),{
+        module:"VA Cash-Out Refi Intelligence",timestamp:serverTimestamp(),
+        coLTV:parseFloat(coLTV.toFixed(2)), coNewBal:parseFloat(coNewBal.toFixed(2)),
+        coCashOut, coFf:parseFloat(coFf.toFixed(2)), coTotalCosts:parseFloat(coTotalCosts.toFixed(2)),
+        coNetProceeds:parseFloat(coNetProceeds.toFixed(2)), coRate, purpose:co.purpose,
+      });
+      setCoSaved(true);
+    }catch(e){console.error(e);}
+  };
 
   const save=async()=>{
     if(!scenarioId)return;
@@ -382,6 +448,19 @@ export default function VAIRRRLIntelligence() {
       </div>
 
       <div className="max-w-4xl mx-auto px-4 py-8 no-print">
+        {/* Mode Selector */}
+        <div className="flex gap-3 mb-6 p-1 bg-slate-800/60 border border-slate-700 rounded-2xl">
+          {[["irrrl","🔄","VA IRRRL","Interest Rate Reduction Refinance"],["cashout","💵","VA Cash-Out Refi","Equity Extraction + Refinance"]].map(([m,icon,label,sub])=>(
+            <button key={m} onClick={()=>{setMode(m);setStep(0);setCoStep(0);}}
+              className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm transition-all text-left ${mode===m?"bg-blue-700 text-white shadow-lg":"text-slate-400 hover:text-slate-200"}`}>
+              <span className="mr-2">{icon}</span>{label}
+              <p className={`text-xs font-normal mt-0.5 ${mode===m?"text-blue-200":"text-slate-500"}`}>{sub}</p>
+            </button>
+          ))}
+        </div>
+
+        {/* ── IRRRL MODE ── */}
+        {mode==="irrrl"&&<>
         <ProgressBar cur={step}/>
 
         {/* ═══ STEP 1 — ELIGIBILITY ══════════════════════════ */}
@@ -1021,7 +1100,322 @@ export default function VAIRRRLIntelligence() {
             </div>
             {!scenarioId&&<p className="text-xs text-slate-500 text-center mb-4">Add ?scenarioId=xxx to the URL to enable Firestore saving.</p>}
             <button onClick={()=>{setStep(0);setSaved(false);}} className="w-full py-2.5 rounded-xl font-semibold text-sm bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700">← Start New IRRRL Analysis</button>
+
+            {/* ── Rate Sensitivity Table ── */}
+            {curRate>0&&propRate>0&&loanBal>0&&(
+              <div className="mt-6 bg-slate-800/60 border border-slate-700 rounded-2xl p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-900/50 border border-indigo-700/50 flex items-center justify-center text-sm">📊</div>
+                  <div>
+                    <h3 className="font-bold text-white text-sm">Rate Sensitivity Analysis</h3>
+                    <p className="text-xs text-slate-400">How NTB changes at ±0.25% rate increments from your proposed rate</p>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-600">
+                        {["Scenario","Rate","Rate Drop","Monthly Savings","Recoupment","NTB"].map(h=>(
+                          <th key={h} className="pb-2 text-left font-semibold text-slate-400 pr-4">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sensitivityRows.map((row,i)=>(
+                        <tr key={i} className={`border-b border-slate-700/50 ${row.isCurrent?"bg-blue-900/20":""}`}>
+                          <td className="py-2 pr-4">
+                            {row.isCurrent?<span className="px-2 py-0.5 rounded bg-blue-800/60 text-blue-300 font-bold">→ Proposed</span>:
+                            <span className={`text-slate-400 ${row.delta<0?"text-green-400/70":"text-red-400/70"}`}>{row.delta>0?"+":""}{row.delta.toFixed(2)}%</span>}
+                          </td>
+                          <td className="py-2 pr-4 font-mono text-white">{row.rate.toFixed(3)}%</td>
+                          <td className="py-2 pr-4 font-mono text-slate-300">{row.drop.toFixed(3)}%</td>
+                          <td className={`py-2 pr-4 font-mono font-bold ${row.sav>0?"text-green-300":"text-red-400"}`}>{row.sav>0?f$(row.sav):"Higher"}</td>
+                          <td className="py-2 pr-4 text-slate-300">
+                            {!isFinite(row.recoup)?"N/A":row.recoup===0?"Instant":`${row.recoup} mo`}
+                          </td>
+                          <td className="py-2">{row.ok?"✅":"❌"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-slate-500 mt-3">Net fees held constant at {f$(netFees)}. Table assumes same loan balance and term. Rate drop thresholds: Fixed→Fixed ≥0.50%, Fixed→ARM ≥2.00%.</p>
+              </div>
+            )}
           </Card>
+        )}
+        </> /* end IRRRL mode */}
+
+        {/* ══════════════════════════════════════════════════════════════════
+            CASH-OUT REFI MODE
+        ══════════════════════════════════════════════════════════════════ */}
+        {mode==="cashout"&&(
+          <div>
+            {/* Cash-Out Progress */}
+            <div className="mb-8">
+              <div className="flex items-start justify-between mb-2">
+                {CO_STEPS.map((s,i)=>(
+                  <div key={i} className="flex flex-col items-center" style={{width:`${100/CO_STEPS.length}%`}}>
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all
+                      ${i<coStep?"bg-green-600 border-green-600 text-white":i===coStep?"bg-blue-900 border-blue-400 text-blue-200":"bg-slate-800 border-slate-600 text-slate-500"}`}>
+                      {i<coStep?"✓":i+1}
+                    </div>
+                    <span className={`text-xs mt-1 text-center leading-tight hidden xl:block ${i===coStep?"text-blue-300 font-semibold":"text-slate-500"}`}>{s}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="relative h-1.5 bg-slate-700 rounded-full">
+                <div className="absolute h-1.5 bg-gradient-to-r from-blue-600 to-blue-400 rounded-full transition-all duration-500" style={{width:`${(coStep/(CO_STEPS.length-1))*100}%`}}/>
+              </div>
+            </div>
+
+            {/* Cash-Out Step 1 — Eligibility */}
+            {coStep===0&&(
+              <Card icon="🚦" title="Step 1 — VA Cash-Out Eligibility" subtitle="VA Type II Cash-Out allows refinancing any loan type (not just VA). Must requalify with full income/credit documentation.">
+                <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl p-4 mb-5">
+                  <p className="text-sm font-bold text-amber-300 mb-1">⚠️ Important: Full Requalification Required</p>
+                  <p className="text-sm text-slate-300">Unlike IRRRL, a VA Cash-Out requires full income documentation, credit underwriting, and a new appraisal. The veteran must qualify at the new payment with current income documentation.</p>
+                </div>
+                <div className="space-y-4 mb-6">
+                  {[
+                    ["Borrower is an eligible veteran, active duty, or surviving spouse","coVet"],
+                    ["Property is the veteran's primary residence","coPrimary"],
+                    ["Borrower has Certificate of Eligibility (COE) or can obtain one","coCOE"],
+                    ["Borrower will requalify with current income documentation","coRequalify"],
+                  ].map(([label,key])=>(
+                    <div key={key} className="flex items-center justify-between bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3">
+                      <p className="text-sm text-slate-300 flex-1 mr-4">{label}</p>
+                      <div className="flex gap-2">
+                        {[true,false].map(v=>(
+                          <button key={String(v)} onClick={()=>setCo(p=>({...p,[key]:v}))}
+                            className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition-all ${co[key]===v?(v?"bg-green-700 border-green-500 text-white":"bg-red-700 border-red-500 text-white"):"border-slate-600 text-slate-400"}`}>
+                            {v?"Yes ✓":"No ✗"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {co.coVet===false||co.coPrimary===false?(
+                  <div className="bg-red-900/30 border border-red-700/50 rounded-xl p-4 mb-4 text-center">
+                    <p className="text-red-300 font-bold">❌ Not eligible for VA Cash-Out Refinance</p>
+                    <p className="text-slate-400 text-sm mt-1">VA Cash-Out requires eligible veteran status and primary residence occupancy.</p>
+                  </div>
+                ):null}
+                <Nav onNext={()=>setCoStep(1)}
+                  label={co.coVet&&co.coPrimary&&co.coCOE&&co.coRequalify?"Eligibility Confirmed — Continue →":"Complete All Fields First"}
+                  disabled={!co.coVet||!co.coPrimary||!co.coCOE||!co.coRequalify}/>
+              </Card>
+            )}
+
+            {/* Cash-Out Step 2 — Property & Equity */}
+            {coStep===1&&(
+              <Card icon="🏡" title="Step 2 — Property & Equity Analysis" subtitle="VA Cash-Out Type II allows up to 100% LTV. Calculate available equity and maximum cash-out.">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+                  {[
+                    ["Appraised Value","appraisedValue","$","Required — schedule appraisal. VA requires licensed appraiser on VA panel."],
+                    ["Existing Loan Balance","existingBalance","$","Payoff amount including per-diem interest. Get 30-day payoff from servicer."],
+                    ["Desired Cash-Out Amount","cashOutAmount","$","Amount of equity to extract. New balance = existing payoff + cash-out amount."],
+                  ].map(([label,key,pfx,tip])=>(
+                    <div key={key}>
+                      <label className="block text-xs font-semibold text-slate-400 mb-1">{label}<Tip text={tip}/></label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">{pfx}</span>
+                        <input type="number" value={co[key]} onChange={e=>setCo(p=>({...p,[key]:e.target.value}))}
+                          className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-7 pr-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-400"/>
+                      </div>
+                    </div>
+                  ))}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">First Use of VA Home Loan?<Tip text="First use gets lower funding fee (2.15%). Subsequent use is 3.30%. Check the COE for prior use."/></label>
+                    <div className="flex gap-2">
+                      {[true,false].map(v=>(
+                        <button key={String(v)} onClick={()=>setCo(p=>({...p,firstUse:v}))}
+                          className={`flex-1 py-2 rounded-xl text-xs font-bold border ${co.firstUse===v?"bg-blue-700 border-blue-500 text-white":"border-slate-600 text-slate-400"}`}>
+                          {v?"First Use (2.15%)":"Subsequent (3.30%)"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* LTV Preview */}
+                {coApprVal>0&&coNewBal>0&&(
+                  <div className={`rounded-xl p-4 border mb-4 ${coLTVOK?"bg-green-900/20 border-green-700/40":"bg-red-900/20 border-red-700/40"}`}>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                      <div><p className="text-xs text-slate-400 mb-1">Appraised Value</p><p className="font-bold text-white font-mono">{f$(coApprVal)}</p></div>
+                      <div><p className="text-xs text-slate-400 mb-1">New Loan Amount</p><p className="font-bold text-white font-mono">{f$(coNewBal)}</p></div>
+                      <div><p className="text-xs text-slate-400 mb-1">Available Equity</p><p className="font-bold text-green-300 font-mono">{f$(coEquity)}</p></div>
+                      <div>
+                        <p className="text-xs text-slate-400 mb-1">New LTV</p>
+                        <p className={`font-bold font-mono text-lg ${coLTVOK?"text-green-300":"text-red-400"}`}>{coLTV.toFixed(1)}%</p>
+                        <p className={`text-xs ${coLTVOK?"text-green-400":"text-red-400"}`}>{coLTVOK?"✅ Within 100%":"❌ Exceeds 100% LTV"}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <Nav onBack={()=>setCoStep(0)} onNext={()=>setCoStep(2)}
+                  label={coApprVal>0&&coExistBal>0&&coCashOut>0&&coLTVOK?"Continue →":"Complete All Fields First"}
+                  disabled={!coApprVal||!coExistBal||!coCashOut||!coLTVOK}/>
+              </Card>
+            )}
+
+            {/* Cash-Out Step 3 — Loan Details */}
+            {coStep===2&&(
+              <Card icon="📊" title="Step 3 — New Loan Details" subtitle="Proposed rate and term for the Cash-Out refinance. Fees calculated separately from IRRRL — full closing costs apply.">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">Proposed Rate<Tip text="New interest rate on the Cash-Out refinance. Quote from lender's rate sheet. VA has no minimum rate requirement for Cash-Out (unlike IRRRL NTB rules)."/></label>
+                    <div className="relative">
+                      <input type="number" step="0.125" value={co.proposedRate} onChange={e=>setCo(p=>({...p,proposedRate:e.target.value}))}
+                        className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 pr-8 py-2.5 text-white text-sm focus:outline-none focus:border-blue-400"/>
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">%</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">New Loan Term</label>
+                    <div className="flex gap-2">
+                      {[["360","30-Year"],["240","20-Year"],["180","15-Year"]].map(([v,l])=>(
+                        <button key={v} onClick={()=>setCo(p=>({...p,newTerm:v}))}
+                          className={`flex-1 py-2 rounded-xl text-xs font-bold border ${co.newTerm===v?"bg-blue-700 border-blue-500 text-white":"border-slate-600 text-slate-400"}`}>{l}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">Total Closing Costs<Tip text="Estimate of all closing costs excluding VA funding fee (calculated in Step 4). Include title, appraisal, origination, recording, etc."/></label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                      <input type="number" value={co.closingCosts} onChange={e=>setCo(p=>({...p,closingCosts:e.target.value}))}
+                        className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-7 pr-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-400"/>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Payment comparison */}
+                {coRate>0&&coNewBal>0&&curRate>0&&(
+                  <div className="bg-slate-800/60 border border-slate-600 rounded-xl p-4 mb-4">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Payment Comparison</p>
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                      <div><p className="text-xs text-slate-400 mb-1">Current P&I</p><p className="font-bold text-white font-mono">{f$(coExistPI)}</p></div>
+                      <div><p className="text-xs text-slate-400 mb-1">New P&I</p><p className="font-bold text-blue-300 font-mono">{f$(coNewPI)}</p></div>
+                      <div>
+                        <p className="text-xs text-slate-400 mb-1">Payment Change</p>
+                        <p className={`font-bold font-mono ${coPaymentIncrease>0?"text-amber-300":"text-green-300"}`}>{coPaymentIncrease>0?"+":""}{f$(coPaymentIncrease)}/mo</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <Nav onBack={()=>setCoStep(1)} onNext={()=>setCoStep(3)}
+                  label={co.proposedRate&&co.closingCosts?"Continue →":"Enter Rate and Closing Costs"}
+                  disabled={!co.proposedRate||!co.closingCosts}/>
+              </Card>
+            )}
+
+            {/* Cash-Out Step 4 — Funding Fee */}
+            {coStep===3&&(
+              <Card icon="💰" title="Step 4 — VA Funding Fee" subtitle="Cash-Out funding fee is 2.15% (first use) or 3.30% (subsequent use). Significantly higher than IRRRL's 0.50%.">
+                <div className={`rounded-xl p-5 border mb-5 ${co.coFfEx?"bg-green-900/20 border-green-700/40":"bg-slate-800/40 border-slate-700"}`}>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-center mb-3">
+                    <div><p className="text-xs text-slate-400 mb-1">New Loan Amount</p><p className="font-bold text-white font-mono">{f$(coNewBal)}</p></div>
+                    <div><p className="text-xs text-slate-400 mb-1">Funding Fee Rate</p><p className="font-bold text-amber-300 font-mono">{co.coFfEx?"EXEMPT":`${(coFfPct*100).toFixed(2)}%`}</p></div>
+                    <div><p className="text-xs text-slate-400 mb-1">Funding Fee Amount</p><p className={`font-bold font-mono ${co.coFfEx?"text-green-300":"text-white"}`}>{co.coFfEx?"$0.00 — EXEMPT":f$(coFf)}</p></div>
+                  </div>
+                  <p className="text-xs text-slate-400 text-center">Can be financed into the loan amount</p>
+                </div>
+
+                <div className="mb-5">
+                  <label className="flex items-center gap-3 cursor-pointer bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+                    <input type="checkbox" checked={co.coFfEx} onChange={e=>setCo(p=>({...p,coFfEx:e.target.checked}))} className="w-4 h-4"/>
+                    <div>
+                      <p className="text-sm font-semibold text-white">Veteran is exempt from funding fee 🎖️</p>
+                      <p className="text-xs text-slate-400 mt-0.5">Exempt if: service-connected disability rating, surviving spouse of veteran who died in service/from service-connected disability, or active duty Purple Heart recipient.</p>
+                    </div>
+                  </label>
+                  {co.coFfEx&&(
+                    <div className="mt-3">
+                      <label className="block text-xs font-semibold text-slate-400 mb-1">Exemption Reason (for file)</label>
+                      <input value={co.coFfReason} onChange={e=>setCo(p=>({...p,coFfReason:e.target.value}))}
+                        placeholder="e.g. 80% service-connected disability per VA letter dated..."
+                        className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-400"/>
+                    </div>
+                  )}
+                </div>
+                <Nav onBack={()=>setCoStep(2)} onNext={()=>setCoStep(4)} label="Funding Fee Set — Continue →"/>
+              </Card>
+            )}
+
+            {/* Cash-Out Step 5 — Purpose */}
+            {coStep===4&&(
+              <Card icon="📋" title="Step 5 — Purpose of Cash-Out" subtitle="Document the veteran's reason for the cash-out. Required for loan file and disclosure. VA does not restrict purpose but lenders and underwriters document it.">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+                  {CO_PURPOSES.map(p=>(
+                    <button key={p.id} onClick={()=>setCo(prev=>({...prev,purpose:p.id}))}
+                      className={`p-4 rounded-xl border text-left transition-all ${co.purpose===p.id?"bg-blue-900/30 border-blue-600":"bg-slate-800/40 border-slate-700 hover:border-slate-500"}`}>
+                      <span className="text-lg mr-2">{p.icon}</span>
+                      <span className={`text-sm font-semibold ${co.purpose===p.id?"text-blue-300":"text-slate-300"}`}>{p.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="mb-5">
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">Additional Notes (optional)</label>
+                  <textarea value={co.purposeNote} onChange={e=>setCo(p=>({...p,purposeNote:e.target.value}))}
+                    placeholder="Describe specific use of funds for loan file documentation..."
+                    rows={3} className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-400 resize-none"/>
+                </div>
+                <Nav onBack={()=>setCoStep(3)} onNext={()=>setCoStep(5)} label={co.purpose?"Purpose Documented — Continue →":"Select Purpose First"} disabled={!co.purpose}/>
+              </Card>
+            )}
+
+            {/* Cash-Out Step 6 — Results */}
+            {coStep===5&&(
+              <Card icon="🏁" title="Step 6 — Cash-Out Refi Results" subtitle="Full summary of your VA Cash-Out refinance. Save to decision log and print for borrower.">
+                <div className="bg-green-900/30 border-2 border-green-600/60 rounded-2xl p-5 text-center mb-6">
+                  <p className="text-4xl mb-2">💵</p>
+                  <p className="text-2xl font-bold text-green-300">VA CASH-OUT REFINANCE</p>
+                  <p className="text-3xl font-extrabold text-white mt-2">{f$(coCashOut)}</p>
+                  <p className="text-slate-400 text-sm mt-1">Gross cash-out amount · Net proceeds after costs: {f$(coNetProceeds)}</p>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+                  {[
+                    ["New Loan Amount",f$(coNewBal),"slate"],
+                    ["New LTV",`${coLTV.toFixed(1)}%`,coLTV<=80?"green":"blue"],
+                    ["Available Equity",f$(coEquity),"green"],
+                    ["New Rate",`${coRate}%`,"blue"],
+                    ["New Monthly P&I",f$(coNewPI),"slate"],
+                    ["Payment Change",`${coPaymentIncrease>0?"+":""}${f$(coPaymentIncrease)}/mo`,coPaymentIncrease>0?"yellow":"green"],
+                    ["VA Funding Fee",co.coFfEx?"EXEMPT 🎖️":f$(coFf),co.coFfEx?"green":"slate"],
+                    ["Closing Costs",f$(coClosingCosts),"slate"],
+                    ["Total Costs",f$(coTotalCosts),"slate"],
+                    ["Gross Cash-Out",f$(coCashOut),"green"],
+                    ["Less: Closing Costs",`− ${f$(coClosingCosts)}`,"yellow"],
+                    ["Net Cash Proceeds",f$(coNetProceeds),coNetProceeds>0?"green":"red"],
+                  ].map(([label,value,color])=>(
+                    <div key={label} className={`rounded-xl p-3 border text-center ${color==="green"?"bg-green-900/20 border-green-800/50":color==="red"?"bg-red-900/20 border-red-800/50":color==="blue"?"bg-blue-900/20 border-blue-800/50":color==="yellow"?"bg-yellow-900/20 border-yellow-800/50":"bg-slate-800/60 border-slate-700"}`}>
+                      <p className="text-xs text-slate-400 mb-1">{label}</p>
+                      <p className={`text-sm font-bold ${color==="green"?"text-green-300":color==="red"?"text-red-300":color==="blue"?"text-blue-300":color==="yellow"?"text-yellow-300":"text-slate-200"}`}>{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Purpose summary */}
+                <div className="bg-slate-800/60 border border-slate-600 rounded-xl p-4 mb-4">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Documented Purpose</p>
+                  <p className="text-sm text-white">{CO_PURPOSES.find(p=>p.id===co.purpose)?.icon} {CO_PURPOSES.find(p=>p.id===co.purpose)?.label}</p>
+                  {co.purposeNote&&<p className="text-sm text-slate-400 mt-1 italic">"{co.purposeNote}"</p>}
+                </div>
+
+                <div className="flex gap-3 mb-4">
+                  <button onClick={saveCashOut} disabled={coSaved||!scenarioId}
+                    className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all ${coSaved?"bg-green-800/50 border border-green-700/50 text-green-400":scenarioId?"bg-slate-700 hover:bg-slate-600 text-white border border-slate-600":"bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700"}`}>
+                    {coSaved?"✅ Saved to Decision Log":scenarioId?"💾 Save to Firestore":"💾 No Scenario Linked"}
+                  </button>
+                  <button onClick={()=>window.print()} className="flex-1 py-3 rounded-xl font-bold text-sm bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/40">🖨️ Print Cash-Out Summary</button>
+                </div>
+                <button onClick={()=>{setCoStep(0);setCoSaved(false);}} className="w-full py-2.5 rounded-xl font-semibold text-sm bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700">← Start New Cash-Out Analysis</button>
+              </Card>
+            )}
+          </div>
         )}
       </div>
 
@@ -1109,8 +1503,38 @@ export default function VAIRRRLIntelligence() {
 
         <div style={{fontSize:"7.5pt",color:"#777",borderTop:"1px solid #ccc",paddingTop:"8px"}}>
           <p><strong>Authority:</strong> VA Circular 26-19-22 (Aug 8, 2019) · 38 U.S.C. § 3709 · VA Lender's Handbook Ch. 8. Generated by LoanBeacons™ for loan officer use — not a commitment to lend. NTB analysis: fixed-to-fixed rate drop ≥0.50%; fixed-to-ARM rate drop ≥2.00%; 36-month fee recoupment (VA funding fee excluded per §3709(a)); zero-fee requirement for same/higher payment IRRRLs per §3709(a)(1)(B); lender credits reduce net fees subject to VA prohibition on cash back to borrower. Verify all figures against official Loan Estimates and Closing Disclosures from your lender.</p>
-          <p style={{marginTop:"4px"}}>Generated: {new Date().toLocaleString()} · LoanBeacons™ VA IRRRL Intelligence™ v3.0 · {scenarioId?`Scenario: ${scenarioId}`:"Standalone mode"}</p>
+          <p style={{marginTop:"4px"}}>Generated: {new Date().toLocaleString()} · LoanBeacons™ VA IRRRL Intelligence™ v3.1 · {scenarioId?`Scenario: ${scenarioId}`:"Standalone mode"}</p>
         </div>
+
+        {/* Sensitivity Table in PDF */}
+        {curRate>0&&propRate>0&&loanBal>0&&(
+          <div style={{marginTop:"20px",pageBreakBefore:"always"}}>
+            <p style={{fontWeight:"bold",color:"#1a3a6b",fontSize:"12pt",marginBottom:"8px"}}>Rate Sensitivity Analysis</p>
+            <p style={{fontSize:"8pt",color:"#666",marginBottom:"10px"}}>How Net Tangible Benefit changes at ±0.50% rate increments. Net fees held constant at {f$(netFees)}.</p>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead>
+                <tr style={{background:"#1a3a6b",color:"#fff"}}>
+                  {["Scenario","Rate","Rate Drop","Monthly Savings","Recoupment","NTB Pass?"].map(h=>(
+                    <th key={h} style={{padding:"6px 10px",textAlign:"left",fontSize:"9pt"}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sensitivityRows.map((row,i)=>(
+                  <tr key={i} style={{background:row.isCurrent?"#e3f2fd":i%2===0?"#f5f7ff":"#fff"}}>
+                    <td style={{padding:"6px 10px",fontSize:"9pt",fontWeight:row.isCurrent?"bold":"normal"}}>{row.isCurrent?"→ PROPOSED":row.delta>0?`+${row.delta.toFixed(2)}%`:row.delta.toFixed(2)+"%"}</td>
+                    <td style={{padding:"6px 10px",fontSize:"9pt",fontFamily:"monospace"}}>{row.rate.toFixed(3)}%</td>
+                    <td style={{padding:"6px 10px",fontSize:"9pt",fontFamily:"monospace"}}>{row.drop.toFixed(3)}%</td>
+                    <td style={{padding:"6px 10px",fontSize:"9pt",fontFamily:"monospace",color:row.sav>0?"#1a6b1a":"#c00"}}>{row.sav>0?f$(row.sav):"Higher"}</td>
+                    <td style={{padding:"6px 10px",fontSize:"9pt"}}>{!isFinite(row.recoup)?"N/A":row.recoup===0?"Instant":`${row.recoup} months`}</td>
+                    <td style={{padding:"6px 10px",fontSize:"9pt",fontWeight:"bold",color:row.ok?"#1a6b1a":"#c00"}}>{row.ok?"✓ YES":"✗ NO"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p style={{fontSize:"7.5pt",color:"#888",marginTop:"6px"}}>Rate drop thresholds: Fixed→Fixed ≥0.50% | Fixed→ARM ≥2.00% | ARM→ARM any drop | ARM→Fixed always passes rate test. Recoupment max 36 months (net fees ÷ monthly savings).</p>
+          </div>
+        )}
       </div>
     </div>
   );
