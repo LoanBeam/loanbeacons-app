@@ -14,6 +14,7 @@ import DPAIntelligence from './modules/dpa-intelligence/DPAIntelligence'
 import AUSRescue from './pages/AUSRescue';
 import VAIRRRLIntelligence from './modules/VAIRRRLIntelligence';
 import ARMStructureIntelligence from './modules/ARMStructureIntelligence';
+import LenderProfileBuilder from './modules/LenderProfileBuilder';
 function App() {
   return (
     <Router>
@@ -33,6 +34,7 @@ function App() {
 	  <Route path="/aus-rescue" element={<AUSRescue />} />
     <Route path="/va-irrrl" element={<VAIRRRLIntelligence />} />
     <Route path="/arm-structure" element={<ARMStructureIntelligence />} />
+    <Route path="/lender-profile-builder" element={<LenderProfileBuilder />} />
         </Routes>
         <Footer />
       </div>
