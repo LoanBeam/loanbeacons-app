@@ -20,6 +20,7 @@ function Navbar() {
             <Link to="/scenarios" className="hover:text-blue-300 transition-colors font-medium">My Scenarios</Link>
             <Link to="/scenario-creator" className="hover:text-blue-300 transition-colors font-medium">Scenario Creator</Link>
             <a href="#" className="hover:text-blue-300 transition-colors font-medium">About</a>
+          <Link to="/admin" className="hover:text-blue-300 transition-colors font-medium">Admin</Link>
           </div>
           <Link to="/scenario-creator" className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg font-medium transition-colors">
             Get Started
