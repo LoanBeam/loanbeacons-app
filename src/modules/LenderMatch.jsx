@@ -38,6 +38,7 @@ import {
   SCENARIO_INTENT,
   ENGINE_VERSION,
 } from "../engines/LenderMatchEngine";
+import { useLenderProfiles } from "../hooks/useLenderProfiles";
 
 // Child components — Steps 6–11
 // Each has a lightweight stub below as fallback during development
@@ -1071,6 +1072,75 @@ function PlaceholderBanner() {
 }
 
 
+// ─── AE Contact Panel ────────────────────────────────────────────────────────
+
+function AePanel({ lenderName, getAeInfo }) {
+  const ae = getAeInfo(lenderName);
+  if (!ae) return null;
+  return (
+    <div style={{
+      display: "flex",
+      alignItems: "flex-start",
+      gap: "16px",
+      padding: "10px 20px 10px 24px",
+      backgroundColor: "#0b1320",
+      borderTop: "1px solid #1d2d44",
+      borderLeft: "3px solid #1d6fa4",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0, paddingTop: "1px" }}>
+        <span style={{
+          fontFamily: "'DM Mono', monospace",
+          fontSize: "10px",
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+          color: "#58a6ff",
+          fontWeight: 600,
+        }}>
+          Your AE
+        </span>
+        {ae.isOverride && (
+          <span style={{
+            fontSize: "9px",
+            padding: "1px 6px",
+            borderRadius: "10px",
+            backgroundColor: "#1a2a4a",
+            color: "#58a6ff",
+            border: "1px solid #1d6fa440",
+            fontFamily: "'DM Mono', monospace",
+            letterSpacing: "0.04em",
+          }}>
+            MY OVERRIDE
+          </span>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "center" }}>
+        {ae.aeContact && (
+          <span style={{ fontSize: "12px", color: "#e6edf3", fontWeight: 600 }}>
+            {ae.aeContact}
+          </span>
+        )}
+        {ae.aeEmail && (
+          <a href={"mailto:" + ae.aeEmail} style={{
+            fontSize: "12px", color: "#58a6ff",
+            textDecoration: "none", fontFamily: "'DM Mono', monospace",
+          }}>
+            {ae.aeEmail}
+          </a>
+        )}
+        {ae.aePhone && (
+          <a href={"tel:" + ae.aePhone} style={{
+            fontSize: "12px", color: "#58a6ff",
+            textDecoration: "none", fontFamily: "'DM Mono', monospace",
+          }}>
+            {ae.aePhone}
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function LenderMatch() {
@@ -1084,6 +1154,7 @@ export default function LenderMatch() {
   const [savingRecord, setSavingRecord]     = useState(false);
 
   const resultsRef = useRef(null);
+  const { getAeInfo } = useLenderProfiles();
 const [searchParams] = useSearchParams()
 useEffect(() => {
   const scenarioId = searchParams.get('scenarioId')
@@ -1714,13 +1785,15 @@ useEffect(() => {
             ) : (
               <div style={S.cardsGrid}>
                 {(results.agencySection?.eligible || []).map((result, i) => (
-                  <LenderScorecardCard
-                    key={`${result.lenderId}-${result.program}-${i}`}
-                    result={result}
-                    onSelectLender={handleSelectLender}
-                    isSelected={selectedLender === result.lenderId}
-                    style={{ animationDelay: `${i * 40}ms` }}
-                  />
+                  <div key={`${result.lenderId}-${result.program}-${i}`}>
+                    <LenderScorecardCard
+                      result={result}
+                      onSelectLender={handleSelectLender}
+                      isSelected={selectedLender === result.lenderId}
+                      style={{ animationDelay: `${i * 40}ms` }}
+                    />
+                    <AePanel lenderName={result.lenderName} getAeInfo={getAeInfo} />
+                  </div>
                 ))}
               </div>
             )}
@@ -1798,13 +1871,15 @@ useEffect(() => {
             ) : (
               <div style={S.cardsGrid}>
                 {(results.nonQMSection?.eligible || []).map((result, i) => (
-                  <AlternativeLenderCard
-                    key={`${result.lenderId}-${result.program}-${i}`}
-                    result={result}
-                    onSelectLender={handleSelectLender}
-                    isSelected={selectedLender === result.lenderId}
-                    style={{ animationDelay: `${i * 40}ms` }}
-                  />
+                  <div key={`${result.lenderId}-${result.program}-${i}`}>
+                    <AlternativeLenderCard
+                      result={result}
+                      onSelectLender={handleSelectLender}
+                      isSelected={selectedLender === result.lenderId}
+                      style={{ animationDelay: `${i * 40}ms` }}
+                    />
+                    <AePanel lenderName={result.lenderName} getAeInfo={getAeInfo} />
+                  </div>
                 ))}
               </div>
             )}
