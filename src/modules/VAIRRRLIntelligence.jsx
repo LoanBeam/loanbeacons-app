@@ -466,10 +466,10 @@ export default function VAIRRRLIntelligence() {
             {seaResult&&(
               <div className="bg-slate-900/50 rounded-xl p-5 mb-2">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  <div className={`p-4 rounded-xl border ${seaResult.daysOk?"bg-green-900/20 border-green-700/50":"bg-red-900/20 border-red-700/50"}`}>
+                  <div className={`p-4 rounded-xl border ${seaResult.dOk?"bg-green-900/20 border-green-700/50":"bg-red-900/20 border-red-700/50"}`}>
                     <p className="text-xs text-slate-400 mb-1">Rule A — 210 Days</p>
                     <p className="font-bold text-white">Eligible from: {seaResult.e210.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</p>
-                    <p className={`text-sm font-bold mt-1 ${seaResult.daysOk?"text-green-400":"text-red-400"}`}>{seaResult.daysOk?"✅ Satisfied":"❌ Not yet reached"}</p>
+                    <p className={`text-sm font-bold mt-1 ${seaResult.dOk?"text-green-400":"text-red-400"}`}>{seaResult.dOk?"✅ Satisfied":"❌ Not yet reached"}</p>
                   </div>
                   <div className={`p-4 rounded-xl border ${seaResult.pOk?"bg-green-900/20 border-green-700/50":"bg-red-900/20 border-red-700/50"}`}>
                     <p className="text-xs text-slate-400 mb-1">Rule B — 6 Payments</p>

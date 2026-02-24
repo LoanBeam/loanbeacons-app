@@ -417,7 +417,10 @@ export default function ARMStructureIntelligence() {
                   ))}
                 </div>
               </div>
-              <FInput label="Origination Date" tip="Original closing date. Used to auto-calculate the first adjustment date." value={profile.originationDate} onChange={v=>setProfile(p=>({...p,originationDate:v}))} placeholder="" className=""/>
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Origination Date <Tip text="Original closing date. Used to auto-calculate the first adjustment date."/></label>
+                <input type="date" value={profile.originationDate} onChange={e=>setProfile(p=>({...p,originationDate:e.target.value}))} className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-orange-500"/>
+              </div>
             </div>
 
             <div className="border-t border-slate-700 pt-5 mb-5">
