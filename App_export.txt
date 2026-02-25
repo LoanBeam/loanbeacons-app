@@ -16,7 +16,6 @@ import VAIRRRLIntelligence from './modules/VAIRRRLIntelligence';
 import ARMStructureIntelligence from './modules/ARMStructureIntelligence';
 import LenderProfileBuilder from './modules/LenderProfileBuilder';
 import Admin from './pages/Admin';
-import LenderIntakeForm from './modules/LenderIntakeForm';
 function App() {
   return (
     <Router>
@@ -38,8 +37,6 @@ function App() {
     <Route path="/arm-structure" element={<ARMStructureIntelligence />} />
     <Route path="/lender-profile-builder" element={<LenderProfileBuilder />} />
         <Route path="/admin" element={<Admin />} />
-        <Route path="/lender-intake" element={<LenderIntakeForm />} />
-        <Route path="/lender-intake/:token" element={<LenderIntakeForm />} />
         </Routes>
         <Footer />
       </div>

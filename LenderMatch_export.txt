@@ -48,10 +48,6 @@ import { OverlayRiskBadge }       from "../components/lenderMatch/OverlayRiskBad
 import { ConfidenceIndicator }    from "../components/lenderMatch/ConfidenceIndicator";
 import { DecisionRecordModal }    from "../components/lenderMatch/DecisionRecordModal";
 import { IneligibleLenderRow }    from "../components/lenderMatch/IneligibleLenderRow";
-import LastResortSection           from "../components/lenderMatch/LastResortSection";
-import { evaluateHardMoneyPath }   from "../engines/LenderMatchEngine_hardMoney";
-
-
 
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1754,10 +1750,7 @@ useEffect(() => {
               <div style={S.statChip}>
                 <div style={S.statChipDot(T.amber)} />
                 {results.nonQMSection?.totalEligible ?? 0} Alternative Path eligible
-              </div><div style={S.statChip}>
-  <div style={S.statChipDot("#e8531a")} />
-  Last Resort Path
-</div>
+              </div>
               {results.hasPlaceholderResults && (
                 <div style={S.statChip}>
                   <div style={S.statChipDot(T.amber)} />
@@ -1923,11 +1916,6 @@ useEffect(() => {
               </>
             )}
 
-          <LastResortSection
-              scenario={normalizeScenario(form)}
-              agencyResultCount={results.agencySection?.totalEligible ?? 0}
-              nonQMResultCount={results.nonQMSection?.totalEligible ?? 0}
-            />
           </div>
         )}{/* /results */}
 
