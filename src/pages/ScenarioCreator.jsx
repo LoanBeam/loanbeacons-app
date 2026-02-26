@@ -7,6 +7,9 @@ import { lookupCensusTract } from '../utils/censusLookup';
 import { checkUsdaEligibility } from '../utils/usdaLookup';
 import { validateAddress } from '../utils/addressValidation';
 import AddressValidationBadge from '../components/AddressValidationBadge';
+import CRASnapshotCard from '../components/CRASnapshotCard';
+import { useCRAEligibility } from '../hooks/useCRAEligibility';
+
 const LoanTypeSection = ({ loanType, setLoanType, conventionalInvestor, setConventionalInvestor, loanPurpose, setLoanPurpose }) => (
   <div className="bg-white rounded-xl border border-gray-200 p-5 mt-4">
     <h3 className="font-bold text-gray-800 mb-4">Loan Program Details</h3>
@@ -77,32 +80,35 @@ function ScenarioCreator() {
   const [monthlyDebts, setMonthlyDebts] = useState('');
   const [dtiRatio, setDtiRatio] = useState('');
   const [loanPurpose, setLoanPurpose] = useState('Purchase');
-const [loanType, setLoanType] = useState('');
-const [conventionalInvestor, setConventionalInvestor] = useState('');
+  const [loanType, setLoanType] = useState('');
+  const [conventionalInvestor, setConventionalInvestor] = useState('');
   const [loading, setLoading] = useState(false);
+  const { craSnapshot: craData, craLoading, craError, runCRA, updateIncomeFlags } = useCRAEligibility();
 
   useEffect(() => {
     if (isEditMode) {
       loadScenario();
     }
   }, [id]);
-const handleAddressSelect = async (addressData) => {
-  setStreetAddress(addressData.streetAddress || '');
-  setCity(addressData.city || '');
-  setState(addressData.state || '');
-  setZipCode(addressData.zipCode || '');
-  setUnit(addressData.unit || '');
 
-  // Run census tract lookup automatically
-  if (addressData.streetAddress && addressData.city && addressData.state && addressData.zipCode) {
-    const tractData = await lookupCensusTract(addressData);
-    setCensusTract(tractData);
-    if (tractData?.lat && tractData?.lng) {
-      const usda = await checkUsdaEligibility({ lat: tractData.lat, lng: tractData.lng });
-      setUsdaEligibility(usda);
+  const handleAddressSelect = async (addressData) => {
+    setStreetAddress(addressData.streetAddress || '');
+    setCity(addressData.city || '');
+    setState(addressData.state || '');
+    setZipCode(addressData.zipCode || '');
+    setUnit(addressData.unit || '');
+
+    if (addressData.streetAddress && addressData.city && addressData.state && addressData.zipCode) {
+      const tractData = await lookupCensusTract(addressData);
+      setCensusTract(tractData);
+      if (tractData?.lat && tractData?.lng) {
+        const usda = await checkUsdaEligibility({ lat: tractData.lat, lng: tractData.lng });
+        setUsdaEligibility(usda);
+      }
+      await runCRA(addressData, parseFloat(monthlyIncome) || null);
     }
-  }
-};
+  };
+
   const loadScenario = async () => {
     try {
       const docRef = doc(db, 'scenarios', id);
@@ -149,6 +155,12 @@ const handleAddressSelect = async (addressData) => {
       setDtiRatio(calculatedDti);
     }
   }, [monthlyDebts, monthlyIncome]);
+
+  useEffect(() => {
+    if (craData && monthlyIncome) {
+      updateIncomeFlags(parseFloat(monthlyIncome));
+    }
+  }, [monthlyIncome]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -238,9 +250,7 @@ const handleAddressSelect = async (addressData) => {
             </h2>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  First Name
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">First Name</label>
                 <input
                   type="text"
                   value={firstName}
@@ -250,9 +260,7 @@ const handleAddressSelect = async (addressData) => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Last Name
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Last Name</label>
                 <input
                   type="text"
                   value={lastName}
@@ -266,14 +274,12 @@ const handleAddressSelect = async (addressData) => {
 
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <span>💰</span>
+              <span>🏦</span>
               Loan Details
             </h2>
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Loan Amount
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Loan Amount</label>
                 <div className="relative">
                   <span className="absolute left-3 top-2 text-gray-500">$</span>
                   <input
@@ -286,9 +292,7 @@ const handleAddressSelect = async (addressData) => {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Property Value
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Property Value</label>
                 <div className="relative">
                   <span className="absolute left-3 top-2 text-gray-500">$</span>
                   <input
@@ -301,9 +305,7 @@ const handleAddressSelect = async (addressData) => {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  LTV
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">LTV</label>
                 <input
                   type="text"
                   value={ltv}
@@ -315,9 +317,7 @@ const handleAddressSelect = async (addressData) => {
 
             <div className="grid grid-cols-2 gap-4 mt-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Interest Rate (%)
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Interest Rate (%)</label>
                 <input
                   type="number"
                   step="0.001"
@@ -327,14 +327,10 @@ const handleAddressSelect = async (addressData) => {
                   placeholder="6.500"
                   required
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  Enter the baseline interest rate for this scenario
-                </p>
+                <p className="text-xs text-gray-500 mt-1">Enter the baseline interest rate for this scenario</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Loan Term
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Loan Term</label>
                 <select
                   value={term}
                   onChange={(e) => setTerm(e.target.value)}
@@ -356,13 +352,37 @@ const handleAddressSelect = async (addressData) => {
               <span>🏠</span>
               Property Information
             </h2>
-            <AddressAutocomplete value={{ streetAddress, city, state, zipCode, unit }} onAddressSelect={(addr) => { handleAddressSelect(addr); if (addr?.streetAddress) { setAddrValidation({ status: 'PENDING' }); validateAddress({ address: addr.streetAddress, city: addr.city || '', state: addr.state || '', zip: addr.zipCode || '' }).then(r => setAddrValidation(r)).catch(() => setAddrValidation({ status: 'API_ERROR' })); } }} />
-              {addrValidation && <div className="mt-3"><AddressValidationBadge validation={addrValidation} /></div>}
+            <AddressAutocomplete
+              value={{ streetAddress, city, state, zipCode, unit }}
+              onAddressSelect={(addr) => {
+                handleAddressSelect(addr);
+                if (addr?.streetAddress) {
+                  setAddrValidation({ status: 'PENDING' });
+                  validateAddress({
+                    address: addr.streetAddress,
+                    city: addr.city || '',
+                    state: addr.state || '',
+                    zip: addr.zipCode || ''
+                  })
+                    .then(r => setAddrValidation(r))
+                    .catch(() => setAddrValidation({ status: 'API_ERROR' }));
+                }
+              }}
+            />
+            {addrValidation && (
+              <div className="mt-3">
+                <AddressValidationBadge validation={addrValidation} />
+              </div>
+            )}
+            <CRASnapshotCard
+              craData={craData}
+              loading={craLoading}
+              error={craError}
+              borrowerIncome={parseFloat(monthlyIncome) || null}
+            />
             <div className="space-y-4" style={{display:'none'}}>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Street Address
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Street Address</label>
                 <input
                   type="text"
                   value={streetAddress}
@@ -373,9 +393,7 @@ const handleAddressSelect = async (addressData) => {
               </div>
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    City
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">City</label>
                   <input
                     type="text"
                     value={city}
@@ -385,9 +403,7 @@ const handleAddressSelect = async (addressData) => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    State
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">State</label>
                   <input
                     type="text"
                     value={state}
@@ -398,9 +414,7 @@ const handleAddressSelect = async (addressData) => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    ZIP Code
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">ZIP Code</label>
                   <input
                     type="text"
                     value={zipCode}
@@ -413,9 +427,7 @@ const handleAddressSelect = async (addressData) => {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Property Type
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Property Type</label>
                   <select
                     value={propertyType}
                     onChange={(e) => setPropertyType(e.target.value)}
@@ -428,9 +440,7 @@ const handleAddressSelect = async (addressData) => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Occupancy
-                  </label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Occupancy</label>
                   <select
                     value={occupancy}
                     onChange={(e) => setOccupancy(e.target.value)}
@@ -452,9 +462,7 @@ const handleAddressSelect = async (addressData) => {
             </h2>
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Credit Score (FICO)
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Credit Score (FICO)</label>
                 <input
                   type="number"
                   value={creditScore}
@@ -464,9 +472,7 @@ const handleAddressSelect = async (addressData) => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Monthly Gross Income
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Monthly Gross Income</label>
                 <div className="relative">
                   <span className="absolute left-3 top-2 text-gray-500">$</span>
                   <input
@@ -479,9 +485,7 @@ const handleAddressSelect = async (addressData) => {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Monthly Debts
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Monthly Debts</label>
                 <div className="relative">
                   <span className="absolute left-3 top-2 text-gray-500">$</span>
                   <input
@@ -495,9 +499,7 @@ const handleAddressSelect = async (addressData) => {
               </div>
             </div>
             <div className="mt-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                DTI Ratio
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">DTI Ratio</label>
               <input
                 type="text"
                 value={`${dtiRatio}%`}
@@ -512,10 +514,16 @@ const handleAddressSelect = async (addressData) => {
               <span>🎯</span>
               Loan Purpose
             </h2>
-            </div>
+          </div>
 
-<LoanTypeSection loanType={loanType} setLoanType={setLoanType} conventionalInvestor={conventionalInvestor} setConventionalInvestor={setConventionalInvestor} loanPurpose={loanPurpose} setLoanPurpose={setLoanPurpose} />
-       
+          <LoanTypeSection
+            loanType={loanType}
+            setLoanType={setLoanType}
+            conventionalInvestor={conventionalInvestor}
+            setConventionalInvestor={setConventionalInvestor}
+            loanPurpose={loanPurpose}
+            setLoanPurpose={setLoanPurpose}
+          />
 
           <div className="flex gap-4">
             <button
@@ -534,9 +542,7 @@ const handleAddressSelect = async (addressData) => {
             </button>
           </div>
 
-        
         </form>
-
       </div>
     </div>
   );
