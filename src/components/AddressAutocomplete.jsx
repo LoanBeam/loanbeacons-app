@@ -177,9 +177,6 @@ export default function AddressAutocomplete({ value, onAddressSelect }) {
       {validationStatus === 'valid' && !manualOverride && (
         <p className="text-sm text-green-600">✓ Address verified by Google</p>
       )}
-      {validationStatus === 'invalid' && !manualOverride && (
-        <p className="text-sm text-yellow-600">⚠ Address may be incomplete</p>
-      )}
       {manualOverride && (
         <p className="text-sm text-yellow-700 bg-yellow-50 border border-yellow-200 rounded p-2">
           Manual entry mode - address will not be auto-validated
