@@ -39,6 +39,7 @@ import {
   ENGINE_VERSION,
 } from "../engines/LenderMatchEngine";
 import { useLenderProfiles } from "../hooks/useLenderProfiles";
+import AddressAutocomplete from "../components/AddressAutocomplete";
 
 // Child components — Steps 6–11
 // Each has a lightweight stub below as fallback during development
@@ -1443,19 +1444,17 @@ useEffect(() => {
                   />
                 </FormGroup>
 
-                <FormGroup label="State">
-                  <select
-                    className="lm-select"
-                    style={S.select}
-                    value={form.state}
-                    onChange={(e) => set("state", e.target.value)}
-                  >
-                    <option value="">Select state…</option>
-                    {US_STATES.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </FormGroup>
+              <FormGroup label="Property Address">
+                <AddressAutocomplete
+                  value={{ streetAddress: form.streetAddress, city: form.city, state: form.state, zipCode: form.zipCode, unit: form.unit }}
+                  onAddressSelect={(addr) => {
+                    set("streetAddress", addr.streetAddress || "");
+                    set("city", addr.city || "");
+                    set("state", addr.state || "");
+                    set("zipCode", addr.zipCode || "");
+                  }}
+                />
+              </FormGroup>
               </div>
 
               <div style={S.formDivider} />
