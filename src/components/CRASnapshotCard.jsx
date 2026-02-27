@@ -171,7 +171,7 @@ export default function CRASnapshotCard({ craData, loading, error, borrowerIncom
           <SectionHeader title="Tract Income" />
           <DataRow label="Tract MFI vs. Area" value={pct(tractMfiPct)} accent={config.color} />
           <DataRow label="Area Median Income" value={dollar(amiOverall)} />
-          <DataRow label="HUD Data Year" value={craData?.effectiveYear ? `FY${craData.effectiveYear}` : '—'} />
+          <DataRow label="ACS Data Year" value={craData?.effectiveYear ? `FY${craData.effectiveYear}` : '—'} />
         </div>
         <div style={styles.col}>
           <SectionHeader title="Demographics" />
