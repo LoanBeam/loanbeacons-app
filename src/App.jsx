@@ -13,6 +13,7 @@ import FHAStreamline from './pages/FHAStreamline'
 import DPAIntelligence from './modules/dpa-intelligence/DPAIntelligence'
 import AUSRescue from './pages/AUSRescue';
 import VAIRRRLIntelligence from './modules/VAIRRRLIntelligence';
+import USDAIntelligence from './modules/USDAIntelligence';
 import ARMStructureIntelligence from './modules/ARMStructureIntelligence';
 import LenderProfileBuilder from './modules/LenderProfileBuilder';
 import Admin from './pages/Admin';
@@ -35,6 +36,7 @@ function App() {
           <Route path="/dpa-intelligence" element={<DPAIntelligence />} />
 	  <Route path="/aus-rescue" element={<AUSRescue />} />
     <Route path="/va-irrrl" element={<VAIRRRLIntelligence />} />
+    <Route path="/usda-intelligence" element={<USDAIntelligence />} />
     <Route path="/arm-structure" element={<ARMStructureIntelligence />} />
     <Route path="/lender-profile-builder" element={<LenderProfileBuilder />} />
         <Route path="/admin" element={<Admin />} />

@@ -104,6 +104,16 @@ const modules = {
       path: '/va-irrrl',
       color: 'red',
     },
+    {
+      id: 'usda-intelligence',
+      title: 'USDA Intelligence™',
+      icon: '🌾',
+      description: 'Rural eligibility, household income engine, GUS simulation, and USDA Rescue™.',
+      badge: 'NEW',
+      status: 'live',
+      path: '/usda-intelligence',
+      color: 'green',
+    },
   ],
   stage3: [
     {
