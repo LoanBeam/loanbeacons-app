@@ -132,8 +132,8 @@ const modules = {
       icon: '📈',
       description: 'ARM product comparison, cap simulation, payment shock modeling, and lifecycle projections.',
       badge: null,
-      status: 'planned',
-      path: null,
+      status: 'live',
+      path: '/arm-structure',
       color: 'orange',
     },
     {
