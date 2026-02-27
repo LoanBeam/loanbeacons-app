@@ -95,28 +95,36 @@ function ScenarioList() {
 function ScenarioCard({ scenario }) {
   const {
     id,
-    borrower1FirstName,
-    borrower1LastName,
+    firstName,
+    lastName,
+    scenarioName,
     city,
     state,
     loanAmount,
     ltv,
-    dti,
+    frontDti,
+    backDti,
+    dtiRatio,
     status,
     loanPurpose,
+    loanType,
     propertyType,
-    createdAt,
+    created_at,
+    updated_at,
   } = scenario
 
-  const borrowerName = `${borrower1FirstName || ''} ${borrower1LastName || ''}`.trim() || 'Unnamed'
+  const borrowerName = [firstName || '', lastName || ''].join(' ').trim() || scenarioName || 'Unnamed'
   const location = [city, state].filter(Boolean).join(', ') || 'No address'
   const formattedAmount = typeof loanAmount === 'number'
     ? loanAmount.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0 })
     : '$0'
 
-  const createdDate = createdAt?.toDate
-    ? createdAt.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-    : 'Unknown'
+  const _ds = created_at || updated_at;
+  const createdDate = _ds?.toDate
+    ? _ds.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : _ds instanceof Date
+    ? _ds.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : ''
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-shadow flex flex-col">
@@ -125,6 +133,9 @@ function ScenarioCard({ scenario }) {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-lg font-bold text-gray-900 truncate">{borrowerName}</h3>
+            {scenarioName && (
+              <p className="text-xs text-blue-600 truncate font-medium mt-0.5">{scenarioName}</p>
+            )}
             <p className="text-sm text-gray-500 truncate">{location}</p>
           </div>
           <StatusBadge status={status} />
@@ -142,13 +153,17 @@ function ScenarioCard({ scenario }) {
         {/* LTV & DTI Row */}
         <div className="flex gap-3">
           <MetricPill label="LTV" value={ltv} thresholds={[80, 95]} />
-          <MetricPill label="DTI" value={dti} thresholds={[43, 50]} />
+          <MetricPill label="Front DTI" value={frontDti || 0} thresholds={[28, 36]} />
+          <MetricPill label="Back DTI"  value={backDti || dtiRatio || 0} thresholds={[43, 50]} />
         </div>
 
         {/* Details Row */}
         <div className="flex items-center gap-2 flex-wrap text-xs">
           {loanPurpose && (
-            <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded-full font-medium">{loanPurpose}</span>
+            <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded-full font-medium capitalize">{loanPurpose.replace(/_/g, " ").toLowerCase()}</span>
+          )}
+          {loanType && (
+            <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded-full font-bold">{loanType}</span>
           )}
           {propertyType && (
             <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded-full font-medium">{propertyType}</span>
