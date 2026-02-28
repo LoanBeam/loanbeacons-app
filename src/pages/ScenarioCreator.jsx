@@ -135,6 +135,8 @@ function ScenarioCreator() {
   const [floodInsurance, setFloodInsurance] = useState(''); // monthly
   const [secondMortgage, setSecondMortgage] = useState(''); // monthly P&I
   const [totalHousing, setTotalHousing] = useState('');    // auto-calculated
+  const [frontDti, setFrontDti] = useState('');
+  const [backDti, setBackDti] = useState('');
 
   // Qualifying Information
   const [coBorrowerIncome, setCoBorrowerIncome] = useState('');
@@ -281,6 +283,7 @@ function ScenarioCreator() {
         setMonthlyDebts(data.monthlyDebts || '');
         setDtiRatio(data.dtiRatio || '');
         setLoanPurpose(data.loanPurpose || 'Purchase');
+        setLoanType(data.loanType || '');
         setUnit(data.unit || '');
         setCensusTract(data.censusTract || null);
         // Housing expenses
@@ -300,23 +303,8 @@ function ScenarioCreator() {
         setSellerConcessions(data.sellerConcessions || '');
         setPostCloseReserves(data.postCloseReserves || '');
         setEstimatedCashToClose(data.estimatedCashToClose || '');
-        // Housing expenses
-        setPropTaxes(data.propTaxes || '');
-        setHomeInsurance(data.homeInsurance || '');
-        setMortgageInsurance(data.mortgageInsurance || '');
-        setMiAutoCalc(data.miAutoCalc !== false);
-        setTaxEstimated(data.taxEstimated || false);
-        setInsEstimated(data.insEstimated || false);
-        setHoaDues(data.hoaDues || '');
-        setFloodInsurance(data.floodInsurance || '');
-        setSecondMortgage(data.secondMortgage || '');
-        // Qualifying
-        setCoBorrowerIncome(data.coBorrowerIncome || '');
-        setOtherIncome(data.otherIncome || '');
-        setDownPayment(data.downPayment || '');
-        setSellerConcessions(data.sellerConcessions || '');
-        setPostCloseReserves(data.postCloseReserves || '');
-        setEstimatedCashToClose(data.estimatedCashToClose || '');
+        setFrontDti(data.frontDti || '');
+        setBackDti(data.backDti || '');
       }
     } catch (error) {
       console.error('Error loading scenario:', error);
@@ -376,7 +364,8 @@ function ScenarioCreator() {
     if (total <= 0) return;
     setDtiRatio(((debts / total) * 100).toFixed(2));
     setPiPayment(pi > 0 ? pi.toFixed(2) : '');
-    // front = full housing / income, back = housing + debts / income
+    setFrontDti(housing > 0 ? ((housing / total) * 100).toFixed(2) : '');
+    setBackDti(housing > 0 ? (((housing + debts) / total) * 100).toFixed(2) : '');
   }, [monthlyDebts, monthlyIncome, coBorrowerIncome, otherIncome,
       loanAmount, interestRate, term, loanType, ltv,
       propTaxes, homeInsurance, mortgageInsurance, miAutoCalc,
@@ -445,6 +434,8 @@ function ScenarioCreator() {
       floodInsurance: parseFloat(floodInsurance) || 0,
       secondMortgage: parseFloat(secondMortgage) || 0,
       totalHousing: parseFloat(totalHousing) || 0,
+      frontDti: parseFloat(frontDti) || 0,
+      backDti: parseFloat(backDti) || 0,
       // Qualifying
       coBorrowerIncome: parseFloat(coBorrowerIncome) || 0,
       otherIncome: parseFloat(otherIncome) || 0,
@@ -454,6 +445,7 @@ function ScenarioCreator() {
       postCloseReserves: parseFloat(postCloseReserves) || 0,
       estimatedCashToClose: parseFloat(estimatedCashToClose) || 0,
       loanPurpose,
+      status: 'active',
       updated_at: new Date()
     };
 

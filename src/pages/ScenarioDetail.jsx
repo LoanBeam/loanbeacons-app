@@ -101,8 +101,7 @@ function ScenarioDetail() {
           </Link>
           <div className="flex gap-3">
             <Link
-              to="/scenario-creator"
-              state={{ editScenario: scenario }}
+              to={`/scenario-creator/${s.id}`}
               className="inline-flex items-center gap-2 bg-blue-700 hover:bg-blue-600 text-white font-semibold px-5 py-2 rounded-lg transition-colors text-sm"
             >
               Edit
