@@ -219,7 +219,17 @@ const modules = {
       status: 'planned',
       path: null,
       color: 'blue',
-    },
+   },
+{
+  id: 'lender-intake',
+  title: 'Lender Intake Form™',
+  icon: '📋',
+  description: 'Shareable intake form for lenders to self-report their profile into the Lender Library.',
+  badge: 'NEW',
+  status: 'live',
+  path: '/lender-intake',
+  color: 'orange',
+},
   ],
 };
 

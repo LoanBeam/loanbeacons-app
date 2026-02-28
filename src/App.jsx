@@ -14,10 +14,11 @@ import DPAIntelligence from './modules/dpa-intelligence/DPAIntelligence'
 import AUSRescue from './pages/AUSRescue';
 import VAIRRRLIntelligence from './modules/VAIRRRLIntelligence';
 import USDAIntelligence from './modules/USDAIntelligence';
+import LenderIntakeForm from "./modules/LenderIntakeForm";
 import ARMStructureIntelligence from './modules/ARMStructureIntelligence';
 import LenderProfileBuilder from './modules/LenderProfileBuilder';
 import Admin from './pages/Admin';
-import LenderIntakeForm from './modules/LenderIntakeForm';
+
 function App() {
   return (
     <Router>
@@ -43,6 +44,7 @@ function App() {
         <Route path="/admin" element={<Admin />} />
         <Route path="/lender-intake" element={<LenderIntakeForm />} />
         <Route path="/lender-intake/:token" element={<LenderIntakeForm />} />
+      
         </Routes>
         <Footer />
       </div>
