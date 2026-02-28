@@ -26,6 +26,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/scenario-creator" element={<ScenarioCreator />} />
+          <Route path="/scenario-creator/:id" element={<ScenarioCreator />} />
           <Route path="/scenarios" element={<ScenarioList />} />
           <Route path="/scenario/:id" element={<ScenarioDetail />} />
           <Route path="/rate-buydown" element={<RateBuydownCalculator />} />
