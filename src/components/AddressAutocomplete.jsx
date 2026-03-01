@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { parseGooglePlace, validateAddressFields } from '../utils/addressValidation';
 
+const DARK_INPUT = 'w-full px-4 py-2 border rounded-lg bg-[#1e2a3a] text-white placeholder-gray-500 focus:bg-[#1e2a3a] [&:-webkit-autofill]:![box-shadow:0_0_0_1000px_#1e2a3a_inset] [&:-webkit-autofill]:[webkit-text-fill-color:#ffffff]';
+
 export default function AddressAutocomplete({ value, onAddressSelect }) {
   const inputRef = useRef(null);
   const [unit, setUnit] = useState(value?.unit || '');
@@ -81,10 +83,10 @@ export default function AddressAutocomplete({ value, onAddressSelect }) {
   };
 
   const borderClass = validationStatus === 'valid'
-    ? 'border-green-400 bg-green-50'
+    ? 'border-green-400'
     : validationStatus === 'invalid'
-    ? 'border-yellow-400 bg-yellow-50'
-    : 'border-gray-300';
+    ? 'border-yellow-400'
+    : 'border-gray-600';
 
   return (
     <div className="space-y-3">
@@ -118,7 +120,7 @@ export default function AddressAutocomplete({ value, onAddressSelect }) {
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               placeholder="e.g., 123 Main Street, Covington, GA"
-              className={'w-full px-4 py-2 border rounded-lg ' + borderClass}
+              className={`${DARK_INPUT} ${borderClass}`}
             />
             {validationStatus === 'valid' && (
               <span className="absolute right-3 top-2.5 text-green-500 text-lg">✓</span>
@@ -136,7 +138,7 @@ export default function AddressAutocomplete({ value, onAddressSelect }) {
           value={unit}
           onChange={handleUnitChange}
           placeholder="e.g., Apt 2B, Suite 100"
-          className="w-full px-4 py-2 border border-gray-300 rounded-lg"
+          className={DARK_INPUT}
         />
       </div>
 
