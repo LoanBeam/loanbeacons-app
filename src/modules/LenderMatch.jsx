@@ -1777,18 +1777,22 @@ useEffect(() => {
                   <button
                     onClick={() => setAeModal({ open: true })}
                     style={{
-                      marginTop: "8px",
-                      padding: "8px 16px",
-                      backgroundColor: T.amber,
-                      color: T.bg,
-                      border: "none",
-                      borderRadius: T.radius,
-                      fontFamily: T.fontDisplay,
-                      fontWeight: 700,
-                      fontSize: "13px",
-                      cursor: "pointer",
-                    }}
-                  >
+                    marginTop: "8px",
+                    padding: "9px 20px",
+                    background: "linear-gradient(135deg, #d97706 0%, #fbbf24 100%)",
+                    color: "#0d1117",
+                    border: "2px solid #fbbf24",
+                    borderRadius: "8px",
+                    fontFamily: T.fontDisplay,
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    boxShadow: "0 0 12px rgba(251,191,36,0.4)",
+                    letterSpacing: "-0.2px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}>
                     ✉️ Send to AE
                   </button>
                 )}
