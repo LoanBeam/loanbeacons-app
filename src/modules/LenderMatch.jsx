@@ -27,6 +27,7 @@
 import { useSearchParams } from 'react-router-dom'
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { db } from "../firebase/config";
+import { getFunctions } from "firebase/functions";
 import { collection, addDoc, serverTimestamp, doc, getDoc } from "firebase/firestore";
 import {
   runLenderMatch,
@@ -50,6 +51,7 @@ import { ConfidenceIndicator }    from "../components/lenderMatch/ConfidenceIndi
 import { DecisionRecordModal }    from "../components/lenderMatch/DecisionRecordModal";
 import { IneligibleLenderRow }    from "../components/lenderMatch/IneligibleLenderRow";
 import LastResortSection           from "../components/lenderMatch/LastResortSection";
+import AEShareForm from "../components/lenderMatch/AEShareForm";
 import { evaluateHardMoneyPath }   from "../engines/LenderMatchEngine_hardMoney";
 
 
@@ -1157,6 +1159,9 @@ export default function LenderMatch() {
   const [selectedLender, setSelectedLender] = useState(null);
   const [decisionModal, setDecisionModal]   = useState({ open: false, record: null });
   const [savingRecord, setSavingRecord]     = useState(false);
+  const [aeModal, setAeModal] = useState({ open: false });
+const [aeSending, setAeSending] = useState(false);
+const [aeSent, setAeSent] = useState(false);
 
   const resultsRef = useRef(null);
   const { getAeInfo } = useLenderProfiles();
@@ -1284,6 +1289,40 @@ useEffect(() => {
       setSavingRecord(false);
     }
   }, []);
+
+
+  // ── Send to AE handler ────────────────────────────────────────────────────
+  const handleSendToAE = useCallback(async (aeEmails, shareType, message) => {
+    if (!selectedLender || !results) return;
+    setAeSending(true);
+    setAeSent(false);
+    try {
+      const functions = getFunctions();
+      const selectedResult = [
+        ...(results.agencySection?.eligible || []),
+        ...(results.nonQMSection?.eligible || []),
+      ].find((r) => r.lenderId === selectedLender);
+
+      await addDoc(collection(db, "scenarioShares"), {
+        scenarioId: selectedResult?.lenderId || "unknown",
+        userId: "current-user",
+        aeEmails,
+        shareType,
+        message,
+        status: "pending",
+        createdAt: serverTimestamp(),
+        lenderName: selectedResult?.lenderName || "",
+        selectedLenderId: selectedLender,
+        formSnapshot: form,
+      });
+      setAeSent(true);
+      setTimeout(() => setAeModal({ open: false }), 2000);
+    } catch (err) {
+      console.error("[SendToAE] Error:", err);
+    } finally {
+      setAeSending(false);
+    }
+  }, [selectedLender, results, form]);
 
   // ── Keyboard shortcut: Cmd/Ctrl + Enter to run ───────────────────────────
   useEffect(() => {
@@ -1734,6 +1773,25 @@ useEffect(() => {
             <div style={S.resultsHeader}>
               <div>
                 <div style={S.resultsTitle}>Match Results</div>
+                {selectedLender && (
+                  <button
+                    onClick={() => setAeModal({ open: true })}
+                    style={{
+                      marginTop: "8px",
+                      padding: "8px 16px",
+                      backgroundColor: T.amber,
+                      color: T.bg,
+                      border: "none",
+                      borderRadius: T.radius,
+                      fontFamily: T.fontDisplay,
+                      fontWeight: 700,
+                      fontSize: "13px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    ✉️ Send to AE
+                  </button>
+                )}
                 <div style={S.resultsMeta}>
                   {results.scenarioSummary}
                 </div>
@@ -1933,6 +1991,39 @@ useEffect(() => {
       </main>
 
 
+     {/* ────── SEND TO AE MODAL ────── */}
+      {aeModal.open && (
+        <div style={{
+          position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.7)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          zIndex: 200, padding: "20px",
+        }}>
+          <div style={{
+            backgroundColor: "#161b22", border: "1px solid #30363d",
+            borderRadius: "12px", width: "100%", maxWidth: "500px",
+            overflow: "hidden",
+          }}>
+            <div style={{
+              padding: "20px 24px 16px",
+              borderBottom: "1px solid #21262d",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+              <div style={{ fontFamily: "'Sora',sans-serif", fontWeight: 700, fontSize: "16px", color: "#e6edf3" }}>
+                ✉️ Send to AE
+              </div>
+              <button onClick={() => setAeModal({ open: false })} style={{
+                background: "none", border: "none", color: "#8b949e",
+                fontSize: "20px", cursor: "pointer", lineHeight: 1,
+              }}>×</button>
+            </div>
+            <AEShareForm
+              onSend={handleSendToAE}
+              sending={aeSending}
+              sent={aeSent}
+            />
+          </div>
+        </div>
+      )}
       {/* ────── DECISION RECORD MODAL ────── */}
       {decisionModal.open && (
         <DecisionRecordModal
