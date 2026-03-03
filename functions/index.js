@@ -24,7 +24,7 @@ async function buildScenarioSnapshot(shareDoc) {
   const s = scenarioSnap.data();
 
   // Fetch LO profile
-  const loSnap = await db.collection("userProfiles").doc(userId).get();
+  const loSnap = await db.collection("userProfiles").doc("default").get();
   const lo = loSnap.exists ? loSnap.data() : {};
 
   // Fetch lender profile (from scenario's selectedLenderId if present)

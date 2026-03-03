@@ -81,7 +81,7 @@ const modules = {
       description: 'Diagnose AUS findings and identify paths to approval.',
       badge: null,
       status: 'live',
-      path: null,
+     path: '/aus-rescue',
       color: 'red',
     },
     {
@@ -162,8 +162,8 @@ const modules = {
       icon: '🔨',
       description: 'Structure 203k, HomeStyle, and bridge rehab loans with risk scoring.',
       badge: 'NEW',
-      status: 'planned',
-      path: null,
+     status: 'live',
+      path: '/rehab-intelligence',
       color: 'orange',
     },
     {

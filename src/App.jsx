@@ -10,6 +10,7 @@ import MIOptimizer from './pages/MIOptimizer'
 import FHAStreamline from './pages/FHAStreamline'
 import DebtConsolidation from './pages/DebtConsolidation'
 import AUSRescue from './pages/AUSRescue'
+import RehabIntelligence from './modules/RehabIntelligence';
 import Admin from './pages/Admin'
 import AESharePage from './pages/AESharePage'
 import LenderMatch from './modules/LenderMatch'
@@ -42,6 +43,7 @@ function AppShell() {
         <Route path="/lender-match" element={<LenderMatch />} />
         <Route path="/dpa-intelligence" element={<DPAIntelligence />} />
         <Route path="/aus-rescue" element={<AUSRescue />} />
+        <Route path="/rehab-intelligence" element={<RehabIntelligence />} />
         <Route path="/va-irrrl" element={<VAIRRRLIntelligence />} />
         <Route path="/usda-intelligence" element={<USDAIntelligence />} />
         <Route path="/arm-structure" element={<ARMStructureIntelligence />} />

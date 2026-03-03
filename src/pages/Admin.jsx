@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { db } from "../firebase/config";
+import { getAuth } from "firebase/auth";
 import { collection, doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import LenderProfileBuilder from "../modules/LenderProfileBuilder";
 
@@ -11,6 +12,7 @@ const EMPTY_LO = {
 
 function MyLOProfile() {
   const LO_DOC = "lo_profile_default";
+  const auth = getAuth();
   const [profile, setProfile] = useState(EMPTY_LO);
   const [aeOverrides, setAeOverrides] = useState({});
   const [saved, setSaved] = useState(false);
@@ -37,16 +39,30 @@ function MyLOProfile() {
     load();
   }, []);
 
-  const save = async () => {
-    try {
-      await setDoc(doc(db, "loProfiles", LO_DOC), {
-        profile, aeOverrides, updatedAt: serverTimestamp()
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
-    } catch (e) { console.error(e); }
-  };
+ const save = async () => {
+  try {
+    // Save to loProfiles (existing)
+    await setDoc(doc(db, "loProfiles", LO_DOC), {
+      profile, aeOverrides, updatedAt: serverTimestamp()
+    });
 
+    // Mirror to userProfiles/{userId} for AE Share Service
+    await setDoc(doc(db, "userProfiles", "default"), {
+  name: `${profile.firstName} ${profile.lastName}`.trim(),
+  displayName: `${profile.firstName} ${profile.lastName}`.trim(),
+  email: profile.email,
+  phone: profile.phone,
+  nmlsId: profile.nmls,
+  company: profile.company,
+  companyNmls: profile.companyNmls,
+  updatedAt: serverTimestamp(),
+}, { merge: true });
+
+    setSaved(true);
+    setTimeout(() => setSaved(false), 3000);
+  } catch (e) { console.error(e); }
+};
+    
   const f = (field, val) => setProfile(p => ({ ...p, [field]: val }));
 
   if (loading) return <div className="text-center py-12 text-slate-400">Loading...</div>;

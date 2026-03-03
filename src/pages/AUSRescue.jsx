@@ -228,6 +228,62 @@ const STRATEGIES = [
   },
 ];
 
+// ─── DU MESSAGE ID MAP ──────────────────────────────────────────────────────────
+const DU_MSG_IDS = {
+  '0225': { title: 'Debts Must Be Paid Off at Closing', severity: 'critical', explanation: 'DU requires specific debts — often a 2nd mortgage, 3rd mortgage, or consumer debts — to be paid at closing. These payoffs must be documented and included in L4 (Debts to be Paid at Closing) or DU will not approve.', action: 'Move all required payoffs to L4 in your LOS. Obtain payoff statements. Re-run DU with updated figures.' },
+  '1813': { title: 'Mortgage Payment History Not Verified', severity: 'critical', explanation: 'DU could not verify the payment history on one or more mortgage accounts. If any mortgage is 60+ days late in the past 12 months, the loan is automatically ineligible for conventional delivery.', action: 'Request 12 months of cancelled checks, lender payment history, or VOM for all mortgage accounts. If any 60-day lates exist, conventional cash-out is ineligible.' },
+  '0057': { title: 'DTI Exceeds Guidelines', severity: 'high', explanation: 'Back-end DTI exceeds the program threshold. DU flagged this as a primary risk factor. Combined with other risk factors, this triggers Refer with Caution.', action: 'Apply DTI strategies: debt payoff, 10-month installment exclusion (conventional only), student loan IDR, or add co-borrower income.' },
+  '0014': { title: 'Insufficient Reserves', severity: 'high', explanation: 'Post-closing reserves are below DU\'s threshold for this risk profile. With borderline credit or high DTI, reserves are a critical compensating factor.', action: 'Document all eligible assets: checking, savings, 401k (60% of value), gift funds. Maximize seller concessions to preserve borrower cash as reserves.' },
+  '0058': { title: 'Credit Score Below Optimal Threshold', severity: 'high', explanation: 'Representative credit score is below the tier needed for automatic approval at this DTI and LTV combination.', action: 'Rapid rescore after revolving paydown. Target <30% utilization on all cards, <10% on one card. Typical gain: 10–25 points in 72 hours.' },
+  '1022': { title: 'Recent Derogatory Credit Event', severity: 'high', explanation: 'DU detected a recent delinquency, collection, or derogatory event that increases risk classification.', action: 'Obtain LOE for all derogatory items. Check if any can be disputed or rapidly rescored. Verify collection accounts are not re-aging.' },
+  '0097': { title: 'High Revolving Utilization', severity: 'medium', explanation: 'One or more revolving accounts show utilization above 30%, contributing to credit risk elevation.', action: 'Pay revolving accounts to <30% (ideally <10%). Request rapid rescore. This is the highest ROI credit action per dollar spent.' },
+  '0560': { title: 'Cash-Out Refinance Risk Layering', severity: 'critical', explanation: 'Cash-out refinance combined with other risk factors (credit, DTI, reserves) resulted in risk layering that DU cannot approve. Manual underwriting is NOT permitted for cash-out conventional refinances.', action: 'Improve credit profile, reduce DTI, or add reserves before resubmitting. If profile cannot be improved, evaluate FHA cash-out or Non-QM cash-out as alternatives.' },
+};
+
+// ─── COMBINATION RISK STACK DETECTOR ────────────────────────────────────────────
+function detectRiskStacks(profile, loanPurpose, finding) {
+  const stacks = [];
+  const credit = +profile.creditScore;
+  const dti = +profile.dti;
+  const reserves = +profile.reserves;
+  const isCashOut = loanPurpose === 'cashout';
+  const isRefer = finding && finding.toLowerCase().includes('caution');
+
+  if (isCashOut && isRefer) {
+    stacks.push({
+      severity: 'critical',
+      title: 'Cash-Out + Refer with Caution — Manual UW Blocked',
+      detail: 'Cash-out refinances that receive Refer with Caution CANNOT proceed as a manual underwrite under Fannie Mae Selling Guide B2-1.2-03. This is a hard stop. The loan cannot be delivered to Fannie Mae in its current form.',
+      action: 'Options: (1) Improve profile and resubmit DU — better credit, lower DTI, more reserves. (2) FHA Cash-Out — different guidelines, allows some manual UW. (3) Non-QM Cash-Out — portfolio product, no AUS requirement.',
+    });
+  }
+  if (credit && credit < 660 && dti && dti > 45 && reserves !== null && reserves < 3) {
+    stacks.push({
+      severity: 'critical',
+      title: 'Triple Risk Stack: Borderline Credit + High DTI + Low Reserves',
+      detail: 'DU evaluates risk holistically. Credit below 660, DTI above 45%, and under 3 months reserves is a compounding combination that almost always triggers Refer with Caution — even if each factor individually is within guidelines.',
+      action: 'Must address at least TWO of the three factors. Recommended: (1) Rapid rescore to push credit above 680, AND (2) Pay off one or two debts to drop DTI below 43%. Reserves improvement alone will not be sufficient.',
+    });
+  }
+  if (isCashOut && credit && credit < 680 && dti && dti > 43) {
+    stacks.push({
+      severity: 'high',
+      title: 'Cash-Out + Borderline Credit + Elevated DTI',
+      detail: 'Cash-out purpose applies tighter DU risk standards. With credit below 680 and DTI above 43%, this combination is high-risk even before reserves are considered.',
+      action: 'Target: credit 700+ and DTI under 43% for cash-out conventional. Consider whether FHA cash-out is a better fit — allows 56.9% DTI and more flexible overlays.',
+    });
+  }
+  if (reserves !== null && reserves === 0 && dti && dti > 43 && credit && credit < 700) {
+    stacks.push({
+      severity: 'high',
+      title: 'Zero Reserves + High DTI + Sub-700 Credit',
+      detail: 'Zero post-closing reserves with elevated DTI and borderline credit removes all compensating factors. DU has no basis to approve when every risk dimension is marginal.',
+      action: 'Even $2,000–$5,000 of documented reserves can change DU\'s risk assessment. Maximize seller concessions to preserve borrower cash. Document all eligible assets including 401k (60%), gift funds, and seasoned deposits.',
+    });
+  }
+  return stacks;
+}
+
 // ─── DUPLICATE DEBT FLAGS ───────────────────────────────────────────────────────
 const DUPLICATE_FLAGS = [
   { label: 'Authorized user account counted in DTI', detail: 'AU accounts appear on credit report but borrower has no legal liability. Verify each AU account and remove from DTI if not the borrower\'s debt.', fix: 'Identify AU accounts, remove from DTI. If account has history of late payments, consider also removing as AU to protect score.' },
@@ -292,14 +348,18 @@ export default function AUSRescue() {
   const [loading, setLoading] = useState(true);
   const [program, setProgram] = useState('conventional');
   const [currentFinding, setCurrentFinding] = useState('');
-  const [profile, setProfile] = useState({ creditScore: '', dti: '', frontEndDTI: '', reserves: '', downPayment: '', isVeteran: false, isRuralProperty: false, isSelfEmployed: false, hasRecentBankruptcy: false });
+  const [profile, setProfile] = useState({
+    creditScore: '', dti: '', frontEndDTI: '', reserves: '', downPayment: '',
+    loanPurpose: 'purchase',
+    isVeteran: false, isRuralProperty: false, isSelfEmployed: false, hasRecentBankruptcy: false,
+  });
   const [selectedCats, setSelectedCats] = useState([]);
   const [activeTab, setActiveTab] = useState('strategies');
   const [flaggedDuplicates, setFlaggedDuplicates] = useState([]);
   const [auditLog, setAuditLog] = useState([]);
   const [expandedId, setExpandedId] = useState(null);
   const [isParsing, setIsParsing] = useState(false);
-  const [parseResult, setParseResult] = useState(null); // { fileName, fieldsFound }
+  const [parseResult, setParseResult] = useState(null);
   const [parseError, setParseError] = useState('');
 
   useEffect(() => {
@@ -321,9 +381,7 @@ export default function AUSRescue() {
     }
   };
 
-  // ─── PDF PARSING ─────────────────────────────────────────────────────────────
-  // NOTE: Calls Anthropic API from the frontend using your .env API key.
-  // For a client-facing production app, proxy this through a Firebase Cloud Function.
+  // ─── PDF PARSING ──────────────────────────────────────────────────────────────
   const parsePDFWithClaude = async (file) => {
     setIsParsing(true);
     setParseError('');
@@ -367,7 +425,9 @@ export default function AUSRescue() {
   "isVeteran": boolean,
   "isSelfEmployed": boolean,
   "detectedIssues": array of applicable: "dti", "credit", "reserves", "income", "ltv", "program",
-  "riskFactors": array of up to 6 brief strings describing specific risk factors found
+  "riskFactors": array of up to 6 brief strings describing specific risk factors found,
+  "msgIds": array of DU message ID strings found in the document (e.g. ["0225", "1813"]),
+  "loanPurpose": "purchase" or "rateTerm" or "cashout" or null
 }
 Use null for unknown numbers, false for unknown booleans.`
               },
@@ -395,6 +455,7 @@ Use null for unknown numbers, false for unknown booleans.`
 
       setProgram(detectedProgram);
       setCurrentFinding(normalizedFinding);
+      if (parsed.loanPurpose) setProfile(prev => ({ ...prev, loanPurpose: parsed.loanPurpose }));
       setProfile(prev => ({
         ...prev,
         creditScore: parsed.creditScore?.toString() || prev.creditScore,
@@ -404,6 +465,7 @@ Use null for unknown numbers, false for unknown booleans.`
         downPayment: parsed.downPaymentPct?.toString() || prev.downPayment,
         isVeteran: parsed.isVeteran || prev.isVeteran,
         isSelfEmployed: parsed.isSelfEmployed || prev.isSelfEmployed,
+        ...(parsed.loanPurpose ? { loanPurpose: parsed.loanPurpose } : {}),
       }));
       if (parsed.detectedIssues?.length) setSelectedCats(parsed.detectedIssues);
 
@@ -415,8 +477,9 @@ Use null for unknown numbers, false for unknown booleans.`
         parsed.reservesMonths && 'Reserves',
         parsed.downPaymentPct && 'Down Payment',
         parsed.detectedIssues?.length && `${parsed.detectedIssues.length} issue categories`,
+        parsed.msgIds?.length && `${parsed.msgIds.length} MSG IDs`,
       ].filter(Boolean);
-      setParseResult({ fileName: file.name, fieldsFound, riskFactors: parsed.riskFactors || [] });
+      setParseResult({ fileName: file.name, fieldsFound, riskFactors: parsed.riskFactors || [], msgIds: parsed.msgIds || [] });
       addLog(`Parsed: ${fieldsFound.join(', ')}`);
     } catch (err) {
       const msg = err.message.includes('VITE_ANTHROPIC_API_KEY')
@@ -460,8 +523,13 @@ Use null for unknown numbers, false for unknown booleans.`
 
   const generateNotes = () => {
     let n = `AUS RESCUE™ v2.0 — LO NOTES\n${new Date().toLocaleDateString()} | LoanBeacons™ | Patent Pending\n${'─'.repeat(45)}\n\n`;
-    n += `PROGRAM: ${PROGRAMS[program].label} | FINDING: ${currentFinding}\n`;
+    n += `PROGRAM: ${PROGRAMS[program].label} | FINDING: ${currentFinding} | LOAN PURPOSE: ${profile.loanPurpose}\n`;
     if (profile.creditScore) n += `Credit: ${profile.creditScore} | DTI: ${profile.dti}% | Reserves: ${profile.reserves} months\n\n`;
+    const stacks = detectRiskStacks(profile, profile.loanPurpose, currentFinding);
+    if (stacks.length) {
+      n += `RISK STACKS DETECTED:\n`;
+      stacks.forEach(s => { n += `  🚨 ${s.title}\n  ${s.detail}\n  Action: ${s.action}\n\n`; });
+    }
     if (flaggedDuplicates.length) {
       n += `DUPLICATE DEBT FLAGS:\n`;
       flaggedDuplicates.forEach(i => { n += `  ⚠️ ${DUPLICATE_FLAGS[i].label}\n  Fix: ${DUPLICATE_FLAGS[i].fix}\n\n`; });
@@ -477,6 +545,23 @@ Use null for unknown numbers, false for unknown booleans.`
     alert('LO Notes copied to clipboard!');
   };
 
+  const copyBorrowerScript = () => {
+    const isCashOut = profile.loanPurpose === 'cashout';
+    const riskFactors = [
+      +profile.dti > 43 && 'elevated DTI',
+      +profile.creditScore < 680 && 'recent credit activity',
+      +profile.reserves < 3 && 'limited reserves',
+    ].filter(Boolean);
+    const script = `"Your file didn't meet automated ${PROGRAMS[program].label} approval today${isCashOut ? ' — and because this is a cash-out refinance, manual underwriting is not permitted under agency guidelines' : ''}. The main factors were ${riskFactors.length ? riskFactors.join(', ') : 'a combination of risk factors'}.
+
+My next step is to ${isCashOut ? 'verify your mortgage payment history, confirm all debt payoffs are documented correctly, and update DU with any additional assets or income you can provide' : 'review your credit profile, identify any debts we can pay off or restructure, and resubmit with updated figures'}. Often these updates flip the loan to an approval on resubmission.
+
+${isCashOut ? 'If needed, we also have FHA cash-out and Non-QM cash-out as backup options. ' : ''}I'll guide you every step of the way and keep you updated on every submission."`;
+    navigator.clipboard.writeText(script).catch(() => {});
+    addLog('Borrower script copied to clipboard');
+    alert('Borrower script copied to clipboard!');
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* HEADER */}
@@ -489,7 +574,7 @@ Use null for unknown numbers, false for unknown booleans.`
                 <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">Module 8</span>
               </div>
               <h1 className="text-2xl font-bold">AUS Rescue™</h1>
-              <p className="text-indigo-200 text-sm mt-0.5">23 Strategies · Program Switch Analysis · Duplicate Debt Detection</p>
+              <p className="text-indigo-200 text-sm mt-0.5">23 Strategies · Program Switch Analysis · Duplicate Debt Detection · Risk Stack Intelligence</p>
             </div>
             <div className="flex flex-col items-end gap-2">
               <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-400/30 font-semibold">● LIVE</span>
@@ -504,7 +589,7 @@ Use null for unknown numbers, false for unknown booleans.`
                 <select value={selectedScenarioId} onChange={e => handleScenarioSelect(e.target.value)}
                   className="bg-slate-800 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 min-w-[200px]">
                   <option value="">— Select Scenario —</option>
-                  {scenarios.map(s => <option key={s.id} value={s.id}>{s.scenarioName || s.borrowerName || s.id.slice(0,8)}</option>)}
+                  {scenarios.map(s => <option key={s.id} value={s.id}>{s.scenarioName || s.borrowerName || s.id.slice(0, 8)}</option>)}
                 </select>
               )}
             </div>
@@ -542,7 +627,7 @@ Use null for unknown numbers, false for unknown booleans.`
                           {isParsing ? 'Parsing AUS findings…' : parseResult ? `Parsed: ${parseResult.fileName}` : 'Upload DU or LPA Findings PDF'}
                         </p>
                         <p className="text-xs text-slate-400 mt-0.5">
-                          {isParsing ? 'AI is reading the document and auto-filling fields…' : parseResult ? `Fields extracted: ${parseResult.fieldsFound.join(' · ')}` : 'AI auto-populates finding, DTI, credit score, reserves, and issue categories'}
+                          {isParsing ? 'AI is reading the document and auto-filling fields…' : parseResult ? `Fields extracted: ${parseResult.fieldsFound.join(' · ')}` : 'AI auto-populates finding, DTI, credit score, reserves, MSG IDs, and issue categories'}
                         </p>
                       </div>
                     </div>
@@ -574,6 +659,27 @@ Use null for unknown numbers, false for unknown booleans.`
                     </div>
                   )}
 
+                  {/* MSG IDs from parsed PDF */}
+                  {parseResult?.msgIds?.length > 0 && (
+                    <div className="mt-3 border-t border-emerald-200 pt-3">
+                      <p className="text-xs font-bold text-emerald-700 mb-1.5">DU Message IDs detected:</p>
+                      <div className="space-y-2">
+                        {parseResult.msgIds.map(id => {
+                          const msg = DU_MSG_IDS[id];
+                          return msg ? (
+                            <div key={id} className={`rounded-lg border px-3 py-2 text-xs ${msg.severity === 'critical' ? 'bg-red-50 border-red-200' : msg.severity === 'high' ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+                              <p className={`font-bold ${msg.severity === 'critical' ? 'text-red-700' : msg.severity === 'high' ? 'text-amber-700' : 'text-slate-600'}`}>MSG {id} — {msg.title}</p>
+                              <p className="text-slate-600 mt-0.5 leading-relaxed">{msg.explanation}</p>
+                              <p className="font-semibold text-slate-700 mt-1">📌 {msg.action}</p>
+                            </div>
+                          ) : (
+                            <span key={id} className="text-xs bg-white border border-slate-200 text-slate-600 px-2 py-0.5 rounded-full inline-block">MSG {id}</span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Parse Error */}
                   {parseError && (
                     <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
@@ -585,6 +691,7 @@ Use null for unknown numbers, false for unknown booleans.`
                 <p className="text-xs text-slate-400 mt-1.5 ml-1">Or fill in the fields manually below ↓</p>
               </div>
 
+              {/* Numeric fields */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
                 {[
                   { k: 'creditScore', l: 'Credit Score', ph: '720' },
@@ -601,7 +708,20 @@ Use null for unknown numbers, false for unknown booleans.`
                   </div>
                 ))}
               </div>
-              <div className="flex flex-wrap gap-4 mb-4">
+
+              {/* Loan Purpose + Checkboxes */}
+              <div className="flex flex-wrap items-center gap-4 mb-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1">Loan Purpose</label>
+                  <div className="flex gap-2">
+                    {[['purchase', 'Purchase'], ['rateTerm', 'Rate & Term Refi'], ['cashout', 'Cash-Out Refi']].map(([val, label]) => (
+                      <button key={val} onClick={() => setProfile(prev => ({ ...prev, loanPurpose: val }))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border-2 transition-all ${profile.loanPurpose === val ? (val === 'cashout' ? 'border-red-600 bg-red-600 text-white' : 'border-indigo-600 bg-indigo-600 text-white') : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 {[{ k: 'isVeteran', l: 'Veteran/Military' }, { k: 'isRuralProperty', l: 'Rural Property' }, { k: 'isSelfEmployed', l: 'Self-Employed' }, { k: 'hasRecentBankruptcy', l: 'Recent BK/FC' }].map(f => (
                   <label key={f.k} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={profile[f.k]} onChange={e => setProfile(prev => ({ ...prev, [f.k]: e.target.checked }))} className="rounded" />
@@ -609,6 +729,8 @@ Use null for unknown numbers, false for unknown booleans.`
                   </label>
                 ))}
               </div>
+
+              {/* AUS Finding */}
               <div>
                 <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Current AUS Finding — {PROGRAMS[program].agency}</label>
                 <div className="flex flex-wrap gap-2">
@@ -623,6 +745,8 @@ Use null for unknown numbers, false for unknown booleans.`
                   })}
                 </div>
               </div>
+
+              {/* Positive finding banner */}
               {isPositive && (
                 <div className="mt-4 bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center gap-3">
                   <span className="text-3xl">🎉</span>
@@ -632,12 +756,47 @@ Use null for unknown numbers, false for unknown booleans.`
                   </div>
                 </div>
               )}
+
+              {/* Needs rescue — risk stacks + borrower script */}
               {needsRescue && (
-                <div className="mt-4 bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3">
-                  <span className="text-3xl">🚨</span>
-                  <div>
-                    <p className="text-red-800 font-bold">{currentFinding} on {PROGRAMS[program].label} — AUS Rescue Active</p>
-                    <p className="text-red-600 text-sm">Use the tabs below to run strategies, evaluate alternate programs, and check for duplicate debts.</p>
+                <div className="mt-4 space-y-3">
+                  {/* Base rescue banner */}
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3">
+                    <span className="text-3xl">🚨</span>
+                    <div>
+                      <p className="text-red-800 font-bold">{currentFinding} on {PROGRAMS[program].label} — AUS Rescue Active</p>
+                      <p className="text-red-600 text-sm">Use the tabs below to run strategies, evaluate alternate programs, and check for duplicate debts.</p>
+                    </div>
+                  </div>
+
+                  {/* Combination Risk Stacks */}
+                  {detectRiskStacks(profile, profile.loanPurpose, currentFinding).map((stack, i) => (
+                    <div key={i} className={`rounded-xl border p-4 ${stack.severity === 'critical' ? 'bg-red-50 border-red-300' : 'bg-amber-50 border-amber-300'}`}>
+                      <div className="flex items-start gap-2">
+                        <span className="text-lg">{stack.severity === 'critical' ? '🚫' : '⚠️'}</span>
+                        <div>
+                          <p className={`font-bold text-sm ${stack.severity === 'critical' ? 'text-red-800' : 'text-amber-800'}`}>{stack.title}</p>
+                          <p className={`text-xs mt-1 leading-relaxed ${stack.severity === 'critical' ? 'text-red-700' : 'text-amber-700'}`}>{stack.detail}</p>
+                          <p className={`text-xs mt-2 font-semibold ${stack.severity === 'critical' ? 'text-red-800' : 'text-amber-800'}`}>📌 {stack.action}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Borrower Script */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">💬 Borrower Talking Points</p>
+                      <button onClick={copyBorrowerScript}
+                        className="bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors">
+                        📋 Copy Script
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-500 italic leading-relaxed">
+                      "Your file didn't meet automated {PROGRAMS[program].label} approval today
+                      {profile.loanPurpose === 'cashout' ? ' — and because this is a cash-out refinance, manual underwriting is not permitted under agency guidelines' : ''}.
+                      My next step is to review your profile and resubmit with updated figures. I'll guide you every step of the way."
+                    </p>
                   </div>
                 </div>
               )}
@@ -745,10 +904,8 @@ Use null for unknown numbers, false for unknown booleans.`
               {activeTab === 'program-switch' && (
                 <div className="p-5">
                   <p className="text-slate-400 text-xs mb-4 leading-relaxed">Enter loan profile in Step 1 to see program fit analysis. The goal of AUS Rescue™ is to get the loan approved — even if the program must change.</p>
-
-                  {/* Decision Tree */}
                   <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 mb-5">
-                    <p className="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-2">📋 Program Decision Tree (from AUS Rescue Strategy Matrix)</p>
+                    <p className="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-2">📋 Program Decision Tree</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs text-indigo-700">
                       {[
                         ['Credit 580–679 + DTI 50–57% + Few Reserves', 'FHA (only viable path)'],
@@ -759,12 +916,12 @@ Use null for unknown numbers, false for unknown booleans.`
                         ['Rural + 0% Down + DTI <29/41', 'USDA'],
                         ['High Assets + Low/Irregular Income', 'Non-QM Asset Depletion'],
                         ['Recent BK 12–24 months + Rebuilt Credit', 'Non-QM (bridge to agency)'],
-                      ].map(([scenario, program], i) => (
-                        <p key={i}>• {scenario} → <strong>{program}</strong></p>
+                        ['Cash-Out + Refer with Caution', 'FHA Cash-Out or Non-QM Cash-Out'],
+                      ].map(([scenario, prog], i) => (
+                        <p key={i}>• {scenario} → <strong>{prog}</strong></p>
                       ))}
                     </div>
                   </div>
-
                   {programResults.length === 0 ? (
                     <div className="text-center py-10 bg-slate-50 rounded-xl">
                       <p className="text-4xl mb-2">📊</p>
@@ -857,6 +1014,7 @@ Use null for unknown numbers, false for unknown booleans.`
               <div className="space-y-2 text-xs">
                 {[
                   ['Program', PROGRAMS[program].label],
+                  ['Loan Purpose', profile.loanPurpose === 'cashout' ? '🔴 Cash-Out' : profile.loanPurpose === 'rateTerm' ? 'Rate & Term' : 'Purchase'],
                   ['Strategies', relevantStrategies.length],
                   ['High Prob (85%+)', relevantStrategies.filter(s => (s.probability[program] || 0) >= 85).length],
                   ['Duplicate Flags', flaggedDuplicates.length || '—'],
@@ -876,11 +1034,17 @@ Use null for unknown numbers, false for unknown booleans.`
               <button onClick={generateNotes} className="w-full mt-4 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold py-2.5 rounded-lg transition-colors">
                 📋 Export Full LO Notes
               </button>
+              {needsRescue && (
+                <button onClick={copyBorrowerScript} className="w-full mt-2 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold py-2.5 rounded-lg transition-colors">
+                  💬 Copy Borrower Script
+                </button>
+              )}
             </div>
 
             <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl p-4 text-white">
               <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">⚠️ Critical Rules</h3>
               <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
+                <p><span className="text-red-400 font-bold">Cash-Out + RWC:</span> Manual UW NOT permitted. Hard stop.</p>
                 <p><span className="text-amber-400 font-bold">10-Month Rule:</span> Conventional ONLY. Never FHA/VA/USDA.</p>
                 <p><span className="text-amber-400 font-bold">Student Loans:</span> Fannie: 1% or IDR. FHA: 0.5% or IDR (greater). VA: 5% or actual.</p>
                 <p><span className="text-amber-400 font-bold">Census Tract:</span> HomeReady/HP income limits WAIVED in eligible tracts.</p>
