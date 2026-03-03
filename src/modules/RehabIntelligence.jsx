@@ -125,7 +125,7 @@ function Step1({ form, setForm, scenarios, showScenarioLoader, loadingScenarios,
             : scenarios.length === 0 ? <div style={{ fontSize: 12, color: '#94a3b8' }}>No scenarios found.</div>
             : scenarios.map(s => (
               <div key={s.id} onClick={() => applyScenario(s)} style={{ padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13, color: '#0f172a', marginBottom: 4, background: '#fff', border: '1px solid #e2e8f0' }}>
-                <span style={{ fontWeight: 600 }}>{s.borrowerName || 'Unnamed'}</span>
+            <span style={{ fontWeight: 600 }}>{s.firstName ? s.firstName + ' ' + (s.lastName || '') : s.scenarioName || 'Unnamed'}</span>
                 {s.propertyAddress && <span style={{ color: '#94a3b8', marginLeft: 8, fontSize: 11 }}>{s.propertyAddress}</span>}
                 {s.purchasePrice > 0 && <span style={{ color: '#64748b', marginLeft: 8, fontSize: 11 }}>${Number(s.purchasePrice).toLocaleString()}</span>}
               </div>
@@ -356,26 +356,44 @@ export default function RehabIntelligence() {
     setLoadingScenarios(true);
     setShowScenarioLoader(true);
     try {
-      const user = getAuth().currentUser;
-      if (!user) { setLoadingScenarios(false); return; }
-      const q = query(collection(db, 'scenarios'), where('userId', '==', user.uid), orderBy('updatedAt', 'desc'));
+      const q = query(collection(db, 'scenarios'));
       const snap = await getDocs(q);
       setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (e) { console.error('loadScenarios:', e); setScenarios([]); }
     setLoadingScenarios(false);
   };
 
-  const applyScenario = (s) => {
-    const u = {};
-    if (s.borrowerName)    u.borrowerName    = s.borrowerName;
-    if (s.creditScore)     u.creditScore     = Number(s.creditScore);
-    if (s.propertyAddress) u.propertyAddress = s.propertyAddress;
-    if (s.purchasePrice)   u.purchasePrice   = Number(s.purchasePrice);
-    if (s.propertyType)    u.propertyType    = s.propertyType;
-    if (s.loanPurpose)     u.loanPurpose     = s.loanPurpose;
-    setForm(f => ({ ...f, ...u }));
-    setShowScenarioLoader(false);
-  };
+    const applyScenario = (s) => {
+  const u = {};
+  // Name
+  if (s.firstName || s.lastName) u.borrowerName = ((s.firstName || '') + ' ' + (s.lastName || '')).trim();
+  else if (s.borrowerName) u.borrowerName = s.borrowerName;
+  // Credit score
+  if (s.creditScore) u.creditScore = Number(s.creditScore);
+  // Address — build from parts
+  if (s.streetAddress || s.city) {
+    u.propertyAddress = [s.streetAddress, s.city, s.state, s.zipCode].filter(Boolean).join(', ');
+  } else if (s.propertyAddress) {
+    u.propertyAddress = s.propertyAddress;
+  }
+  // Purchase price — stored as propertyValue
+  if (s.propertyValue) u.purchasePrice = Number(s.propertyValue);
+  else if (s.purchasePrice) u.purchasePrice = Number(s.purchasePrice);
+  // Property type — map display names to codes
+  const typeMap = { 'Single Family': 'SFR', 'Condo': 'Condo', 'PUD': 'PUD', '2-4 Unit': '2-4 Unit', 'Manufactured': 'Manufactured' };
+  if (s.propertyType) u.propertyType = typeMap[s.propertyType] || s.propertyType;
+  // Loan purpose
+  if (s.loanPurpose) u.loanPurpose = s.loanPurpose;
+  // VA eligibility
+  if (s.isVAEligible !== undefined) u.isVAEligible = s.isVAEligible;
+  // Occupancy
+  if (s.occupancy === 'Primary Residence') { u.isOwnerOccupied = true; u.borrowerType = 'PRIMARY'; }
+  else if (s.occupancy === 'Second Home') { u.isOwnerOccupied = false; u.borrowerType = 'SECONDARY'; }
+  else if (s.occupancy === 'Investment') { u.isOwnerOccupied = false; u.borrowerType = 'INVESTMENT'; }
+
+  setForm(f => ({ ...f, ...u }));
+setShowScenarioLoader(false);
+};
 
   const canAdvance = () => {
     if (step === 1) return !!form.loanPurpose;
