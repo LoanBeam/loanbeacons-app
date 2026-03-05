@@ -25,6 +25,34 @@
  * ============================================================
  */
 import { useSearchParams } from 'react-router-dom'
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import { MODULE_KEYS } from '../constants/decisionRecordConstants';
+```
+
+**Edit 2 — Add hook** (Ctrl+F to find):
+```
+const [searchParams] = useSearchParams();
+const { reportFindings } = useDecisionRecord(scenarioId);
+```
+
+**Edit 3 — Add reportFindings after setResults** (Ctrl+F to find):
+```
+setResults(engineResult);
+await reportFindings(MODULE_KEYS.LENDER_MATCH, {
+  top_lender:             engineResult?.agency?.eligible?.[0]?.lenderName || '',
+  top_score:              engineResult?.agency?.eligible?.[0]?.fitScore || null,
+  agency_matches:         engineResult?.agency?.eligible?.length || 0,
+  nonqm_matches:          engineResult?.nonQM?.eligible?.length || 0,
+  non_qm_path:            (engineResult?.nonQM?.eligible?.length || 0) > 0,
+  loan_type:              form.loanType || '',
+  income_doc_type:        form.incomeDocType || '',
+  credit_score:           Number(form.creditScore) || null,
+  loan_amount:            Number(form.loanAmount) || null,
+  property_value:         Number(form.propertyValue) || null,
+  ltv:                    computedLTV || null,
+  occupancy:              form.occupancy || '',
+  property_type:          form.propertyType || '',
+});
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { db } from "../firebase/config";
 import { getFunctions } from "firebase/functions";
