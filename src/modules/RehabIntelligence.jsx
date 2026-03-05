@@ -7,7 +7,13 @@ import { db } from '../firebase/config';
 import REHAB_PRODUCTS from '../data/rehabProducts.js';
 import { buildRehabSummary, estimateRenovationCosts, generateTalkingPoints, RENOVATION_COST_RANGES } from '../engines/RehabEngine.js';
 import RehabSummaryCard from '../components/RehabSummaryCard.jsx';
-
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import { MODULE_KEYS } from '../constants/decisionRecordConstants';
+```
+const [searchParams] = useSearchParams();
+const scenarioId = searchParams.get('scenario') || null;
+const { reportFindings } = useDecisionRecord(scenarioId);
+const handleProductSelect = async (productId) => {
 const STEPS = [
   { id: 1, label: 'Loan Purpose', icon: '🏦', short: 'Purpose' },
   { id: 2, label: 'Property & Price', icon: '🏠', short: 'Property' },
@@ -405,8 +411,20 @@ setShowScenarioLoader(false);
   const advance = () => { if (step < 5) { if (step === 3) recompute(); setStep(s => s + 1); } };
   const back = () => { if (step > 1) setStep(s => s - 1); };
 
-  const handleProductSelect = (productId) => {
+ const handleProductSelect = async (productId) => {
     setSelectedProductId(productId);
+    await reportFindings(MODULE_KEYS.REHAB_INTELLIGENCE, {
+  selected_product:    productId,
+  loan_purpose:        summary?.loanPurpose || '',
+  rehab_cost:          summary?.rehabCost || null,
+  arv:                 summary?.aivData?.arv || null,
+  current_value:       summary?.aivData?.currentValue || null,
+  max_loan_amount:     summary?.loanCalc?.maxLoanAmount || null,
+  eligible_products:   summary?.screening?.eligibleProducts?.map(p => p.product?.name).join(', ') || '',
+  borrower_name:       summary?.borrowerName || '',
+  property_address:    summary?.propertyAddress || '',
+  has_structural_work: summary?.hasStructuralWork || false,
+});
     if (summary && summary.screening.results[productId] && summary.screening.results[productId].eligible) {
       const pts = generateTalkingPoints({ productId, loanCalc: summary.screening.results[productId].loanCalc, aivData: summary.aivData, rehabCost: summary.rehabCost, loanPurpose: summary.loanPurpose });
       setSummary(prev => ({ ...prev, talkingPoints: pts, selectedProduct: prev.screening.results[productId] }));

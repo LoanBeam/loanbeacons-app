@@ -378,4 +378,6 @@ exports.retryScenarioShare = onCall(async (request) => {
     });
     throw new Error("Retry failed: " + err.message);
   }
-});
+}); 
+const { lockDecisionRecord } = require('./src/lockDecisionRecord.cjs'); 
+exports.lockDecisionRecord = lockDecisionRecord; 
