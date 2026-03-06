@@ -9,6 +9,7 @@ import {
   calculateAMIPercent,
 } from '../../engines/dpa/dpaLayeringEngine.js';
 import { PROGRAM_TYPE_LABELS } from '../../data/dpa/dpaPrograms.js';
+import { useDecisionRecord } from '../../hooks/useDecisionRecord';
 
 const STEPS = ['Scenario Setup', 'Eligible Programs', 'Stack Builder', 'Lender Match & Output'];
 
@@ -21,6 +22,7 @@ const US_STATES = [
 
 export default function DPAIntelligence() {
   const [searchParams] = useSearchParams();
+  const { reportFindings } = useDecisionRecord();
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [scenarioLoaded, setScenarioLoaded] = useState(false);
@@ -568,7 +570,22 @@ export default function DPAIntelligence() {
             )}
 
             <button
-              onClick={() => setStep(3)}
+              onClick={() => {
+              reportFindings({
+                module: 'DPA Intelligence™',
+                moduleId: 'module-07',
+                summary: `${candidateStacks.length} DPA stack(s) identified in ${form.state}. Selected stack: ${candidateStacks[selectedStack ?? 0]?.stackType ?? 'N/A'} — ${candidateStacks[selectedStack ?? 0]?.totalAssistance ? '$' + Number(candidateStacks[selectedStack ?? 0].totalAssistance).toLocaleString() : '—'} total assistance.`,
+                details: {
+                  state: form.state,
+                  loanType: form.loanType,
+                  eligiblePrograms: eligiblePrograms.length,
+                  stacksGenerated: candidateStacks.length,
+                  selectedStack: candidateStacks[selectedStack ?? 0] ?? null,
+                  amiPercent,
+                },
+              });
+              setStep(3);
+            }}
               disabled={selectedStack === null && candidateStacks.length > 0 ? false : false}
               className="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-lg transition-all"
             >
