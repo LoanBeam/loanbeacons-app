@@ -173,7 +173,7 @@ export default function DecisionRecord() {
   // ── Load scenarios dropdown ──────────────────────────────────────
   useEffect(() => {
     // scenarios collection has no userId field — query without filter
-    const q = query(collection(db, 'scenarios'), orderBy('createdAt', 'desc'));
+ const q = query(collection(db, 'scenarios'));
     const unsub = onSnapshot(q, snap => {
       setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, err => {
@@ -189,10 +189,9 @@ export default function DecisionRecord() {
     setNoRecord(false);
 
     const q = query(
-      collection(db, 'decisionRecords'),
-      where('scenarioId', '==', selectedId),
-      orderBy('record_version', 'desc')
-    );
+  collection(db, 'decisionRecords'),
+  where('scenarioId', '==', selectedId)
+);
 
     const unsub = onSnapshot(q, snap => {
       if (snap.empty) {

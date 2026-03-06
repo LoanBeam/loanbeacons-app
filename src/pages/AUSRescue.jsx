@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { db } from '../firebase/config';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc, query, orderBy, limit, getDocs as getDocsQ } from 'firebase/firestore';
 
 // ─── PROGRAM DEFINITIONS ────────────────────────────────────────────────────────
 const PROGRAMS = {
@@ -286,6 +288,7 @@ const CATS = { dti: { label: 'DTI / Payment', icon: '📊' }, credit: { label: '
 
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────────
 export default function AUSRescue() {
+  const [searchParams] = useSearchParams();
   const [scenarios, setScenarios] = useState([]);
   const [selectedScenarioId, setSelectedScenarioId] = useState('');
   const [selectedScenario, setSelectedScenario] = useState(null);
@@ -299,12 +302,44 @@ export default function AUSRescue() {
   const [auditLog, setAuditLog] = useState([]);
   const [expandedId, setExpandedId] = useState(null);
   const [isParsing, setIsParsing] = useState(false);
+  const { reportFindings } = useDecisionRecord(selectedScenarioId);
   const [parseResult, setParseResult] = useState(null); // { fileName, fieldsFound }
   const [parseError, setParseError] = useState('');
 
   useEffect(() => {
     getDocs(collection(db, 'scenarios'))
-      .then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+     .then(async snap => {
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  setScenarios(list);
+  const urlId = searchParams.get('scenarioId');
+  if (urlId) {
+    setSelectedScenarioId(urlId);
+    const sc = list.find(s => s.id === urlId);
+    if (sc) setProfile(prev => ({ ...prev, creditScore: sc.creditScore || '', dti: sc.dti || '', downPayment: sc.downPayment || '' }));
+// Load most recent AUS parse
+try {
+  const runsRef = collection(db, 'ausRescueHistory', urlId, 'runs');
+  const q = query(runsRef, orderBy('parsedAt', 'desc'), limit(1));
+  const snap = await getDocsQ(q);
+  if (!snap.empty) {
+    const last = snap.docs[0].data();
+    setProgram(last.program || 'conventional');
+    setCurrentFinding(last.finding || '');
+    setProfile(prev => ({
+      ...prev,
+      creditScore: last.creditScore?.toString() || prev.creditScore,
+      dti: last.backEndDTI?.toString() || prev.dti,
+      frontEndDTI: last.frontEndDTI?.toString() || prev.frontEndDTI,
+      reserves: last.reservesMonths?.toString() || prev.reserves,
+      downPayment: last.downPaymentPct?.toString() || prev.downPayment,
+    }));
+    if (last.detectedIssues?.length) setSelectedCats(last.detectedIssues);
+    setParseResult({ fileName: last.fileName, fieldsFound: ['Loaded from history'], riskFactors: last.riskFactors || [] });
+    addLog(`Restored: ${last.fileName} (${last.parsedAt?.toDate?.()?.toLocaleDateString() || 'previous session'})`);
+  }
+} catch (e) { console.error('History load failed', e); }
+  }
+})
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
@@ -340,11 +375,12 @@ export default function AUSRescue() {
       if (!apiKey) throw new Error('VITE_ANTHROPIC_API_KEY not set in .env file');
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
+       headers: {
+  'Content-Type': 'application/json',
+  'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+  'anthropic-version': '2023-06-01',
+  'anthropic-dangerous-direct-browser-access': 'true',
+},
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 1000,
@@ -418,6 +454,24 @@ Use null for unknown numbers, false for unknown booleans.`
       ].filter(Boolean);
       setParseResult({ fileName: file.name, fieldsFound, riskFactors: parsed.riskFactors || [] });
       addLog(`Parsed: ${fieldsFound.join(', ')}`);
+      if (selectedScenarioId) {
+  const runRef = doc(collection(db, 'ausRescueHistory', selectedScenarioId, 'runs'));
+  await setDoc(runRef, {
+    finding: normalizedFinding,
+    program: detectedProgram,
+    creditScore: parsed.creditScore || null,
+    backEndDTI: parsed.backEndDTI || null,
+    frontEndDTI: parsed.frontEndDTI || null,
+    reservesMonths: parsed.reservesMonths || null,
+    downPaymentPct: parsed.downPaymentPct || null,
+    riskFactors: parsed.riskFactors || [],
+    detectedIssues: parsed.detectedIssues || [],
+    fileName: file.name,
+    parsedAt: new Date(),
+  });
+  addLog(`Saved to history`);
+}
+      reportFindings({ finding: normalizedFinding, program: detectedProgram, creditScore: parsed.creditScore, backEndDTI: parsed.backEndDTI, frontEndDTI: parsed.frontEndDTI, reservesMonths: parsed.reservesMonths, riskFactors: parsed.riskFactors, source: 'pdf_parse' });
     } catch (err) {
       const msg = err.message.includes('VITE_ANTHROPIC_API_KEY')
         ? 'Add VITE_ANTHROPIC_API_KEY=your_key to your .env file to enable PDF parsing'

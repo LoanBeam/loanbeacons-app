@@ -313,18 +313,23 @@ function ScenarioDetail() {
             </div>
           </Section>
         </div>
-      </div>
-<div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-6 mx-4 sm:mx-6 lg:mx-8">
-        <h2 className="text-lg font-bold text-gray-900 mb-1">🧭 What's Next?</h2>
-        <p className="text-sm text-gray-500 mb-4">Continue the Canonical Sequence with this scenario pre-loaded.</p>
-        <div className="flex flex-wrap gap-3">
-          <a href={`/lender-match?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">🎯 Lender Match™</a>
-          <a href={`/dpa-intelligence?scenarioId=${scenario.id}`} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">💰 DPA Intelligence™</a>
-          <a href={`/rate-buydown?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">📉 Rate Buydown™</a>
-          <a href={`/arm-structure?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">📈 ARM Structure™</a>
-          <a href={`/mi-optimizer?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">🛡️ MI Optimizer™</a>
-          <a href={`/debt-consolidation?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-gray-700 hover:bg-gray-800 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">💳 Debt Consolidation™</a>
-        </div>
+      </div><div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-6 mx-4 sm:mx-6 lg:mx-8">
+  <h2 className="text-lg font-bold text-gray-900 mb-1">🚀 What's Next?</h2>
+  <p className="text-sm text-gray-500 mb-4">Continue the Canonical Sequence with this scenario pre-loaded.</p>
+  <div className="flex flex-wrap gap-3">
+  <a href={`/lender-match?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏦 Lender Match™</a>
+  <a href={`/aus-rescue?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🚨 AUS Rescue™</a>
+  <a href={`/dpa-intelligence?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏠 DPA Intelligence™</a>
+  <a href={`/fha-streamline?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📋 FHA Streamline™</a>
+  <a href={`/va-irrrl?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🎖️ VA IRRRL™</a>
+  <a href={`/usda-intelligence?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-lime-600 hover:bg-lime-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🌾 USDA Intelligence™</a>
+  <a href={`/rate-buydown?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💰 Rate Buydown™</a>
+  <a href={`/arm-structure?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📊 ARM Structure™</a>
+  <a href={`/mi-optimizer?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🛡️ MI Optimizer™</a>
+  <a href={`/debt-consolidation?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💼 Debt Consolidation™</a>
+  <a href={`/rehab-intelligence?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🔨 Rehab Intelligence™</a>
+  <a href={`/decision-record?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-slate-700 hover:bg-slate-800 text-white font-semibold px-4 py-2 rounded-lg text-sm">⚖️ Decision Record™</a>
+</div>
       </div>
     </main>
   )
