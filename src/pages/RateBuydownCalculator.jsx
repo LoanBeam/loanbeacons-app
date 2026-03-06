@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { collection, query, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { collection, query, where, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 function RateBuydownCalculator() {
   const navigate = useNavigate();
@@ -116,7 +116,7 @@ function RateBuydownCalculator() {
       if (!rate || isNaN(rate)) return null;
 
       // Calculate upfront cost
-      const upfrontCostUsd = loanAmount * (price - 100) / 100;
+      const upfrontCostUsd = loanAmount * (price / 100);
       
       // Calculate monthly payment
       const monthlyRate = rate / 100 / 12;
@@ -220,6 +220,7 @@ function RateBuydownCalculator() {
 
   const exportToPDF = () => {
     alert('PDF export feature coming soon!');
+    // TODO: Implement PDF generation
   };
 
   const getBenefitColor = (score) => {

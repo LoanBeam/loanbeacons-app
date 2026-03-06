@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useDecisionRecord } from "../hooks/useDecisionRecord";
 
 const SHARE_TYPES = [
   { value: "AE_SUPPORT",       label: "I need AE support on this scenario" },
@@ -10,6 +11,7 @@ export default function AEShareForm({ onSend, sending, sent }) {
   const [emails, setEmails]       = useState([""]);
   const [shareType, setShareType] = useState("AE_SUPPORT");
   const [message, setMessage]     = useState("");
+  const { reportFindings } = useDecisionRecord();
 
   const addEmail = () => {
     if (emails.length < 5) setEmails([...emails, ""]);
@@ -28,6 +30,16 @@ export default function AEShareForm({ onSend, sending, sent }) {
   const handleSubmit = () => {
     const valid = emails.filter((e) => e.trim().includes("@"));
     if (valid.length === 0) return;
+    reportFindings({
+      module: 'AE Share Service™',
+      moduleId: 'module-BE7',
+      summary: `Scenario shared with ${valid.length} AE recipient(s). Purpose: ${shareType}.`,
+      details: {
+        shareType,
+        recipientCount: valid.length,
+        hasMessage: message.trim().length > 0,
+      },
+    });
     onSend(valid, shareType, message);
   };
 
