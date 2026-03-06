@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useDecisionRecord } from "../hooks/useDecisionRecord";
+import { useDecisionRecord } from "../../hooks/useDecisionRecord";
 
 const SHARE_TYPES = [
   { value: "AE_SUPPORT",       label: "I need AE support on this scenario" },

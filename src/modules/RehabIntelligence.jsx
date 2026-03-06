@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import REHAB_PRODUCTS, { RENOVATION_COST_RANGES } from '../data/rehabProducts.js';
+import REHAB_PRODUCTS from '../data/rehabProducts.js';
 import {
   buildRehabSummary,
   estimateRenovationCosts,
@@ -519,7 +519,7 @@ function Step3({ form, setForm }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {cat.items.map(item => {
               const isSelected = !!selected[item.key];
-              const range = RENOVATION_COST_RANGES[item.key];
+              const range = null;
               return (
                 <div
                   key={item.key}
