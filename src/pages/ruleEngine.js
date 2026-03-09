@@ -610,14 +610,67 @@ function _getFeasibility(results) {
 // and census-tract-waiver logic at edge cases. With the real 739 FICO entered in
 // the UI, the Rule Engine correctly ranks HomeReady #1.
 
+// ─── RATE SENSITIVITY ANALYSIS ───────────────────────────────────────────────
+/**
+ * rateSensitivity(profile, rule)
+ * Tests whether a .125 or .250 rate buydown can drop back-end DTI
+ * below the program's maxDTI threshold.
+ *
+ * @param {object} profile  - ruleEngineInput (needs interestRate, dti, frontEndDTI)
+ * @param {object} rule     - PROGRAM_RULES entry (needs maxDTI)
+ * @returns {{ targetRate, reduction, newDTI }} or null
+ */
+export function rateSensitivity(profile = {}, rule = {}) {
+  const { interestRate = 0, dti = 0, frontEndDTI = 0 } = profile;
+
+  // Require interest rate and back-end DTI
+  if (!interestRate || interestRate <= 0) return null;
+  if (!dti || dti <= 0) return null;
+
+  const maxDTI = rule.maxDTI || 50;
+
+  // Only relevant if DTI is the blocker (exceeds program max)
+  if (dti <= maxDTI) return null;
+
+  // 30-year amortization payment factor
+  const paymentFactor = (annualRate) => {
+    const r = annualRate / 1200;
+    if (r <= 0) return 0;
+    const pow = Math.pow(1 + r, 360);
+    return r * pow / (pow - 1);
+  };
+
+  const oldFactor = paymentFactor(interestRate);
+  if (oldFactor <= 0) return null;
+
+  // Estimate P&I contribution to gross-income ratio:
+  // P&I ≈ 72% of PITI (front-end payment); use frontEndDTI if available,
+  // otherwise fall back to 45% of back-end DTI as a conservative estimate.
+  const PI_RATIO = 0.72;
+  const piDtiContribution = frontEndDTI > 0
+    ? frontEndDTI * PI_RATIO
+    : dti * 0.45;
+
+  for (const reduction of [0.125, 0.250]) {
+    const newRate = Math.round((interestRate - reduction) * 1000) / 1000;
+    if (newRate <= 0) continue;
+
+    const newFactor = paymentFactor(newRate);
+    const factorRatio = newFactor / oldFactor;
+
+    // DTI improvement = P&I portion of DTI × (1 − new/old payment ratio)
+    const dtiImprovement = piDtiContribution * (1 - factorRatio);
+    const newDTI = Math.round((dti - dtiImprovement) * 100) / 100;
+
+    if (newDTI < maxDTI) {
+      return { targetRate: newRate, reduction, newDTI };
+    }
+  }
+
+  return null;
+}
+
 export const SHANNA_TEST_PROFILE = {
-  creditScore: 648,   // ← STRESS TEST (real score = 739; see note above)
-  dti: 48.5,
-  frontEndDTI: 33,
-  downPct: 5,
-  reserves: 3,
-  isVeteran: false,
-  isRuralProperty: false,
   isSelfEmployed: false,
   hasRecentBankruptcy: false,
   inCensusEligibleTract: true,   // Gwinnett Co. census tract — HomeReady income limit waived

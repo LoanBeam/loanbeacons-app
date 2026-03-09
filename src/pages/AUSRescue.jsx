@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, getDocs } from 'firebase/firestore';
-import { evaluatePrograms } from './ruleEngine';  // ← v2.0 Rule Engine
+import { collection, getDocs, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { evaluatePrograms, rateSensitivity, PROGRAM_RULES } from './ruleEngine';  // ← v2.0 Rule Engine
 
 // ─── PROGRAM DEFINITIONS (UI metadata — thresholds live in ruleEngine.js) ────
 const PROGRAMS = {
@@ -76,7 +76,7 @@ export default function AUSRescue() {
   const [currentFinding, setCurrentFinding] = useState('');
   const [programFindings, setProgramFindings] = useState({});   // ← v2: per-program findings map
   const [showAllFindings, setShowAllFindings] = useState(false); // ← toggle multi-program findings panel
-  const [profile, setProfile] = useState({ creditScore: '', dti: '', frontEndDTI: '', reserves: '', downPayment: '', isVeteran: false, isRuralProperty: false, isSelfEmployed: false, hasRecentBankruptcy: false, inCensusEligibleTract: false, exceedsIncomeLimit: false });
+  const [profile, setProfile] = useState({ creditScore: '', dti: '', frontEndDTI: '', reserves: '', downPayment: '', interestRate: '', isVeteran: false, isRuralProperty: false, isSelfEmployed: false, hasRecentBankruptcy: false, inCensusEligibleTract: false, exceedsIncomeLimit: false });
   const [selectedCats, setSelectedCats] = useState([]);
   const [activeTab, setActiveTab] = useState('strategies');
   const [flaggedDuplicates, setFlaggedDuplicates] = useState([]);
@@ -85,6 +85,7 @@ export default function AUSRescue() {
   const [isParsing, setIsParsing] = useState(false);
   const [parseResult, setParseResult] = useState(null);
   const [parseError, setParseError] = useState('');
+  const [writeBackDismissed, setWriteBackDismissed] = useState({});  // ← v2: tracks dismissed write-back prompts per program
 
   useEffect(() => {
     getDocs(collection(db, 'scenarios'))
@@ -119,6 +120,7 @@ export default function AUSRescue() {
     frontEndDTI:          +profile.frontEndDTI || 0,
     downPct:              +profile.downPayment || 0,
     reserves:             +profile.reserves || 0,
+    interestRate:         +profile.interestRate || 0,
     isVeteran:            profile.isVeteran,
     isRuralProperty:      profile.isRuralProperty,
     isSelfEmployed:       profile.isSelfEmployed,
@@ -176,6 +178,7 @@ export default function AUSRescue() {
   "frontEndDTI": number or null,
   "reservesMonths": number or null,
   "downPaymentPct": number or null,
+  "interestRate": number or null (look for Interest Rate, Note Rate, Proposed Rate, or any percentage near P&I payment / loan amount blocks),
   "isVeteran": boolean,
   "isSelfEmployed": boolean,
   "detectedIssues": array of applicable: "dti", "credit", "reserves", "income", "ltv", "program",
@@ -214,6 +217,7 @@ Use null for unknown numbers, false for unknown booleans.`
         frontEndDTI: parsed.frontEndDTI?.toString() || prev.frontEndDTI,
         reserves: parsed.reservesMonths?.toString() || prev.reserves,
         downPayment: parsed.downPaymentPct?.toString() || prev.downPayment,
+        interestRate: parsed.interestRate?.toString() || prev.interestRate,
         isVeteran: parsed.isVeteran || prev.isVeteran,
         isSelfEmployed: parsed.isSelfEmployed || prev.isSelfEmployed,
       }));
@@ -226,6 +230,7 @@ Use null for unknown numbers, false for unknown booleans.`
         parsed.frontEndDTI && 'Front-End DTI',
         parsed.reservesMonths && 'Reserves',
         parsed.downPaymentPct && 'Down Payment',
+        parsed.interestRate && 'Interest Rate',
         parsed.detectedIssues?.length && `${parsed.detectedIssues.length} issue categories`,
       ].filter(Boolean);
       setParseResult({ fileName: file.name, fieldsFound, riskFactors: parsed.riskFactors || [] });
@@ -413,6 +418,7 @@ Use null for unknown numbers, false for unknown booleans.`
                   { k: 'frontEndDTI', l: 'Front-End DTI %',    ph: '32'  },
                   { k: 'reserves',    l: 'Reserves (months)',  ph: '4'   },
                   { k: 'downPayment', l: 'Down Payment %',     ph: '5'   },
+                  { k: 'interestRate', l: 'Interest Rate %',   ph: '7.250' },
                 ].map(f => (
                   <div key={f.k}>
                     <label className="block text-xs font-semibold text-slate-400 mb-1">{f.l}</label>
@@ -823,6 +829,64 @@ Use null for unknown numbers, false for unknown booleans.`
                                   <span className="text-xs text-emerald-600 font-semibold">✓ No blockers identified</span>
                                 </div>
                               )}
+
+                              {/* Rate Sensitivity Row — Phase 2 */}
+                              {(() => {
+                                if (!ruleEngineInput?.interestRate) return null;
+                                if (r.eligible) return null;
+                                const rs = rateSensitivity(ruleEngineInput, PROGRAM_RULES[r.key] || { maxDTI: 50 });
+                                if (!rs) return null;
+                                const borrowerFirst = selectedScenario?.borrowerName?.split(' ')[0] || 'borrower';
+                                const dismissed = writeBackDismissed[r.key];
+                                return (
+                                  <div className="px-4 py-2.5 border-b border-amber-100 bg-amber-50/40">
+                                    <div className="flex items-start gap-1.5 mb-1">
+                                      <span className="text-amber-500 text-sm shrink-0">⚡</span>
+                                      <div>
+                                        <p className="text-xs font-bold text-amber-700">Rate Buydown Path</p>
+                                        <p className="text-xs text-amber-600 mt-0.5">
+                                          Reduce to <span className="font-black">{rs.targetRate}%</span> (−{rs.reduction}) → DTI drops to <span className="font-black">{rs.newDTI}%</span> → Flips to Eligible
+                                        </p>
+                                      </div>
+                                      <span className="ml-auto text-slate-300 cursor-pointer text-xs" title="Seller concessions, lender credits, or discount points may be used to achieve this rate. Consult your AE or pricing desk for confirmation.">ℹ</span>
+                                    </div>
+                                    {selectedScenarioId && !dismissed && (
+                                      <div className="mt-2 pt-2 border-t border-amber-100">
+                                        <p className="text-xs text-amber-700 mb-1.5">
+                                          Update <span className="font-bold">{borrowerFirst}</span>'s scenario rate to <span className="font-bold">{rs.targetRate}%</span>? PITI and DTI will recalculate on next load.
+                                        </p>
+                                        <div className="flex gap-2">
+                                          <button
+                                            onClick={async () => {
+                                              try {
+                                                await updateDoc(doc(db, 'scenarios', selectedScenarioId), {
+                                                  interestRate: rs.targetRate,
+                                                  interestRateUpdatedBy: 'AUS Rescue Rate Sensitivity',
+                                                  interestRateUpdatedAt: serverTimestamp(),
+                                                });
+                                                setWriteBackDismissed(prev => ({ ...prev, [r.key]: 'confirmed' }));
+                                                addLog(`Rate updated to ${rs.targetRate}% on ${borrowerFirst}'s scenario`);
+                                              } catch (e) {
+                                                console.error('Rate write-back failed:', e);
+                                              }
+                                            }}
+                                            className="text-xs bg-amber-500 hover:bg-amber-600 text-white font-bold px-3 py-1 rounded-lg transition-all">
+                                            Update Scenario
+                                          </button>
+                                          <button
+                                            onClick={() => setWriteBackDismissed(prev => ({ ...prev, [r.key]: 'dismissed' }))}
+                                            className="text-xs bg-white hover:bg-slate-50 text-slate-500 font-semibold px-3 py-1 rounded-lg border border-slate-200 transition-all">
+                                            Keep Exploring
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                    {dismissed === 'confirmed' && (
+                                      <p className="text-xs text-emerald-600 font-semibold mt-1">✓ Scenario rate updated to {rs.targetRate}%</p>
+                                    )}
+                                  </div>
+                                );
+                              })()}
 
                               {/* Key rule note */}
                               {r.notes && (

@@ -6,8 +6,12 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5174,
-    host: true,
     proxy: {
+      '/anthropic-api': {
+        target: 'https://api.anthropic.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/anthropic-api/, ''),
+      },
       '/census-geocoder': {
         target: 'https://geocoding.geo.census.gov',
         changeOrigin: true,
