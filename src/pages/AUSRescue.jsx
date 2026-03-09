@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
 import { collection, getDocs, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { evaluatePrograms, rateSensitivity, PROGRAM_RULES } from './ruleEngine';  // ← v2.0 Rule Engine
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
 
 // ─── PROGRAM DEFINITIONS (UI metadata — thresholds live in ruleEngine.js) ────
 const PROGRAMS = {
@@ -86,6 +87,7 @@ export default function AUSRescue() {
   const [parseResult, setParseResult] = useState(null);
   const [parseError, setParseError] = useState('');
   const [writeBackDismissed, setWriteBackDismissed] = useState({});  // ← v2: tracks dismissed write-back prompts per program
+const { reportFindings } = useDecisionRecord(selectedScenarioId)
 
   useEffect(() => {
     getDocs(collection(db, 'scenarios'))
@@ -95,7 +97,7 @@ export default function AUSRescue() {
   }, []);
 
   const addLog = msg => setAuditLog(p => [{ msg, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, ...p.slice(0, 24)]);
-
+  
   // ── v2: finding setter — keeps currentFinding AND programFindings in sync ──
   const setFinding = (finding, targetProgram = program) => {
     if (targetProgram === program) setCurrentFinding(finding);
@@ -134,6 +136,24 @@ export default function AUSRescue() {
     : null;
 
   const programResults = ruleResults?.results ?? [];
+  useEffect(() => {
+  if (!currentFinding || !ruleResults || !profile.creditScore || !profile.dti) return;
+  const activeRateSensitivity = ruleEngineInput
+    ? rateSensitivity(ruleEngineInput, PROGRAM_RULES[program] || { maxDTI: 50 })
+    : null;
+ reportFindings('AUS_RESCUE', {
+    creditScore:      profile.creditScore,
+    dti:              profile.dti,
+    interestRate:     profile.interestRate,
+    program,
+    feasibilityScore: ruleResults.feasibilityScore,
+    feasibilityLabel: ruleResults.feasibilityLabel,
+    primaryBlocker:   ruleResults.primaryBlocker,
+    ruleResults:      programResults,
+    rateSensitivity:  activeRateSensitivity,
+    timestamp:        new Date().toISOString(),
+  });
+}, [currentFinding, ruleResults]);
 
   // ── PDF PARSING ────────────────────────────────────────────────────────────
   const parsePDFWithClaude = async (file) => {
