@@ -312,6 +312,47 @@ export function evaluatePrograms(profile = {}, programFindings = {}) {
       else                         { baseScore -= 10; } // near floor
     }
 
+    // ── PROGRAM-FIT FICO SWEET SPOT ───────────────────────────────────────
+    // Each program has an ideal FICO range. Strong-credit borrowers should
+    // naturally surface in HomeReady/Conventional, not FHA. This ensures the
+    // Rule Engine proactively guides LOs to the RIGHT program from profile
+    // alone — before any findings are entered.
+    if (creditScore >= 620) { // only apply when FICO is eligible
+      const sweetSpots = {
+        fha:                 { ideal: [580, 679], note: 'FHA is optimized for 580–679; 680+ borrowers have better options' },
+        conventional:        { ideal: [680, 999], note: 'Conventional best at 680+' },
+        homeready:           { ideal: [660, 759], note: 'HomeReady sweet spot 660–759 with AMI eligibility' },
+        homepossible:        { ideal: [660, 759], note: 'Home Possible sweet spot 660–759' },
+        va:                  { ideal: [580, 999], note: 'VA viable across all eligible FICO ranges' },
+        usda:                { ideal: [640, 719], note: 'USDA sweet spot 640–719' },
+        jumbo:               { ideal: [740, 999], note: 'Jumbo best at 740+' },
+        nonqm_bankstatement: { ideal: [580, 679], note: 'Bank statement for lower FICO self-employed' },
+        nonqm_dscr:          { ideal: [620, 739], note: 'DSCR viable across investor FICO range' },
+        nonqm_assetdepletion:{ ideal: [680, 999], note: 'Asset depletion for high-asset borrowers' },
+        fha203k:             { ideal: [640, 699], note: 'FHA 203k best at 640–699' },
+      };
+      const spot = sweetSpots[key];
+      if (spot) {
+        const [lo, hi] = spot.ideal;
+        if (creditScore >= lo && creditScore <= hi) {
+          // In sweet spot — bonus
+          const bonus = creditScore >= 720 && lo <= 680 ? 8 : 5;
+          baseScore += bonus;
+          if (!strengths.find(s => s.includes('FICO'))) {
+            strengths.push(`FICO ${creditScore} in ideal range for ${rule.label}`);
+          }
+        } else if (creditScore > hi) {
+          // Over-qualified for this program — borrower has better options
+          const overBy = creditScore - hi;
+          const penalty = overBy > 80 ? 12 : overBy > 40 ? 7 : 3;
+          baseScore -= penalty;
+          if (key === 'fha' && creditScore >= 680) {
+            blockers.push(`FICO ${creditScore} — stronger programs available (HomeReady/Conventional)`);
+          }
+        }
+      }
+    }
+
     // ── BACK-END DTI ──────────────────────────────────────────────────────
     if (key !== 'nonqm_dscr') { // DSCR has no personal DTI
       if (dti > rule.maxDTI) {
@@ -550,15 +591,27 @@ function _getFeasibility(results) {
 }
 
 // ─── ACCEPTANCE TEST — SHANNA ARSCOTT SCENARIO ───────────────────────────────
-// Expected: PRIMARY_BLOCKER=DTI, Feasibility=LOW
+// Expected: PRIMARY_BLOCKER=DTI, Feasibility=HIGH (HomeReady Approve/Eligible confirms viable path)
 // Program probabilities: HomeReady≈92, HomePossible≈85, Conventional≈34, FHA≈22
 //
 // Run from browser console:
-//   import { runAcceptanceTest } from './ruleEngine';
-//   runAcceptanceTest();
+//   import('/src/pages/ruleEngine.js').then(m => m.runAcceptanceTest())
+//
+// ⚠️  STRESS-TEST PROFILE — NOT Shanna's actual loan data
+//
+// Shanna Arscott's REAL AUS findings (01/12/2026, Gwinnett Co. GA):
+//   Representative FICO: 739 (scores: 694, 739, 764)
+//   DTI: 48.29% | Income: $5,009/mo (≈44% of $113,500 AMI → under 80% limit)
+//   FHA:          Refer/Eligible       (DU GVT 4.1 — housing ratio exceeded threshold)
+//   Conventional: Approve/Ineligible   (DTI 50.98% on higher loan amount exceeded limit)
+//   HomeReady:    Approve/Eligible ✅  (DU 12.0 — CONFIRMED BEST PATH)
+//
+// This test profile intentionally uses creditScore=648 to stress-test DTI-blocker
+// and census-tract-waiver logic at edge cases. With the real 739 FICO entered in
+// the UI, the Rule Engine correctly ranks HomeReady #1.
 
 export const SHANNA_TEST_PROFILE = {
-  creditScore: 648,
+  creditScore: 648,   // ← STRESS TEST (real score = 739; see note above)
   dti: 48.5,
   frontEndDTI: 33,
   downPct: 5,
@@ -567,8 +620,8 @@ export const SHANNA_TEST_PROFILE = {
   isRuralProperty: false,
   isSelfEmployed: false,
   hasRecentBankruptcy: false,
-  inCensusEligibleTract: true,   // HomeReady income limit waived
-  exceedsIncomeLimit: true,       // income above 80% AMI (without census waiver would block)
+  inCensusEligibleTract: true,   // Gwinnett Co. census tract — HomeReady income limit waived
+  exceedsIncomeLimit: true,       // income above 80% AMI (census waiver overrides this)
 };
 
 export const SHANNA_TEST_FINDINGS = {
@@ -610,7 +663,7 @@ export function runAcceptanceTest() {
   const pbPass = primaryBlocker?.type === 'dti';
   const fsPass = feasibilityLabel === SHANNA_EXPECTED.feasibilityLabel;
   console.log(`${pbPass ? '✅' : '❌'} Primary Blocker: ${primaryBlocker?.type?.toUpperCase()} (expected DTI)`);
- console.log(`${fsPass ? '✅' : '❌'} Feasibility: ${feasibilityLabel} (expected ${SHANNA_EXPECTED.feasibilityLabel})`);
+  console.log(`${fsPass ? '✅' : '❌'} Feasibility: ${feasibilityLabel} (expected ${SHANNA_EXPECTED.feasibilityLabel})`);
 
   const allPass = r.every(Boolean) && pbPass && fsPass;
   console.log(`\n${allPass ? '🎉 ALL TESTS PASSED' : '⚠️ SOME TESTS FAILED'}`);

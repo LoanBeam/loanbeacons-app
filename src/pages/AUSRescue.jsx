@@ -656,60 +656,228 @@ Use null for unknown numbers, false for unknown booleans.`
               {/* ── PROGRAM SWITCH TAB ─────────────────────────────────────── */}
               {activeTab === 'program-switch' && (
                 <div className="p-5">
-                  <p className="text-slate-400 text-xs mb-4 leading-relaxed">
-                    Probabilities are computed by the v2 Rule Engine — deterministic FICO/DTI/LTV thresholds weighted by your actual AUS findings. Enter findings for multiple programs above to maximize accuracy.
+                  <p className="text-slate-400 text-xs mb-5 leading-relaxed">
+                    Probabilities are computed by the v2 Rule Engine — deterministic FICO/DTI/LTV thresholds weighted by actual AUS findings.
+                    Enter findings for multiple programs above to maximize accuracy.
                   </p>
 
-                  {/* Decision Tree */}
-                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 mb-5">
-                    <p className="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-2">📋 Program Decision Tree (from AUS Rescue Strategy Matrix)</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs text-indigo-700">
-                      {[
-                        ['Credit 580–679 + DTI 50–57% + Few Reserves',    'FHA (only viable path)'],
-                        ['Credit 680+ + DTI <50% + Good Reserves',        'HomeReady / Home Possible'],
-                        ['Self-Employed + Tax Write-Offs',                  'Non-QM Bank Statement'],
-                        ['Investor + Approaching 10-Property Limit',        'Non-QM DSCR'],
-                        ['Veteran + DTI >50%',                             'VA (use residual income)'],
-                        ['Rural + 0% Down + DTI <29/41',                  'USDA'],
-                        ['High Assets + Low/Irregular Income',             'Non-QM Asset Depletion'],
-                        ['Recent BK 12–24 months + Rebuilt Credit',       'Non-QM (bridge to agency)'],
-                      ].map(([scenario, prog], i) => (
-                        <p key={i}>• {scenario} → <strong>{prog}</strong></p>
-                      ))}
-                    </div>
-                  </div>
-
                   {programResults.length === 0 ? (
-                    <div className="text-center py-10 bg-slate-50 rounded-xl">
+                    <div className="text-center py-12 bg-slate-50 rounded-xl">
                       <p className="text-4xl mb-2">📊</p>
                       <p className="text-slate-500 font-semibold">Enter credit score + DTI in Step 1</p>
+                      <p className="text-slate-400 text-sm mt-1">The Rule Engine needs a profile to compute program fit</p>
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      {programResults.map(r => (
-                        <div key={r.key} className={`rounded-xl border p-4 ${r.key === program ? 'border-indigo-300 bg-indigo-50' : r.likelihood === 'High' ? 'border-emerald-200 bg-emerald-50/60' : r.likelihood === 'Medium' ? 'border-amber-100 bg-amber-50/40' : 'border-slate-100 bg-slate-50/40'}`}>
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex-1">
-                              <div className="flex flex-wrap items-center gap-2 mb-2">
-                                <p className="text-sm font-bold text-slate-800">{r.label}</p>
-                                {r.key === program && <span className="bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded-full font-semibold">Current Program</span>}
-                                {r.finding && <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded-full font-semibold">{r.finding}</span>}
-                                <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${LIKELIHOOD_STYLE[r.likelihood]}`}>{r.likelihood} Likelihood</span>
-                              </div>
-                              {r.strengths.length > 0 && <div className="flex flex-wrap gap-1.5 mb-1.5">{r.strengths.map((s, i) => <span key={i} className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">✓ {s}</span>)}</div>}
-                              {r.blockers.length > 0 && <div className="flex flex-wrap gap-1.5">{r.blockers.map((b, i) => <span key={i} className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">✗ {b}</span>)}</div>}
-                            </div>
-                            <div className="text-right shrink-0">
-                              <p className={`text-2xl font-black ${pColor(r.probability)}`}>{r.probability}%</p>
-                              <p className="text-xs text-slate-400">probability</p>
-                              <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden mt-1">
-                                <div className={`h-full rounded-full ${pBar(r.probability)}`} style={{ width: `${r.probability}%` }} />
-                              </div>
-                            </div>
-                          </div>
+                    <>
+                      {/* ── APPROVAL PROBABILITY TABLE ─────────────────────── */}
+                      <div className="mb-6">
+                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Approval Probability — All Programs</h3>
+                        <div className="bg-slate-50 rounded-xl border border-slate-100 overflow-hidden">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-200 bg-slate-100">
+                                <th className="text-left px-4 py-2.5 text-slate-500 font-bold uppercase tracking-wide">Program</th>
+                                <th className="text-left px-3 py-2.5 text-slate-500 font-bold uppercase tracking-wide">Finding</th>
+                                <th className="text-left px-3 py-2.5 text-slate-500 font-bold uppercase tracking-wide w-32">Probability</th>
+                                <th className="text-left px-3 py-2.5 text-slate-500 font-bold uppercase tracking-wide">Likelihood</th>
+                                <th className="text-left px-3 py-2.5 text-slate-500 font-bold uppercase tracking-wide">Primary Issue</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {programResults.map((r, i) => (
+                                <tr key={r.key}
+                                  onClick={() => { setProgram(r.key); setCurrentFinding(programFindings[r.key] || ''); addLog(`Switched to ${r.label}`); }}
+                                  className={`border-b border-slate-100 cursor-pointer transition-colors hover:bg-white ${r.key === program ? 'bg-indigo-50' : ''}`}>
+                                  <td className="px-4 py-2.5">
+                                    <div className="flex items-center gap-2">
+                                      {i === 0 && <span className="text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">BEST</span>}
+                                      {r.key === program && <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-bold">ACTIVE</span>}
+                                      <span className="font-semibold text-slate-700">{r.label}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-2.5">
+                                    {r.finding
+                                      ? <span className={`px-2 py-0.5 rounded-full font-semibold ${PROGRAMS[r.key]?.positiveFindings?.includes(r.finding) ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>{r.finding}</span>
+                                      : <span className="text-slate-300 italic">Not run</span>
+                                    }
+                                  </td>
+                                  <td className="px-3 py-2.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className={`font-black text-sm ${pColor(r.probability)}`}>{r.probability}%</span>
+                                      <div className="flex-1 h-1.5 bg-slate-200 rounded-full overflow-hidden w-16">
+                                        <div className={`h-full rounded-full ${pBar(r.probability)}`} style={{ width: `${r.probability}%` }} />
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-2.5">
+                                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold border ${LIKELIHOOD_STYLE[r.likelihood]}`}>{r.likelihood}</span>
+                                  </td>
+                                  <td className="px-3 py-2.5 text-slate-400 max-w-xs truncate">
+                                    {r.blockers[0] || <span className="text-emerald-600 font-semibold">✓ No blockers</span>}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
-                      ))}
-                    </div>
+                        <p className="text-xs text-slate-400 mt-1.5 ml-1">Click any row to switch to that program and load its strategies.</p>
+                      </div>
+
+                      {/* ── COMPARISON CARDS ───────────────────────────────── */}
+                      <div className="mb-4">
+                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Program Comparison Cards</h3>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {programResults.map((r, i) => {
+                          const isActive = r.key === program;
+                          const isBest = i === 0;
+                          const isPositiveFinding = r.finding && PROGRAMS[r.key]?.positiveFindings?.includes(r.finding);
+
+                          const cardBorder = r.probability >= 80 ? 'border-emerald-300' : r.probability >= 50 ? 'border-amber-200' : 'border-red-200';
+                          const cardBg     = r.probability >= 80 ? 'bg-emerald-50/30'  : r.probability >= 50 ? 'bg-amber-50/20'  : 'bg-red-50/20';
+                          const probColor  = r.probability >= 80 ? 'text-emerald-600'  : r.probability >= 50 ? 'text-amber-500'  : 'text-red-500';
+                          const probBarCl  = r.probability >= 80 ? 'bg-emerald-500'    : r.probability >= 50 ? 'bg-amber-400'    : 'bg-red-400';
+                          const likelihoodText = r.likelihood === 'High' ? 'text-emerald-600' : r.likelihood === 'Medium' ? 'text-amber-500' : 'text-red-500';
+
+                          return (
+                            <div key={r.key}
+                              className={`relative rounded-xl border-2 ${cardBorder} ${cardBg} overflow-hidden flex flex-col transition-all hover:shadow-md ${isActive ? 'ring-2 ring-indigo-400 ring-offset-1' : ''}`}>
+
+                              {/* Top badges */}
+                              <div className="flex items-center gap-1.5 px-3 pt-3 pb-1 flex-wrap min-h-[2rem]">
+                                {isBest && <span className="text-xs bg-emerald-500 text-white px-2 py-0.5 rounded-full font-bold">★ BEST PATH</span>}
+                                {isActive && <span className="text-xs bg-indigo-500 text-white px-2 py-0.5 rounded-full font-bold">● ACTIVE</span>}
+                              </div>
+
+                              {/* Program name + agency */}
+                              <div className="px-4 pb-2">
+                                <p className="text-base font-black text-slate-800">{r.label}</p>
+                                <p className="text-xs text-slate-400">{r.agency}</p>
+                              </div>
+
+                              {/* Probability hero */}
+                              <div className="px-4 py-3 flex items-end gap-3 border-b border-slate-100/80">
+                                <div>
+                                  <p className={`text-5xl font-black leading-none ${probColor}`}>{r.probability}%</p>
+                                  <p className="text-xs text-slate-400 mt-0.5">approval probability</p>
+                                </div>
+                                <div className="flex-1 pb-1">
+                                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                    <div className={`h-full rounded-full ${probBarCl}`} style={{ width: `${r.probability}%` }} />
+                                  </div>
+                                  <div className="flex justify-between mt-0.5">
+                                    <span className="text-xs text-slate-300">0</span>
+                                    <span className={`text-xs font-bold ${likelihoodText}`}>{r.likelihood}</span>
+                                    <span className="text-xs text-slate-300">100</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Finding badge */}
+                              <div className="px-4 py-2.5 border-b border-slate-100/80">
+                                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1.5">AUS Finding</p>
+                                {r.finding ? (
+                                  <span className={`inline-flex items-center gap-1 text-xs font-bold px-3 py-1 rounded-full border ${isPositiveFinding ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                                    {isPositiveFinding ? '✅' : '🔴'} {r.finding}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-xs text-slate-400 italic border border-dashed border-slate-200 px-3 py-1 rounded-full">
+                                    ○ Not yet run
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Strengths */}
+                              {r.strengths.length > 0 && (
+                                <div className="px-4 py-2.5 border-b border-slate-100/80">
+                                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1.5">Strengths</p>
+                                  <div className="flex flex-col gap-1">
+                                    {r.strengths.slice(0, 3).map((s, idx) => (
+                                      <span key={idx} className="text-xs text-emerald-700 flex items-start gap-1">
+                                        <span className="text-emerald-500 mt-0.5 shrink-0">✓</span><span>{s}</span>
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Blockers */}
+                              {r.blockers.length > 0 && (
+                                <div className="px-4 py-2.5 border-b border-slate-100/80">
+                                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1.5">Blockers</p>
+                                  <div className="flex flex-col gap-1">
+                                    {r.blockers.slice(0, 3).map((b, idx) => (
+                                      <span key={idx} className="text-xs text-red-600 flex items-start gap-1">
+                                        <span className="text-red-400 mt-0.5 shrink-0">✗</span><span>{b}</span>
+                                      </span>
+                                    ))}
+                                    {r.blockers.length > 3 && <span className="text-xs text-slate-400 mt-0.5">+{r.blockers.length - 3} more</span>}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* No blockers */}
+                              {r.blockers.length === 0 && r.strengths.length === 0 && (
+                                <div className="px-4 py-2.5 border-b border-slate-100/80">
+                                  <span className="text-xs text-emerald-600 font-semibold">✓ No blockers identified</span>
+                                </div>
+                              )}
+
+                              {/* Key rule note */}
+                              {r.notes && (
+                                <div className="px-4 py-2.5 border-b border-slate-100/80">
+                                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Key Rule</p>
+                                  <p className="text-xs text-slate-500 leading-relaxed">{r.notes}</p>
+                                </div>
+                              )}
+
+                              {/* Switch button */}
+                              <div className="p-3 mt-auto">
+                                {isActive ? (
+                                  <div className="w-full text-center text-xs font-bold text-indigo-500 py-2 bg-indigo-50 rounded-lg border border-indigo-100">
+                                    ● Currently Active Program
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      setProgram(r.key);
+                                      setCurrentFinding(programFindings[r.key] || '');
+                                      setActiveTab('strategies');
+                                      addLog(`Switched to ${r.label} — loading strategies`);
+                                    }}
+                                    className={`w-full text-xs font-bold py-2.5 rounded-lg transition-all ${
+                                      r.probability >= 75 ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                      : r.probability >= 45 ? 'bg-amber-500 hover:bg-amber-600 text-white'
+                                      : 'bg-slate-200 hover:bg-slate-300 text-slate-600'}`}>
+                                    Switch to {r.label} →
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* ── DECISION TREE ──────────────────────────────────── */}
+                      <div className="mt-6 bg-indigo-50 border border-indigo-100 rounded-xl p-4">
+                        <p className="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-2">📋 Program Decision Tree</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs text-indigo-700">
+                          {[
+                            ['Credit 580–679 + DTI 50–57% + Few Reserves',    'FHA (only viable path)'],
+                            ['Credit 680+ + DTI <50% + Good Reserves',        'HomeReady / Home Possible'],
+                            ['Self-Employed + Tax Write-Offs',                  'Non-QM Bank Statement'],
+                            ['Investor + Approaching 10-Property Limit',        'Non-QM DSCR'],
+                            ['Veteran + DTI >50%',                             'VA (use residual income)'],
+                            ['Rural + 0% Down + DTI <29/41',                  'USDA'],
+                            ['High Assets + Low/Irregular Income',             'Non-QM Asset Depletion'],
+                            ['Recent BK 12–24 months + Rebuilt Credit',       'Non-QM (bridge to agency)'],
+                          ].map(([scenario, prog], i) => (
+                            <p key={i}>• {scenario} → <strong>{prog}</strong></p>
+                          ))}
+                        </div>
+                      </div>
+                    </>
                   )}
                 </div>
               )}
