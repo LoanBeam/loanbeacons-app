@@ -384,6 +384,7 @@ export default function DecisionRecordDetail() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
+  const [showAttestationPrompt, setShowAttestationPrompt] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -429,6 +430,16 @@ export default function DecisionRecordDetail() {
     }
     load();
   }, [id]);
+
+  // Auto-prompt when completeness reaches 100% and record is not yet locked
+  useEffect(() => {
+    if (!record) return;
+    const score = record.completeness_score || 0;
+    const pct = score <= 1 ? Math.round(score * 100) : Math.round(score);
+    if (pct >= 100 && !record.locked && !record.submittedAt) {
+      setShowAttestationPrompt(true);
+    }
+  }, [record]);
 
   function showToast(msg, type = 'success') {
     setToast({ msg, type });
@@ -546,6 +557,40 @@ export default function DecisionRecordDetail() {
       {toast && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg text-sm font-semibold shadow-lg ${toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'}`}>
           {toast.msg}
+        </div>
+      )}
+
+      {/* ── 100% Completeness Auto-Prompt ── */}
+      {showAttestationPrompt && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center pb-8 px-4 pointer-events-none">
+          <div className="bg-white border-2 border-emerald-400 rounded-2xl shadow-2xl p-6 max-w-lg w-full pointer-events-auto animate-bounce-once">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl bg-emerald-500 flex items-center justify-center shrink-0 shadow">
+                <span className="text-2xl">🏆</span>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-slate-900 font-black text-lg mb-1">All Modules Complete!</h3>
+                <p className="text-slate-600 text-sm leading-relaxed mb-4">
+                  This Decision Record has reached 100% completeness. All 17 module findings are logged. 
+                  You can now lock and sign the record to create a tamper-evident audit trail.
+                </p>
+                <div className="flex gap-3">
+                  <a href="#attestation"
+                    onClick={() => setShowAttestationPrompt(false)}
+                    className="px-5 py-2.5 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors">
+                    🔒 Lock & Sign Now
+                  </a>
+                  <button
+                    onClick={() => setShowAttestationPrompt(false)}
+                    className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">
+                    Review First
+                  </button>
+                </div>
+              </div>
+              <button onClick={() => setShowAttestationPrompt(false)}
+                className="text-slate-300 hover:text-slate-500 text-xl leading-none mt-0.5">✕</button>
+            </div>
+          </div>
         </div>
       )}
 

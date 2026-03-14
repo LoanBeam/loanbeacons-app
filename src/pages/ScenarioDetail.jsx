@@ -365,7 +365,7 @@ function ScenarioDetail() {
   <a href={`/mi-optimizer?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🛡️ MI Optimizer™</a>
   <a href={`/debt-consolidation?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💼 Debt Consolidation™</a>
   <a href={`/rehab-intelligence?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🔨 Rehab Intelligence™</a>
-  <a href={`/decision-record?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-slate-700 hover:bg-slate-800 text-white font-semibold px-4 py-2 rounded-lg text-sm">⚖️ Decision Record™</a>
+  <a href={savedRecordId ? `/decision-records/${savedRecordId}` : `/decision-records`} className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📋 Decision Record™</a>
 </div>
       </div>
     </main>
