@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { collection, addDoc, doc, getDoc, getDocs, setDoc, updateDoc, query, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
@@ -146,6 +148,31 @@ const OVERRIDE_REASONS = [
 
 export default function DebtConsolidation() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const scenarioIdParam = searchParams.get('scenarioId');
+  const { reportFindings } = useDecisionRecord(scenarioIdParam || selectedScenario?.id);
+  const [savedRecordId, setSavedRecordId] = useState(null);
+  const [recordSaving, setRecordSaving] = useState(false);
+
+  const handleSaveToRecord = async () => {
+    const sid = scenarioIdParam || selectedScenario?.id;
+    if (!sid) return;
+    setRecordSaving(true);
+    try {
+      const writtenId = await reportFindings('DEBT_CONSOLIDATION', {
+        tradelineCount: tradelines.length,
+        activeCount: activeTradelines.length,
+        totalMonthlyObligations: totalQualifyingPayments,
+        qualifyingDTI: parseFloat(grossDTI) || 0,
+        flaggedGroups: flaggedGroups.length,
+        studentLoanCount: tradelines.filter(t => t.debt_type === 'STUDENT_LOAN').length,
+        timestamp: new Date().toISOString(),
+      });
+      if (writtenId) setSavedRecordId(writtenId);
+    } catch (e) { console.error('Decision Record save failed:', e); }
+    finally { setRecordSaving(false); }
+  };
+
   const [scenarios, setScenarios] = useState([]);
   const [selectedScenario, setSelectedScenario] = useState(null);
   const [tradelines, setTradelines] = useState([]);
@@ -617,6 +644,17 @@ export default function DebtConsolidation() {
             </div>
 
             {/* Action Buttons */}
+            {(scenarioIdParam || selectedScenario?.id) && (
+              <div className="mb-3">
+                <DecisionRecordBanner
+                  recordId={savedRecordId}
+                  moduleName="Debt Consolidation Intelligence™"
+                  onSave={handleSaveToRecord}
+                  saving={recordSaving}
+                />
+              </div>
+            )}
+
             <div className="flex gap-3">
               <button onClick={handleSave} disabled={saving}
                 className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-3 rounded-xl disabled:bg-gray-400 text-sm">

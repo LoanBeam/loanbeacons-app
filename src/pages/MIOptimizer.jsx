@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { collection, query, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
@@ -12,6 +14,22 @@ function MIOptimizer() {
   const [scenarios, setScenarios] = useState([]);
   const [selectedScenario, setSelectedScenario] = useState(null);
   const [scenarioId, setScenarioId] = useState(scenarioIdFromUrl || '');
+
+  const { reportFindings } = useDecisionRecord(scenarioId);
+  const [savedRecordId, setSavedRecordId] = useState(null);
+  const [recordSaving, setRecordSaving] = useState(false);
+
+  const handleSaveToRecord = async () => {
+    setRecordSaving(true);
+    try {
+      const writtenId = await reportFindings('MI_OPTIMIZER', {
+        scenarioId,
+        timestamp: new Date().toISOString(),
+      });
+      if (writtenId) setSavedRecordId(writtenId);
+    } catch (e) { console.error('Decision Record save failed:', e); }
+    finally { setRecordSaving(false); }
+  };
   const [loading, setLoading] = useState(true);
 
   // Auto-populated from scenario
@@ -485,6 +503,14 @@ function MIOptimizer() {
                     MI Comparison Results
                   </h2>
                   <div className="flex gap-3">
+                    {scenarioId && (
+                      <DecisionRecordBanner
+                        recordId={savedRecordId}
+                        moduleName="MI Optimizer™"
+                        onSave={handleSaveToRecord}
+                        saving={recordSaving}
+                      />
+                    )}
                     <button
                       onClick={saveResults}
                       className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700"

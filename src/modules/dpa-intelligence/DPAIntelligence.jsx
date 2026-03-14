@@ -10,6 +10,7 @@ import {
 } from '../../engines/dpa/dpaLayeringEngine.js';
 import { PROGRAM_TYPE_LABELS } from '../../data/dpa/dpaPrograms.js';
 import { useDecisionRecord } from '../../hooks/useDecisionRecord';
+import DecisionRecordBanner from '../../components/DecisionRecordBanner';
 
 const STEPS = ['Scenario Setup', 'Eligible Programs', 'Stack Builder', 'Lender Match & Output'];
 
@@ -22,7 +23,19 @@ const US_STATES = [
 
 export default function DPAIntelligence() {
   const [searchParams] = useSearchParams();
-  const { reportFindings } = useDecisionRecord();
+  const scenarioIdParam = searchParams.get('scenarioId');
+  const { reportFindings } = useDecisionRecord(scenarioIdParam);
+  const [savedRecordId, setSavedRecordId] = useState(null);
+  const [recordSaving, setRecordSaving] = useState(false);
+
+  const handleSaveToRecord = async (findingsData) => {
+    setRecordSaving(true);
+    try {
+      const writtenId = await reportFindings('DPA_INTELLIGENCE', findingsData);
+      if (writtenId) setSavedRecordId(writtenId);
+    } catch (e) { console.error('Decision Record save failed:', e); }
+    finally { setRecordSaving(false); }
+  };
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const [scenarioLoaded, setScenarioLoaded] = useState(false);
@@ -571,18 +584,14 @@ export default function DPAIntelligence() {
 
             <button
               onClick={() => {
-              reportFindings({
-                module: 'DPA Intelligence™',
-                moduleId: 'module-07',
-                summary: `${candidateStacks.length} DPA stack(s) identified in ${form.state}. Selected stack: ${candidateStacks[selectedStack ?? 0]?.stackType ?? 'N/A'} — ${candidateStacks[selectedStack ?? 0]?.totalAssistance ? '$' + Number(candidateStacks[selectedStack ?? 0].totalAssistance).toLocaleString() : '—'} total assistance.`,
-                details: {
-                  state: form.state,
-                  loanType: form.loanType,
-                  eligiblePrograms: eligiblePrograms.length,
-                  stacksGenerated: candidateStacks.length,
-                  selectedStack: candidateStacks[selectedStack ?? 0] ?? null,
-                  amiPercent,
-                },
+              handleSaveToRecord({
+                state: form.state,
+                loanType: form.loanType,
+                eligiblePrograms: eligiblePrograms.length,
+                stacksGenerated: candidateStacks.length,
+                selectedStack: candidateStacks[selectedStack ?? 0] ?? null,
+                amiPercent,
+                timestamp: new Date().toISOString(),
               });
               setStep(3);
             }}
@@ -604,6 +613,23 @@ export default function DPAIntelligence() {
               </div>
               <button onClick={() => setStep(2)} className="text-sm text-blue-600 hover:underline">← Back to Stacks</button>
             </div>
+
+            {scenarioIdParam && (
+              <DecisionRecordBanner
+                recordId={savedRecordId}
+                moduleName="DPA Intelligence™"
+                onSave={() => handleSaveToRecord({
+                  state: form.state,
+                  loanType: form.loanType,
+                  eligiblePrograms: eligiblePrograms.length,
+                  stacksGenerated: candidateStacks.length,
+                  selectedStack: candidateStacks[selectedStack ?? 0] ?? null,
+                  amiPercent,
+                  timestamp: new Date().toISOString(),
+                })}
+                saving={recordSaving}
+              />
+            )}
 
             {/* Selected Stack Summary */}
             {candidateStacks.length > 0 && (

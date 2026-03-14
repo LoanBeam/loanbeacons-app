@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
@@ -116,6 +118,26 @@ export default function FHAStreamline() {
   const [tab, setTab]             = useState('eligibility');
   const [saving, setSaving]       = useState(false);
   const [saved, setSaved]         = useState(false);
+
+  const { reportFindings } = useDecisionRecord(scenarioId);
+  const [savedRecordId, setSavedRecordId] = useState(null);
+  const [recordSaving, setRecordSaving] = useState(false);
+
+  const handleSaveToRecord = async () => {
+    if (!eligibility) return;
+    setRecordSaving(true);
+    try {
+      const writtenId = await reportFindings('FHA_STREAMLINE', {
+        finalDecision: eligibility.finalDecision,
+        existingRate: inp.existing_note_rate,
+        mipFactor: inp.existing_mip_factor,
+        ntbResults: ntb,
+        timestamp: new Date().toISOString(),
+      });
+      if (writtenId) setSavedRecordId(writtenId);
+    } catch (e) { console.error('Decision Record save failed:', e); }
+    finally { setRecordSaving(false); }
+  };
   const [eligibility, setEligibility] = useState(null);
   const [ntb, setNtb]             = useState(null);
 
@@ -546,6 +568,14 @@ export default function FHAStreamline() {
                 </div>
 
                 <div className="border-t border-gray-200 p-4 flex items-center justify-between bg-gray-50">
+                  {scenarioId && (
+                    <DecisionRecordBanner
+                      recordId={savedRecordId}
+                      moduleName="FHA Streamline Intelligence™"
+                      onSave={handleSaveToRecord}
+                      saving={recordSaving}
+                    />
+                  )}
                   <span className="text-sm text-gray-500">{saved?'✅ Saved to scenario':'Results not yet saved'}</span>
                   <div className="flex gap-3">
                     <button onClick={save} disabled={saving||!eligibility}
