@@ -56,6 +56,18 @@ const DR_COLLECTION = 'decisionRecords';
 // ─────────────────────────────────────────────────────────────
 
 /**
+ * Generate a human-readable file number: LB-YYMMDD-XXXX
+ */
+function generateFileNumber() {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(2);
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `LB-${yy}${mm}${dd}-${rand}`;
+}
+
+/**
  * Generate a new Firestore document ID without writing anything.
  */
 function newDocId() {
@@ -77,19 +89,67 @@ function calcCompleteness(systemFindings = {}) {
 
 /**
  * Derive completeness-based risk flags.
+ * Only emits a flag if completeness is below the LOW threshold.
  * Returns an array of flag objects (may be empty).
  */
 function completenessFlags(score, moduleKey) {
   if (score < COMPLETENESS_THRESHOLDS.LOW) {
     return [{
       flag_code:     RISK_FLAG_CODES.COMPLETENESS_LOW,
-      source_module: moduleKey,
+      source_module: 'system',          // always 'system' — not the calling module
       severity:      FLAG_SEVERITY.CRITICAL,
       detail:        `Only ${Math.round(score * 100)}% of live modules have reported.`,
       flagged_at:    Timestamp.now(),
     }];
   }
   return [];
+}
+
+/**
+ * Merge incoming flags with existing flags, deduplicating by flag_code.
+ * For completeness flags we keep only ONE entry total (system-level signal).
+ * For module-specific flags we keep the latest entry per flag_code+source_module pair.
+ *
+ * @param {Array} existingFlags  — current risk_flags array from Firestore
+ * @param {Array} incomingFlags  — new flags to merge in
+ * @returns {Array} merged, deduplicated array
+ */
+function mergeFlags(existingFlags = [], incomingFlags = []) {
+  if (incomingFlags.length === 0) return existingFlags;
+
+  // Build a map keyed by "flag_code::source_module" for O(1) lookup
+  const map = new Map();
+  existingFlags.forEach(f => {
+    const key = `${f.flag_code}::${f.source_module}`;
+    map.set(key, f);
+  });
+
+  // Overwrite with incoming (latest wins per unique key)
+  incomingFlags.forEach(f => {
+    const key = `${f.flag_code}::${f.source_module}`;
+    map.set(key, f);
+  });
+
+  return Array.from(map.values());
+}
+
+/**
+ * Merge incoming evidence with existing evidence, deduplicating by type+source_name.
+ */
+function mergeEvidence(existingEvidence = [], incomingEvidence = []) {
+  if (incomingEvidence.length === 0) return existingEvidence;
+
+  const map = new Map();
+  existingEvidence.forEach(e => {
+    const key = `${e.type}::${e.source_name}`;
+    map.set(key, e);
+  });
+  incomingEvidence.forEach(e => {
+    const key = `${e.type}::${e.source_name}`;
+    map.set(key, e);
+  });
+
+  return Array.from(map.values());
 }
 
 /**
@@ -108,6 +168,7 @@ function buildEmptyRecord({ recordId, scenarioId, userId, scenarioData = {} }) {
 
     header: {
       scenarioId,
+      fileNumber:        generateFileNumber(),
       borrowerName:      scenarioData.borrowerName      || '',
       borrowerAddress:   scenarioData.borrowerAddress   || '',
       loName:            scenarioData.loName            || '',
@@ -210,22 +271,27 @@ export async function getRecord(recordId) {
 /**
  * getDraftRecord — find the active draft for a scenario + user.
  * Returns null if no draft exists.
- * NOTE: Requires Firestore composite index:
- *   Collection: decisionRecords
- *   Fields: scenarioId ASC, header.loId ASC, status ASC, header.createdAt DESC
  */
 export async function getDraftRecord(scenarioId, userId) {
-  const q = query(
-    collection(db, DR_COLLECTION),
-    where('scenarioId',    '==', scenarioId),
-    where('header.loId',   '==', userId),
-    where('status',        '==', RECORD_STATUS.DRAFT),
-    orderBy('header.createdAt', 'desc'),
-    limit(1)
-  );
-  const snap = await getDocs(q);
-  if (snap.empty) return null;
-  return snap.docs[0].data();
+  try {
+    const q = query(
+      collection(db, DR_COLLECTION),
+      where('scenarioId', '==', scenarioId),
+      where('status',     '==', RECORD_STATUS.DRAFT),
+      limit(5)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return null;
+    // Sort client-side by createdAt desc, prefer records matching this userId
+    const records = snap.docs.map(d => d.data());
+    const mine = records.filter(r => r.header?.loId === userId);
+    const pool = mine.length > 0 ? mine : records;
+    pool.sort((a, b) => (b.header?.createdAt?.seconds || 0) - (a.header?.createdAt?.seconds || 0));
+    return pool[0];
+  } catch (e) {
+    console.warn('[DecisionRecord] getDraftRecord query failed, falling back to null:', e.message);
+    return null;
+  }
 }
 
 /**
@@ -245,17 +311,6 @@ export async function getRecordsByScenario(scenarioId) {
 
 /**
  * getRecordsForManager — filtered list for the Admin Center manager view.
- * All filters are optional. Returns descending by createdAt.
- *
- * @param {object} filters
- *   filters.loId        — filter by specific LO
- *   filters.branchId    — filter by branch
- *   filters.status      — 'draft' | 'locked'
- *   filters.loanType    — e.g. 'FHA', 'Conventional'
- *   filters.flagged     — true = only follow-up flagged records
- *
- * NOTE: Multi-field queries require composite indexes.
- * Add indexes in Firebase console as needed per filter combination.
  */
 export async function getRecordsForManager(filters = {}) {
   const constraints = [];
@@ -280,38 +335,12 @@ export async function getRecordsForManager(filters = {}) {
 
 /**
  * reportModuleFindings
- * The single hook all modules (past and future) call to report into
- * the Decision Record. Call this after a module computes its results.
+ * The single hook all modules call to report into the Decision Record.
  *
- * Usage example (from AUS Rescue):
- *   await reportModuleFindings(
- *     recordId,
- *     MODULE_KEYS.AUS_RESCUE,
- *     {
- *       strategiesAttempted: [...],
- *       selectedProgram: 'FHA 203k',
- *       ausOutcome: 'Approve/Eligible',
- *       disposition: 'Proceed',
- *     },
- *     [
- *       {
- *         type: EVIDENCE_TYPES.AUS_FINDING,
- *         source_name: 'DU 11.1',
- *         source_id: duCaseNumber,
- *         retrieved_at: Timestamp.now(),
- *         retrieved_by: userId,
- *         version_tag: 'DU-11.1',
- *       }
- *     ],
- *     [
- *       {
- *         flag_code: RISK_FLAG_CODES.AUS_REFER_WITH_CAUTION,
- *         source_module: MODULE_KEYS.AUS_RESCUE,
- *         severity: FLAG_SEVERITY.WARNING,
- *         detail: 'DU returned Refer with Caution on first run',
- *       }
- *     ]
- *   );
+ * KEY FIX: Risk flags and evidence are NOW DEDUPLICATED before writing.
+ * We read the current record state, merge incoming flags/evidence with
+ * existing ones (keyed by flag_code+source_module), and write the
+ * clean merged array — preventing duplicate flag spam.
  *
  * @param {string} recordId       — the active draft record ID
  * @param {string} moduleKey      — MODULE_KEYS constant
@@ -359,49 +388,53 @@ export async function reportModuleFindings(
   };
   const { score, missing } = calcCompleteness(projectedFindings);
 
-  // ── Auto-derive completeness flags ────────────────────────
-  const autoFlags = completenessFlags(score, moduleKey);
+  // ── Normalize timestamps on incoming items ─────────────────
+  const normalizedEvidence = evidence.filter(Boolean).map(e => ({
+    ...e,
+    retrieved_at: e.retrieved_at instanceof Timestamp ? e.retrieved_at : Timestamp.now(),
+  }));
+
+  // Completeness flags are NOT stored in Firestore.
+  // completeness_score + missing_modules are already persisted — the UI
+  // derives any completeness warning from those fields at render time.
+  const normalizedFlags = flags.filter(Boolean).map(f => ({
+    ...f,
+    flagged_at: f.flagged_at instanceof Timestamp ? f.flagged_at : Timestamp.now(),
+  }));
+
+  // ── DEDUPLICATE flags and evidence before writing ─────────
+  // Also purge any legacy completeness flags that were previously stored —
+  // they are now computed in the UI and must not persist in Firestore.
+  const existingModuleFlags = (record.risk_flags || []).filter(
+    f => f.flag_code !== RISK_FLAG_CODES.COMPLETENESS_LOW
+  );
+  const mergedFlags    = mergeFlags(existingModuleFlags, normalizedFlags);
+  const mergedEvidence = mergeEvidence(record.evidence   || [], normalizedEvidence);
 
   // ── Build the Firestore update ─────────────────────────────
   const updates = {
-    // Store findings under the module's key (dotted path = safe partial update)
     [`system_findings.${moduleKey}`]: {
       ...findings,
       reported_at:     Timestamp.now(),
       module_version:  moduleVersion,
     },
-    // Version tag on the header
     [`header.moduleVersionTags.${moduleKey}`]: moduleVersion,
-    // Refresh completeness
     completeness_score:  score,
     missing_modules:     missing,
     'header.updatedAt':  serverTimestamp(),
+    // Write the full deduplicated arrays (not arrayUnion)
+    risk_flags: mergedFlags,
+    evidence:   mergedEvidence,
   };
-
-  // Append evidence items if provided
-  const allEvidence = evidence.filter(Boolean).map(e => ({
-    ...e,
-    retrieved_at: e.retrieved_at instanceof Timestamp ? e.retrieved_at : Timestamp.now(),
-  }));
-  if (allEvidence.length > 0) {
-    updates.evidence = arrayUnion(...allEvidence);
-  }
-
-  // Append risk flags (module-provided + auto-derived)
-  const allFlags = [...flags.filter(Boolean), ...autoFlags].map(f => ({
-    ...f,
-    flagged_at: f.flagged_at instanceof Timestamp ? f.flagged_at : Timestamp.now(),
-  }));
-  if (allFlags.length > 0) {
-    updates.risk_flags = arrayUnion(...allFlags);
-  }
 
   await updateDoc(recordRef, updates);
 
   console.log(
     `[DecisionRecord] Module "${moduleKey}" reported to record ${recordId}.`,
-    `Completeness: ${Math.round(score * 100)}%`
+    `Completeness: ${Math.round(score * 100)}% | Flags: ${mergedFlags.length}`
   );
+
+  return recordId;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -410,7 +443,7 @@ export async function reportModuleFindings(
 
 /**
  * addRiskFlag — push a single risk flag from any module.
- * Use when a flag arises outside of reportModuleFindings.
+ * Also deduplicates: replaces any existing flag with the same code+module.
  */
 export async function addRiskFlag(recordId, flagCode, sourceModule, severity, detail = '') {
   if (!recordId)     throw new Error('[DecisionRecord] recordId is required');
@@ -427,21 +460,25 @@ export async function addRiskFlag(recordId, flagCode, sourceModule, severity, de
     return;
   }
 
+  const newFlag = {
+    flag_code:     flagCode,
+    source_module: sourceModule,
+    severity,
+    detail,
+    flagged_at:    Timestamp.now(),
+  };
+
+  const merged = mergeFlags(snap.data().risk_flags || [], [newFlag]);
+
   await updateDoc(recordRef, {
-    risk_flags: arrayUnion({
-      flag_code:     flagCode,
-      source_module: sourceModule,
-      severity,
-      detail,
-      flagged_at:    Timestamp.now(),
-    }),
+    risk_flags:         merged,
     'header.updatedAt': serverTimestamp(),
   });
 }
 
 /**
  * addEvidence — push a single evidence object from any module.
- * Use when evidence is generated separately from findings.
+ * Deduplicates by type+source_name.
  */
 export async function addEvidence(recordId, evidenceObject) {
   if (!recordId)       throw new Error('[DecisionRecord] recordId is required');
@@ -456,13 +493,17 @@ export async function addEvidence(recordId, evidenceObject) {
     return;
   }
 
+  const normalized = {
+    ...evidenceObject,
+    retrieved_at: evidenceObject.retrieved_at instanceof Timestamp
+      ? evidenceObject.retrieved_at
+      : Timestamp.now(),
+  };
+
+  const merged = mergeEvidence(snap.data().evidence || [], [normalized]);
+
   await updateDoc(recordRef, {
-    evidence: arrayUnion({
-      ...evidenceObject,
-      retrieved_at: evidenceObject.retrieved_at instanceof Timestamp
-        ? evidenceObject.retrieved_at
-        : Timestamp.now(),
-    }),
+    evidence:           merged,
     'header.updatedAt': serverTimestamp(),
   });
 }
@@ -473,7 +514,6 @@ export async function addEvidence(recordId, evidenceObject) {
 
 /**
  * saveLONotes — LO free-text notes and optional tags.
- * These are stored in a separate lane (lo_notes) from system_findings.
  */
 export async function saveLONotes(recordId, text, tags = []) {
   if (!recordId) throw new Error('[DecisionRecord] recordId is required');
@@ -496,7 +536,6 @@ export async function saveLONotes(recordId, text, tags = []) {
 
 /**
  * saveFinalDisposition — LO's final decision on the loan path.
- * Stores in system_findings under the DECISION_RECORD module key.
  */
 export async function saveFinalDisposition(recordId, userId, {
   disposition,
@@ -529,9 +568,6 @@ export async function saveFinalDisposition(recordId, userId, {
 
 /**
  * attestRecord — LO certifies the record before it can be locked.
- * "I certify this record reflects the information available at the
- *  time of this decision."
- * Attestation is required — lock will fail without it.
  */
 export async function attestRecord(recordId, userId) {
   if (!recordId) throw new Error('[DecisionRecord] recordId is required');
@@ -561,14 +597,7 @@ export async function attestRecord(recordId, userId) {
 
 /**
  * initiateRecordLock
- * Sets status to 'locking', which triggers the lockDecisionRecord
- * Cloud Function. The Cloud Function computes SHA-256, writes
- * record_hash, locked_at (server timestamp), and sets status='locked'.
- *
- * Pre-conditions enforced:
- *   1. Record must be in DRAFT status
- *   2. LO attestation must be certified
- *   3. Final disposition must have been saved (decision_record module reported)
+ * Sets status to 'locking', which triggers the lockDecisionRecord Cloud Function.
  */
 export async function initiateRecordLock(recordId, userId) {
   if (!recordId) throw new Error('[DecisionRecord] recordId is required');
@@ -608,11 +637,6 @@ export async function initiateRecordLock(recordId, userId) {
 /**
  * createNewVersion
  * Creates an immutable copy of a locked record as a new draft (v2, v3, ...).
- * The old record is marked superseded. changeReason is required.
- *
- * @param {string} oldRecordId
- * @param {string} userId
- * @param {string} changeReason  — must be a value from CHANGE_REASONS
  */
 export async function createNewVersion(oldRecordId, userId, changeReason) {
   if (!oldRecordId)   throw new Error('[DecisionRecord] oldRecordId is required');
@@ -631,7 +655,6 @@ export async function createNewVersion(oldRecordId, userId, changeReason) {
   const newRecordId = newDocId();
 
   const newRecord = {
-    // Carry forward all findings, evidence, header data
     ...oldRecord,
     recordId:                newRecordId,
     status:                  RECORD_STATUS.DRAFT,
@@ -639,19 +662,16 @@ export async function createNewVersion(oldRecordId, userId, changeReason) {
     supersedes_record_id:    oldRecordId,
     superseded_by_record_id: null,
     change_reason:           changeReason,
-    // Reset lock / hash fields — Cloud Function will set these on next lock
     record_hash:             null,
     locked_at:               null,
     locked_by_user_id:       null,
     lock_initiated_by:       null,
     lock_initiated_at:       null,
-    // Reset attestation — LO must re-certify
     lo_attestation: {
       certified:    false,
       certified_at: null,
       certified_by: null,
     },
-    // Reset manager review on new version
     manager_review: {
       reviewed:             false,
       reviewed_by:          null,
@@ -666,13 +686,11 @@ export async function createNewVersion(oldRecordId, userId, changeReason) {
     },
   };
 
-  // Mark old record as superseded
   await updateDoc(doc(db, DR_COLLECTION, oldRecordId), {
     superseded_by_record_id: newRecordId,
     'header.updatedAt':      serverTimestamp(),
   });
 
-  // Write the new version
   await setDoc(doc(db, DR_COLLECTION, newRecordId), newRecord);
 
   console.log(
@@ -688,8 +706,7 @@ export async function createNewVersion(oldRecordId, userId, changeReason) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * addManagerComment — manager annotation.
- * Does NOT edit any existing record content — purely additive.
+ * addManagerComment — manager annotation. Purely additive.
  */
 export async function addManagerComment(recordId, managerId, commentText) {
   if (!recordId)    throw new Error('[DecisionRecord] recordId is required');
@@ -708,7 +725,6 @@ export async function addManagerComment(recordId, managerId, commentText) {
 
 /**
  * markManagerReviewed — manager confirms they have reviewed the record.
- * Timestamps and user ID are stored for the audit trail.
  */
 export async function markManagerReviewed(recordId, managerId) {
   if (!recordId)  throw new Error('[DecisionRecord] recordId is required');
@@ -724,7 +740,6 @@ export async function markManagerReviewed(recordId, managerId) {
 
 /**
  * toggleManagerFlag — set or clear the follow-up flag.
- * @param {boolean} flagged
  */
 export async function toggleManagerFlag(recordId, flagged) {
   if (!recordId) throw new Error('[DecisionRecord] recordId is required');
@@ -737,13 +752,10 @@ export async function toggleManagerFlag(recordId, flagged) {
 
 // ─────────────────────────────────────────────────────────────
 //  HEADER SYNC
-//  Call this any time scenario header data changes (name, address, etc.)
-//  so the Decision Record stays in sync with the source scenario.
 // ─────────────────────────────────────────────────────────────
 
 /**
  * syncRecordHeader — keeps Decision Record header in sync with scenario data.
- * Call from ScenarioCreator or any module that updates borrower/property info.
  */
 export async function syncRecordHeader(recordId, scenarioData = {}) {
   if (!recordId) throw new Error('[DecisionRecord] recordId is required');
@@ -752,7 +764,7 @@ export async function syncRecordHeader(recordId, scenarioData = {}) {
   const snap      = await getDoc(recordRef);
 
   if (!snap.exists()) return;
-  if (snap.data().status !== RECORD_STATUS.DRAFT) return; // Don't touch locked records
+  if (snap.data().status !== RECORD_STATUS.DRAFT) return;
 
   const updates = {};
   if (scenarioData.borrowerName)    updates['header.borrowerName']    = scenarioData.borrowerName;

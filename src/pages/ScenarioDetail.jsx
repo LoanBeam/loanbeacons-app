@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { doc, getDoc, deleteDoc } from 'firebase/firestore'
 import { db } from '../firebase/config'
+import { useDecisionRecord } from '../hooks/useDecisionRecord'
+import DecisionRecordBanner from '../components/DecisionRecordBanner'
 
 function ScenarioDetail() {
   const { id } = useParams()
@@ -11,6 +13,32 @@ function ScenarioDetail() {
   const [error, setError] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [recordSaving, setRecordSaving] = useState(false)
+  const [savedRecordId, setSavedRecordId] = useState(null)
+
+  const { reportFindings } = useDecisionRecord(id)
+
+  const handleSaveToRecord = async () => {
+    if (!scenario) return
+    setRecordSaving(true)
+    try {
+      const writtenId = await reportFindings('SCENARIO_CREATOR', {
+        borrowerName: scenario.borrowerName || '',
+        loanAmount: scenario.loanAmount || null,
+        loanType: scenario.loanType || null,
+        loanPurpose: scenario.loanPurpose || null,
+        propertyAddress: scenario.streetAddress || scenario.propertyAddress || null,
+        creditScore: scenario.creditScore || null,
+        dti: scenario.backEndDTI || scenario.dti || null,
+        timestamp: new Date().toISOString(),
+      })
+      if (writtenId) setSavedRecordId(writtenId)
+    } catch (e) {
+      console.error('ScenarioDetail DR save failed:', e)
+    } finally {
+      setRecordSaving(false)
+    }
+  }
 
   useEffect(() => {
     async function fetchScenario() {
@@ -91,6 +119,15 @@ function ScenarioDetail() {
   return (
     <main className="flex-1 bg-gray-50 py-10">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+
+        {/* Decision Record Banner */}
+        <DecisionRecordBanner
+          recordId={savedRecordId}
+          moduleName="Scenario Creator™"
+          onSave={handleSaveToRecord}
+          saving={recordSaving}
+        />
+
         {/* Top Actions */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <Link

@@ -39,6 +39,8 @@ import {
   ENGINE_VERSION,
 } from "../engines/LenderMatchEngine";
 import { useLenderProfiles } from "../hooks/useLenderProfiles";
+import { useDecisionRecord } from "../hooks/useDecisionRecord";
+import DecisionRecordBanner from "../components/DecisionRecordBanner";
 
 // Child components — Steps 6–11
 // Each has a lightweight stub below as fallback during development
@@ -1152,10 +1154,33 @@ export default function LenderMatch() {
   const [selectedLender, setSelectedLender] = useState(null);
   const [decisionModal, setDecisionModal]   = useState({ open: false, record: null });
   const [savingRecord, setSavingRecord]     = useState(false);
+  const [recordSaving, setRecordSaving]     = useState(false);
+  const [savedRecordId, setSavedRecordId]   = useState(null);
 
   const resultsRef = useRef(null);
   const { getAeInfo } = useLenderProfiles();
 const [searchParams] = useSearchParams()
+const scenarioIdParam = searchParams.get('scenarioId');
+const { reportFindings } = useDecisionRecord(scenarioIdParam);
+
+const handleSaveToRecord = async () => {
+  if (!results) return;
+  setRecordSaving(true);
+  try {
+    const writtenId = await reportFindings('LENDER_MATCH', {
+      totalEligible: results.totalEligible,
+      topLender: results.agencySection?.eligible?.[0]?.lenderName || null,
+      agencyEligible: results.agencySection?.eligible?.length || 0,
+      nonQMEligible: results.nonQMSection?.eligible?.length || 0,
+      timestamp: new Date().toISOString(),
+    });
+    if (writtenId) setSavedRecordId(writtenId);
+  } catch (e) {
+    console.error('Lender Match DR save failed:', e);
+  } finally {
+    setRecordSaving(false);
+  }
+};
 useEffect(() => {
   const scenarioId = searchParams.get('scenarioId')
   if (!scenarioId) return
@@ -1921,6 +1946,16 @@ useEffect(() => {
 
       </main>
 
+
+      {/* ────── DECISION RECORD BANNER ────── */}
+      {scenarioIdParam && (
+        <DecisionRecordBanner
+          recordId={savedRecordId}
+          moduleName="Lender Match™"
+          onSave={handleSaveToRecord}
+          saving={recordSaving}
+        />
+      )}
 
       {/* ────── DECISION RECORD MODAL ────── */}
       {decisionModal.open && (

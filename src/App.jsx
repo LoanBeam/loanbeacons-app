@@ -20,7 +20,8 @@ import USDAIntelligence from './modules/USDAIntelligence'
 import ARMStructureIntelligence from './modules/ARMStructureIntelligence'
 import LenderIntakeForm from './modules/LenderIntakeForm'
 import LenderProfileBuilder from './modules/LenderProfileBuilder'
-import DecisionRecord from './modules/DecisionRecord/DecisionRecord'
+import DecisionRecordDashboard from './modules/DecisionRecord/DecisionRecordDashboard'
+import DecisionRecordDetail from './modules/DecisionRecord/DecisionRecordDetail'
 
 const STANDALONE_ROUTES = ['/ae-share']
 
@@ -53,7 +54,8 @@ function AppShell() {
         <Route path="/lender-intake" element={<LenderIntakeForm />} />
         <Route path="/lender-intake/:token" element={<LenderIntakeForm />} />
         <Route path="/ae-share/:token" element={<AESharePage />} />
-        <Route path="/decision-record" element={<DecisionRecord />} />
+        <Route path="/decision-records" element={<DecisionRecordDashboard />} />
+<Route path="/decision-records/:id" element={<DecisionRecordDetail />} />
       </Routes>
       {!isStandalone && <Footer />}
     </div>

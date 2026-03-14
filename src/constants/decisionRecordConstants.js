@@ -13,51 +13,58 @@
 // ─────────────────────────────────────────────────────────────
 export const MODULE_KEYS = {
   // ── Stage 1: Pre-Structure & Initial Analysis ──────────────
-  SCENARIO_CREATOR:        'scenario_creator',        // Module 1
-  INCOME_ANALYSIS:         'income_analysis',          // Module 2
-  ASSET_REVIEW:            'asset_review',             // Module 3
-  CREDIT_ANALYSIS:         'credit_analysis',          // Module 4
-  PROPERTY_ANALYSIS:       'property_analysis',        // Module 5
+  SCENARIO_CREATOR:        'SCENARIO_CREATOR',        // Module 1
+  QUALIFYING_INTEL:        'QUALIFYING_INTEL',         // Module 2
+  INCOME_ANALYZER:         'INCOME_ANALYZER',          // Module 3
+  ASSET_ANALYZER:          'ASSET_ANALYZER',           // Module 4
+  CREDIT_INTEL:            'CREDIT_INTEL',             // Module 5
 
   // ── Stage 2: Lender Fit & Program Intelligence ─────────────
-  LENDER_MATCH:            'lender_match',             // Module 6
-  PROGRAM_ELIGIBILITY:     'program_eligibility',      // Module 7
-  AUS_RESCUE:              'aus_rescue',               // Module 8
-  NON_QM_PATHWAYS:         'non_qm_pathways',          // Module 9
-  DPA_ELIGIBILITY:         'dpa_eligibility',          // Module 10
-  LENDER_PROFILE_BUILDER:  'lender_profile_builder',   // Module 11
+  LENDER_MATCH:            'LENDER_MATCH',             // Module 6
+  DPA_INTEL:               'DPA_INTEL',                // Module 7
+  AUS_RESCUE:              'AUS_RESCUE',               // Module 8
+  PROPERTY_INTEL:          'PROPERTY_INTEL',           // Module 9
+  TITLE_INTEL:             'TITLE_INTEL',              // Module 10
+  CLOSING_COST_CALC:       'CLOSING_COST_CALC',        // Module 11
+  CRA_INTEL:               'CRA_INTEL',                // Module 12
 
   // ── Stage 3: Final Structure Optimization ─────────────────
-  CRA_INTELLIGENCE:        'cra_intelligence',         // Module 12
-  RATE_SCENARIO:           'rate_scenario',            // Module 13
-  CLOSING_COST_ESTIMATOR:  'closing_cost_estimator',   // Module 14
-  CASH_TO_CLOSE:           'cash_to_close',            // Module 15
-  REHAB_INTELLIGENCE:      'rehab_intelligence',       // Module 16 → 17
+  RATE_INTEL:              'RATE_INTEL',               // Module 13
+  DISCLOSURE_INTEL:        'DISCLOSURE_INTEL',         // Module 14
+  COMPLIANCE_INTEL:        'COMPLIANCE_INTEL',         // Module 15
+  FLOOD_INTEL:             'FLOOD_INTEL',              // Module 16
+  REHAB_INTEL:             'REHAB_INTEL',              // Module 17
 
-  // ── Stage 4: Verification & Submit ────────────────────────
-  DOCUMENT_CHECKLIST:      'document_checklist',       // Module 17 / future
-  COMPLIANCE_REVIEW:       'compliance_review',        // Module 18
-  AE_SHARE_SERVICE:        'ae_share_service',         // Module 19
-  SUBMISSION_PACKAGE:      'submission_package',       // Module 20
-  DECISION_RECORD:         'decision_record',          // Module 21 ← THIS MODULE
+  // ── Stage 4: Verification & Submit (future) ───────────────
+  AE_SHARE_SERVICE:        'AE_SHARE_SERVICE',         // Module 18
+  SUBMISSION_PACKAGE:      'SUBMISSION_PACKAGE',       // Module 19
+  DECISION_RECORD:         'DECISION_RECORD',          // Module 20
+  LENDER_PROFILE_BUILDER:  'LENDER_PROFILE_BUILDER',   // Module 21
 };
 
 // Flat array used by the completeness engine
 export const ALL_MODULE_KEYS = Object.values(MODULE_KEYS);
 
-// Modules that are currently live (17 of 21).
-// Update this list as new modules ship — drives completeness scoring.
+// All 17 currently live modules — drives completeness scoring.
+// Keys MUST match exactly what each module passes to reportFindings().
 export const LIVE_MODULE_KEYS = [
   MODULE_KEYS.SCENARIO_CREATOR,
+  MODULE_KEYS.QUALIFYING_INTEL,
+  MODULE_KEYS.INCOME_ANALYZER,
+  MODULE_KEYS.ASSET_ANALYZER,
+  MODULE_KEYS.CREDIT_INTEL,
   MODULE_KEYS.LENDER_MATCH,
+  MODULE_KEYS.DPA_INTEL,
   MODULE_KEYS.AUS_RESCUE,
-  MODULE_KEYS.NON_QM_PATHWAYS,
-  MODULE_KEYS.CRA_INTELLIGENCE,
-  MODULE_KEYS.REHAB_INTELLIGENCE,
-  MODULE_KEYS.LENDER_PROFILE_BUILDER,
-  MODULE_KEYS.AE_SHARE_SERVICE,
-  MODULE_KEYS.DECISION_RECORD,
-  // Add additional live module keys here as they ship
+  MODULE_KEYS.PROPERTY_INTEL,
+  MODULE_KEYS.TITLE_INTEL,
+  MODULE_KEYS.CLOSING_COST_CALC,
+  MODULE_KEYS.CRA_INTEL,
+  MODULE_KEYS.RATE_INTEL,
+  MODULE_KEYS.DISCLOSURE_INTEL,
+  MODULE_KEYS.COMPLIANCE_INTEL,
+  MODULE_KEYS.FLOOD_INTEL,
+  MODULE_KEYS.REHAB_INTEL,
 ];
 
 // ─────────────────────────────────────────────────────────────
@@ -93,9 +100,12 @@ export const RISK_FLAG_CODES = {
 };
 
 export const FLAG_SEVERITY = {
-  INFO:     'info',
-  WARNING:  'warning',
-  CRITICAL: 'critical',
+  INFO:     'INFO',
+  WARNING:  'WARNING',
+  CRITICAL: 'CRITICAL',
+  HIGH:     'HIGH',
+  MEDIUM:   'MEDIUM',
+  LOW:      'LOW',
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -164,3 +174,4 @@ export const COMPLETENESS_THRESHOLDS = {
   MODERATE: 0.75,   // < 75%  → WARNING flag
   GOOD:     0.90,   // ≥ 90%  → clean
 };
+export const SCORING_VERSION = 'path-score-v1.0';
