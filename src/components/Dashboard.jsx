@@ -13,6 +13,46 @@ const modules = {
       color: 'blue',
     },
     {
+      id: 'qualifying-intel',
+      title: 'Qualifying Intel™',
+      icon: '🎯',
+      description: 'Run qualifying calculations, DTI analysis, and eligibility checks from scenario data.',
+      badge: null,
+      status: 'live',
+      path: '/qualifying-intel',
+      color: 'blue',
+    },
+    {
+      id: 'income-analysis',
+      title: 'Income Analysis™',
+      icon: '💼',
+      description: 'Calculate qualifying income across all documentation types.',
+      badge: null,
+      status: 'live',
+      path: '/income-analyzer',
+      color: 'green',
+    },
+    {
+      id: 'asset-documentation',
+      title: 'Asset Documentation™',
+      icon: '🏧',
+      description: 'Verify and document assets for closing and reserves.',
+      badge: null,
+      status: 'live',
+      path: '/asset-analyzer',
+      color: 'green',
+    },
+    {
+      id: 'credit-intel',
+      title: 'Credit Intel™',
+      icon: '📊',
+      description: 'Analyze credit profile, tradelines, derogatory history, and score improvement paths.',
+      badge: null,
+      status: 'live',
+      path: '/credit-intel',
+      color: 'blue',
+    },
+    {
       id: 'debt-consolidation',
       title: 'Debt Consolidation Intelligence™',
       icon: '💳',
@@ -28,31 +68,11 @@ const modules = {
       icon: '🏦',
       description: 'Analyze bank statements for self-employed and non-QM borrowers.',
       badge: 'PREMIUM',
-      status: 'planned',
-      path: null,
+      status: 'live',
+      path: '/bank-statement-intel',
       color: 'purple',
     },
-    {
-      id: 'income-analysis',
-      title: 'Income Analysis™',
-      icon: '💼',
-      description: 'Calculate qualifying income across all documentation types.',
-      badge: null,
-      status: 'planned',
-      path: null,
-      color: 'green',
-    },
-    {
-      id: 'asset-documentation',
-      title: 'Asset Documentation™',
-      icon: '🏧',
-      description: 'Verify and document assets for closing and reserves.',
-      badge: null,
-      status: 'planned',
-      path: null,
-      color: 'green',
-    },
-     ],
+  ],
   stage2: [
     {
       id: 'lender-match',
@@ -81,7 +101,7 @@ const modules = {
       description: 'Diagnose AUS findings and identify paths to approval.',
       badge: null,
       status: 'live',
-     path: '/aus-rescue',
+      path: '/aus-rescue',
       color: 'red',
     },
     {
@@ -136,7 +156,7 @@ const modules = {
       path: '/mi-optimizer',
       color: 'blue',
     },
-   {
+    {
       id: 'arm-structure',
       title: 'ARM Structure Intelligence™',
       icon: '📈',
@@ -147,46 +167,96 @@ const modules = {
       color: 'orange',
     },
     {
-      id: 'piggyback',
-      title: 'Piggyback 2nd Optimizer™',
-      icon: '🏗️',
-      description: 'Compare 80/10/10 vs 80/15/5 vs single mortgage with PMI structures.',
-      badge: 'NEW',
-      status: 'planned',
-      path: null,
-      color: 'orange',
-    },
-    {
       id: 'rehab',
       title: 'Rehab Intelligence™',
       icon: '🔨',
       description: 'Structure 203k, HomeStyle, and bridge rehab loans with risk scoring.',
       badge: 'NEW',
-     status: 'live',
+      status: 'live',
       path: '/rehab-intelligence',
       color: 'orange',
     },
     {
-      id: 'appraisal',
-      title: 'Appraisal Intelligence™',
-      icon: '🏡',
-      description: 'Appraisal waiver coaching, value risk assessment, and PIW optimization.',
-      badge: 'ENHANCED',
-      status: 'planned',
-      path: null,
+      id: 'rate-intel',
+      title: 'Rate Intel™',
+      icon: '💹',
+      description: 'Rate environment analysis, lock strategy, float-down scenarios, and market timing.',
+      badge: null,
+      status: 'live',
+      path: '/rate-intel',
+      color: 'blue',
+    },
+    {
+      id: 'closing-cost-calc',
+      title: 'Closing Cost Calculator™',
+      icon: '🧾',
+      description: 'Itemize and estimate all closing costs, prepaids, and cash-to-close for any loan type.',
+      badge: null,
+      status: 'live',
+      path: '/closing-cost-calc',
       color: 'green',
+    },
+    {
+      id: 'property-intel',
+      title: 'Property Intel™',
+      icon: '🏡',
+      description: 'Property type eligibility, warrantability, valuation risk, and appraisal waiver coaching.',
+      badge: null,
+      status: 'live',
+      path: '/property-intel',
+      color: 'green',
+    },
+    {
+      id: 'piggyback',
+      title: 'Piggyback 2nd Optimizer™',
+      icon: '🏗️',
+      description: 'Compare 80/10/10 vs 80/15/5 vs single mortgage with PMI structures.',
+      badge: 'NEW',
+      status: 'live',
+      path: '/piggyback-optimizer',
+      color: 'orange',
     },
   ],
   stage4: [
     {
-      id: 'checklist',
-      title: 'Intelligent Checklist™',
-      icon: '✅',
-      description: 'Dynamic condition checklist that auto-populates from your scenario data.',
+      id: 'title-intel',
+      title: 'Title Intel™',
+      icon: '📜',
+      description: 'Title commitment review, lien checks, vesting analysis, and title insurance requirements.',
       badge: null,
-      status: 'planned',
-      path: null,
-      color: 'green',
+      status: 'live',
+      path: '/title-intel',
+      color: 'blue',
+    },
+    {
+      id: 'disclosure-intel',
+      title: 'Disclosure Intel™',
+      icon: '📋',
+      description: 'TRID, RESPA, and ECOA disclosure tracking — issue dates, deadlines, and compliance checklist.',
+      badge: 'NEW',
+      status: 'live',
+      path: '/disclosure-intel',
+      color: 'indigo',
+    },
+    {
+      id: 'compliance-intel',
+      title: 'Compliance Intel™',
+      icon: '⚖️',
+      description: 'QM, ATR, HPML, HMDA, and Fair Lending compliance review with APR spread calculator.',
+      badge: 'NEW',
+      status: 'live',
+      path: '/compliance-intel',
+      color: 'purple',
+    },
+    {
+      id: 'flood-intel',
+      title: 'Flood Intel™',
+      icon: '🌊',
+      description: 'FEMA flood zone determination, NFIP insurance requirements, and life-of-loan compliance.',
+      badge: 'NEW',
+      status: 'live',
+      path: '/flood-intel',
+      color: 'blue',
     },
     {
       id: 'decision-record',
@@ -195,8 +265,18 @@ const modules = {
       description: 'Immutable audit trail of every decision, override, and approval in your file.',
       badge: null,
       status: 'live',
-path: '/decision-records',
+      path: '/decision-records',
       color: 'blue',
+    },
+    {
+      id: 'checklist',
+      title: 'Intelligent Checklist™',
+      icon: '✅',
+      description: 'Dynamic condition checklist that auto-populates from your scenario data.',
+      badge: null,
+      status: 'live',
+      path: '/intelligent-checklist',
+      color: 'green',
     },
   ],
   additional: [
@@ -219,17 +299,17 @@ path: '/decision-records',
       status: 'planned',
       path: null,
       color: 'blue',
-   },
-{
-  id: 'lender-intake',
-  title: 'Lender Intake Form™',
-  icon: '📋',
-  description: 'Shareable intake form for lenders to self-report their profile into the Lender Library.',
-  badge: 'NEW',
-  status: 'live',
-  path: '/lender-intake',
-  color: 'orange',
-},
+    },
+    {
+      id: 'lender-intake',
+      title: 'Lender Intake Form™',
+      icon: '📋',
+      description: 'Shareable intake form for lenders to self-report their profile into the Lender Library.',
+      badge: 'NEW',
+      status: 'live',
+      path: '/lender-intake',
+      color: 'orange',
+    },
   ],
 };
 
@@ -340,8 +420,10 @@ function StageSection({ stageKey, title, subtitle, moduleList, onNavigate }) {
 export default function Dashboard() {
   const navigate = useNavigate();
 
-  const totalModules = Object.values(modules).flat().length;
-  const liveModules = Object.values(modules).flat().filter(m => m.status === 'live').length;
+  // Count only canonical stages (not additional tools) for platform progress
+  const canonicalModules = [...modules.stage1, ...modules.stage2, ...modules.stage3, ...modules.stage4];
+  const totalModules = canonicalModules.length;
+  const liveModules = canonicalModules.filter(m => m.status === 'live').length;
   const progressPct = Math.round((liveModules / totalModules) * 100);
 
   const handleNavigate = (path) => {
@@ -421,7 +503,7 @@ export default function Dashboard() {
         <StageSection
           stageKey="stage3"
           title="Stage 3: Final Structure Optimization"
-          subtitle="Optimize rate, MI, piggyback, and property analysis for the best structure"
+          subtitle="Optimize rate, MI, costs, and property analysis for the best structure"
           moduleList={modules.stage3}
           onNavigate={handleNavigate}
         />
@@ -430,7 +512,7 @@ export default function Dashboard() {
         <StageSection
           stageKey="stage4"
           title="Stage 4: Verification & Submit"
-          subtitle="Final checklist, audit trail, and submission package"
+          subtitle="Disclosures, compliance, flood, title — final checklist and audit trail"
           moduleList={modules.stage4}
           onNavigate={handleNavigate}
         />

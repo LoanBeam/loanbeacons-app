@@ -9,7 +9,6 @@
 // MODULE REGISTRY
 // Every module that exists (live or future) is registered here.
 // The completeness engine uses this list to score each record.
-// When you build modules 18–20, add their keys here.
 // ─────────────────────────────────────────────────────────────
 export const MODULE_KEYS = {
   // ── Stage 1: Pre-Structure & Initial Analysis ──────────────
@@ -35,17 +34,22 @@ export const MODULE_KEYS = {
   FLOOD_INTEL:             'FLOOD_INTEL',              // Module 16
   REHAB_INTEL:             'REHAB_INTEL',              // Module 17
 
-  // ── Stage 4: Verification & Submit (future) ───────────────
-  AE_SHARE_SERVICE:        'AE_SHARE_SERVICE',         // Module 18
-  SUBMISSION_PACKAGE:      'SUBMISSION_PACKAGE',       // Module 19
-  DECISION_RECORD:         'DECISION_RECORD',          // Module 20
-  LENDER_PROFILE_BUILDER:  'LENDER_PROFILE_BUILDER',   // Module 21
+  // ── Stage 4: Verification & Submit ────────────────────────
+  INTELLIGENT_CHECKLIST:   'INTELLIGENT_CHECKLIST',    // Module 18
+  PIGGYBACK_OPTIMIZER:     'PIGGYBACK_OPTIMIZER',      // Module 19
+  BANK_STATEMENT_INTEL:    'BANK_STATEMENT_INTEL',     // Module 20
+
+  // ── System / Infrastructure ────────────────────────────────
+  AE_SHARE_SERVICE:        'AE_SHARE_SERVICE',         // Module 21
+  SUBMISSION_PACKAGE:      'SUBMISSION_PACKAGE',       // Module 22
+  DECISION_RECORD:         'DECISION_RECORD',          // Module 23
+  LENDER_PROFILE_BUILDER:  'LENDER_PROFILE_BUILDER',   // Module 24
 };
 
 // Flat array used by the completeness engine
 export const ALL_MODULE_KEYS = Object.values(MODULE_KEYS);
 
-// All 17 currently live modules — drives completeness scoring.
+// All 20 currently live modules — drives completeness scoring.
 // Keys MUST match exactly what each module passes to reportFindings().
 export const LIVE_MODULE_KEYS = [
   MODULE_KEYS.SCENARIO_CREATOR,
@@ -65,6 +69,9 @@ export const LIVE_MODULE_KEYS = [
   MODULE_KEYS.COMPLIANCE_INTEL,
   MODULE_KEYS.FLOOD_INTEL,
   MODULE_KEYS.REHAB_INTEL,
+  MODULE_KEYS.INTELLIGENT_CHECKLIST,
+  MODULE_KEYS.PIGGYBACK_OPTIMIZER,
+  MODULE_KEYS.BANK_STATEMENT_INTEL,
 ];
 
 // ─────────────────────────────────────────────────────────────

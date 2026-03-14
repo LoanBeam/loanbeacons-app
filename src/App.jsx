@@ -10,7 +10,7 @@ import MIOptimizer from './pages/MIOptimizer'
 import FHAStreamline from './pages/FHAStreamline'
 import DebtConsolidation from './pages/DebtConsolidation'
 import AUSRescue from './pages/AUSRescue'
-import RehabIntelligence from './modules/RehabIntelligence';
+import RehabIntelligence from './modules/RehabIntelligence'
 import Admin from './pages/Admin'
 import AESharePage from './pages/AESharePage'
 import LenderMatch from './modules/LenderMatch'
@@ -22,6 +22,21 @@ import LenderIntakeForm from './modules/LenderIntakeForm'
 import LenderProfileBuilder from './modules/LenderProfileBuilder'
 import DecisionRecordDashboard from './modules/DecisionRecord/DecisionRecordDashboard'
 import DecisionRecordDetail from './modules/DecisionRecord/DecisionRecordDetail'
+import LoanPathGraph from './components/LoanPathGraph'
+import QualifyingIntel from './pages/QualifyingIntel'
+import IncomeAnalyzer from './pages/IncomeAnalyzer'
+import AssetAnalyzer from './pages/AssetAnalyzer'
+import CreditIntel from './pages/CreditIntel'
+import PropertyIntel from './pages/PropertyIntel'
+import TitleIntel from './pages/TitleIntel'
+import ClosingCostCalc from './pages/ClosingCostCalc'
+import RateIntel from './pages/RateIntel'
+import DisclosureIntel from './pages/DisclosureIntel'
+import ComplianceIntel from './pages/ComplianceIntel'
+import FloodIntel from './pages/FloodIntel'
+import IntelligentChecklist from './pages/IntelligentChecklist'
+import PiggybackOptimizer from './pages/PiggybackOptimizer'
+import BankStatementIntel from './pages/BankStatementIntel'
 
 const STANDALONE_ROUTES = ['/ae-share']
 
@@ -55,7 +70,23 @@ function AppShell() {
         <Route path="/lender-intake/:token" element={<LenderIntakeForm />} />
         <Route path="/ae-share/:token" element={<AESharePage />} />
         <Route path="/decision-records" element={<DecisionRecordDashboard />} />
-<Route path="/decision-records/:id" element={<DecisionRecordDetail />} />
+        <Route path="/decision-records/:id" element={<DecisionRecordDetail />} />
+        <Route path="/loan-path-graph" element={<LoanPathGraph />} />
+        <Route path="/loan-path-graph/:id" element={<LoanPathGraph />} />
+        <Route path="/qualifying-intel" element={<QualifyingIntel />} />
+        <Route path="/income-analyzer" element={<IncomeAnalyzer />} />
+        <Route path="/asset-analyzer" element={<AssetAnalyzer />} />
+        <Route path="/credit-intel" element={<CreditIntel />} />
+        <Route path="/property-intel" element={<PropertyIntel />} />
+        <Route path="/title-intel" element={<TitleIntel />} />
+        <Route path="/closing-cost-calc" element={<ClosingCostCalc />} />
+        <Route path="/rate-intel" element={<RateIntel />} />
+        <Route path="/disclosure-intel" element={<DisclosureIntel />} />
+        <Route path="/compliance-intel" element={<ComplianceIntel />} />
+        <Route path="/flood-intel" element={<FloodIntel />} />
+        <Route path="/intelligent-checklist" element={<IntelligentChecklist />} />
+        <Route path="/piggyback-optimizer" element={<PiggybackOptimizer />} />
+        <Route path="/bank-statement-intel" element={<BankStatementIntel />} />
       </Routes>
       {!isStandalone && <Footer />}
     </div>
