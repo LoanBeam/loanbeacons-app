@@ -2204,7 +2204,7 @@ function ScenarioCreator() {
 
         </form>
       </div>
-          <CanonicalSequenceBar currentModuleKey="SCENARIO_CREATOR" scenarioId={scenarioId} recordId={savedRecordId} />
+    <CanonicalSequenceBar currentModuleKey="SCENARIO_CREATOR" scenarioId={id} recordId={null} />
 </div>
   );
 }

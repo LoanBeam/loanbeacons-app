@@ -1,4 +1,5 @@
-/**
+
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';/**
  * ============================================================
  * LoanBeacons Lender Match™
  * src/modules/LenderMatch.jsx
@@ -1969,6 +1970,8 @@ useEffect(() => {
         />
       )}
 
-    </div>
+          <CanonicalSequenceBar currentModuleKey="LENDER_MATCH" scenarioId={scenarioIdParam} recordId={null} />
+</div>
   );
 }
+

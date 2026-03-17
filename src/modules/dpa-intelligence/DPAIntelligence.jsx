@@ -724,7 +724,7 @@ export default function DPAIntelligence() {
           </div>
         )}
       </div>
-      <CanonicalSequenceBar currentModuleKey="DPA_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
+      <CanonicalSequenceBar currentModuleKey="DPA_INTEL" scenarioId={form.scenarioId} recordId={null} />
     </div>
   );
 }

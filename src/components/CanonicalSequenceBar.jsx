@@ -72,8 +72,8 @@ export default function CanonicalSequenceBar({ currentModuleKey, scenarioId, rec
   }, [scenarioId, recordId]);
 
   const ci = SEQ.findIndex(m => m.key === currentModuleKey);
-  const prev = ci > 0 ? SEQ[ci - 1] : null;
-  const next = ci < SEQ.length - 1 ? SEQ[ci + 1] : null;
+  const prev = SEQ.slice(0, ci).filter(m => m.live).pop() || null;
+const next = SEQ.slice(ci + 1).find(m => m.live) || null;
   const currentMod = ci >= 0 ? SEQ[ci] : null;
   const stageColor = currentMod ? STAGE_COLORS[currentMod.stage] : INDIGO;
 
