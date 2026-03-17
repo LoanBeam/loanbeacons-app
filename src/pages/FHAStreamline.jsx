@@ -4,6 +4,7 @@ import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 const FHA_RULES = {
   NTB_COMBINED_RATE_REDUCTION: 0.50,
@@ -592,6 +593,7 @@ export default function FHAStreamline() {
           </>
         )}
       </div>
+      <CanonicalSequenceBar currentModuleKey="FHA_STREAMLINE" scenarioId={scenarioId} recordId={savedRecordId} />
     </div>
   );
 }

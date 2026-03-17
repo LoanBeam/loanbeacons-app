@@ -10,6 +10,7 @@ import AddressValidationBadge from '../components/AddressValidationBadge';
 import CRASnapshotCard from '../components/CRASnapshotCard';
 import { useCRAEligibility } from '../hooks/useCRAEligibility';
 import { parseURLA, getImportSummary } from '../utils/parseURLA';
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 // ── Loan Types grouped by Loan Purpose ────────────────────────────────────────
 const LOAN_TYPES_BY_PURPOSE = {
@@ -2203,7 +2204,8 @@ function ScenarioCreator() {
 
         </form>
       </div>
-    </div>
+          <CanonicalSequenceBar currentModuleKey="SCENARIO_CREATOR" scenarioId={scenarioId} recordId={savedRecordId} />
+</div>
   );
 }
 

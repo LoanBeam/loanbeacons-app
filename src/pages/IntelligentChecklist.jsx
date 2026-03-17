@@ -5,6 +5,7 @@ import { db } from '../firebase/config'
 import { useDecisionRecord } from '../hooks/useDecisionRecord'
 import { MODULE_KEYS } from '../constants/decisionRecordConstants'
 import DecisionRecordBanner from '../components/DecisionRecordBanner'
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 // ─────────────────────────────────────────────────────────────
 // CONDITION LIBRARY
@@ -729,6 +730,7 @@ export default function IntelligentChecklist() {
           </div>
         )}
       </div>
-    </div>
+          <CanonicalSequenceBar currentModuleKey="INTELLIGENT_CHECKLIST" scenarioId={scenarioId} recordId={savedRecordId} />
+</div>
   )
 }

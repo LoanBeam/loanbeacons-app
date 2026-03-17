@@ -5,6 +5,7 @@ import { db } from '../firebase/config'
 import { useDecisionRecord } from '../hooks/useDecisionRecord'
 import { MODULE_KEYS } from '../constants/decisionRecordConstants'
 import DecisionRecordBanner from '../components/DecisionRecordBanner'
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 const FLOOD_ZONES = [
   {
@@ -653,6 +654,7 @@ export default function FloodIntel() {
           </div>
         )}
       </div>
-    </div>
+          <CanonicalSequenceBar currentModuleKey="FLOOD_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
+</div>
   )
 }

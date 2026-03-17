@@ -4,6 +4,7 @@ import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { collection, addDoc, doc, getDoc, getDocs, setDoc, updateDoc, query, where } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 // ── Student Loan Payment Rules (RULES_V1) ──────────────────────────
 function computeStudentLoanPayment(tradeline, loanProgram, conventionalInvestor) {
@@ -710,6 +711,7 @@ export default function DebtConsolidation() {
           </div>
         </div>
       </div>
+      <CanonicalSequenceBar currentModuleKey="DEBT_CONSOLIDATION" scenarioId={scenarioId} recordId={savedRecordId} />
     </div>
   );
 }

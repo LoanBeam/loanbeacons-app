@@ -5,6 +5,7 @@ import { db } from '../firebase/config'
 import { useDecisionRecord } from '../hooks/useDecisionRecord'
 import { MODULE_KEYS } from '../constants/decisionRecordConstants'
 import DecisionRecordBanner from '../components/DecisionRecordBanner'
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 // QM Safe Harbor thresholds
 const QM_APR_THRESHOLDS = {
@@ -521,6 +522,7 @@ export default function ComplianceIntel() {
           </div>
         )}
       </div>
-    </div>
+          <CanonicalSequenceBar currentModuleKey="COMPLIANCE_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
+</div>
   )
 }

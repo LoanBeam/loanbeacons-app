@@ -11,6 +11,7 @@ import {
   calculateAIV,
 } from '../engines/RehabEngine.js';
 import RehabSummaryCard from '../components/RehabSummaryCard.jsx';
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 // ─────────────────────────────────────────────
 // CONSTANTS
@@ -1025,6 +1026,7 @@ export default function RehabIntelligence() {
           )}
         </div>
       </div>
+      <CanonicalSequenceBar currentModuleKey="REHAB_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
     </div>
   );
 }

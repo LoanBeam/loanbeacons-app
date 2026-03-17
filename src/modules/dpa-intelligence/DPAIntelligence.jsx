@@ -11,6 +11,7 @@ import {
 import { PROGRAM_TYPE_LABELS } from '../../data/dpa/dpaPrograms.js';
 import { useDecisionRecord } from '../../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../../components/DecisionRecordBanner';
+import CanonicalSequenceBar from '../../components/CanonicalSequenceBar';
 
 const STEPS = ['Scenario Setup', 'Eligible Programs', 'Stack Builder', 'Lender Match & Output'];
 
@@ -723,6 +724,7 @@ export default function DPAIntelligence() {
           </div>
         )}
       </div>
+      <CanonicalSequenceBar currentModuleKey="DPA_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
     </div>
   );
 }

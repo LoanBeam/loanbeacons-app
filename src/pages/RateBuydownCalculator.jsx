@@ -4,6 +4,7 @@ import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { collection, query, where, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 function RateBuydownCalculator() {
   const navigate = useNavigate();
@@ -570,7 +571,8 @@ function RateBuydownCalculator() {
         )}
 
       </div>
-    </div>
+          <CanonicalSequenceBar currentModuleKey="RATE_BUYDOWN" scenarioId={scenarioId} recordId={savedRecordId} />
+</div>
   );
 }
 

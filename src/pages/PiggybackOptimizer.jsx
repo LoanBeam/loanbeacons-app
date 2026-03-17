@@ -5,6 +5,7 @@ import { db } from '../firebase/config'
 import { useDecisionRecord } from '../hooks/useDecisionRecord'
 import { MODULE_KEYS } from '../constants/decisionRecordConstants'
 import DecisionRecordBanner from '../components/DecisionRecordBanner'
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS
@@ -644,6 +645,7 @@ export default function PiggybackOptimizer() {
           </div>
         )}
       </div>
-    </div>
+          <CanonicalSequenceBar currentModuleKey="PIGGYBACK_OPTIMIZER" scenarioId={scenarioId} recordId={savedRecordId} />
+</div>
   )
 }

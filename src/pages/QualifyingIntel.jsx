@@ -8,6 +8,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 // ─── Program DTI Limits ───────────────────────────────────────────────────────
 const PROGRAMS = {
@@ -1151,6 +1152,7 @@ export default function QualifyingIntel() {
           </div>
         </div>
       </div>
+      <CanonicalSequenceBar currentModuleKey="QUALIFYING_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
     </div>
   );
 }

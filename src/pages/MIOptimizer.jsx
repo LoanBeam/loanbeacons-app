@@ -4,6 +4,7 @@ import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { collection, query, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 function MIOptimizer() {
   const navigate = useNavigate();
@@ -603,7 +604,8 @@ function MIOptimizer() {
         )}
 
       </div>
-    </div>
+          <CanonicalSequenceBar currentModuleKey="MI_OPTIMIZER" scenarioId={scenarioId} recordId={savedRecordId} />
+</div>
   );
 }
 

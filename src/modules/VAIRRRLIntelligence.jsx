@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { db } from "../firebase/config";
 import { doc, getDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { useSearchParams } from "react-router-dom";
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 function calcPI(b, r, m) {
   if (!b || !r || !m) return 0;
@@ -1536,6 +1537,7 @@ export default function VAIRRRLIntelligence() {
           </div>
         )}
       </div>
+      <CanonicalSequenceBar currentModuleKey="VA_IRRRL" scenarioId={scenarioId} recordId={savedRecordId} />
     </div>
   );
 }

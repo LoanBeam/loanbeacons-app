@@ -5,6 +5,7 @@ import { collection, getDocs, updateDoc, doc, serverTimestamp } from 'firebase/f
 import { evaluatePrograms, rateSensitivity, PROGRAM_RULES } from './ruleEngine';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { calculatePathScore } from '../utils/ausRescueScoring';
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 const PROGRAMS = {
   fha:          { label: 'FHA',           agency: 'FHA TOTAL Scorecard', maxDTI: 56.9, minCredit: 580, minDown: 3.5, findings: ['Accept/Eligible', 'Refer/Eligible', 'Refer with Caution'], positiveFindings: ['Accept/Eligible'] },
@@ -692,6 +693,7 @@ export default function AUSRescue() {
           </div>
         </div>
       </div>
+      <CanonicalSequenceBar currentModuleKey="AUS_RESCUE" scenarioId={scenarioId} recordId={savedRecordId} />
     </div>
   );
 }
