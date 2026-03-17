@@ -67,10 +67,13 @@ export function parseURLA(xmlString) {
     loanAmount: '', loanPurpose: '', loanType: '',
     interestRate: '', term: '360',
     proposedPI: '', proposedTaxes: '', proposedInsurance: '',
-    proposedMIP: '', cashToClose: '',
+    proposedMIP: '', proposedHOA: '', proposedFlood: '', proposedSecond: '',
+    cashToClose: '', downPayment: '', sellerConcessions: '',
     ufmipFinanced: '', ufmipTotal: '', estimatedClosingCosts: '',
+    gseInvestor: '',
     liabilities: [], assets: [], totalAssets: '',
     loFirstName: '', loLastName: '', loNMLS: '', companyName: '',
+    coBorrower: null,
   };
 
   var origSystem = doc.getElementsByTagName('ORIGINATION_SYSTEM')[0];
@@ -141,22 +144,75 @@ export function parseURLA(xmlString) {
     else if (htype === 'RealEstateTax') result.proposedTaxes = amt;
     else if (htype === 'HomeownersInsurance') result.proposedInsurance = amt;
     else if (htype === 'MIPremium') result.proposedMIP = amt;
+    else if (htype === 'HomeownersAssociationDues') result.proposedHOA = amt;
+    else if (htype === 'FloodInsurance') result.proposedFlood = amt;
+    else if (htype === 'SecondMortgagePrincipalAndInterest') result.proposedSecond = amt;
   });
+
+  // GSE Investor — from AUS tracking (DU = Fannie, LP = Freddie)
+  var ausTracking = doc.getElementsByTagName('AUTOMATED_UNDERWRITING_SYSTEM')[0];
+  if (ausTracking) {
+    var ausType = getTag(ausTracking, 'AutomatedUnderwritingSystemType');
+    if (ausType === 'DU' || ausType === 'DesktopUnderwriter') result.gseInvestor = 'FANNIE';
+    else if (ausType === 'LP' || ausType === 'LoanProspector' || ausType === 'LoanProductAdvisor') result.gseInvestor = 'FREDDIE';
+  }
+  // Fallback: check GSE loan type field
+  if (!result.gseInvestor) {
+    var loanProductData = doc.getElementsByTagName('LOAN_PRODUCT_DATA')[0];
+    if (loanProductData) {
+      var gseLoanType = getTag(loanProductData, 'GseLoanType');
+      if (gseLoanType === 'FannieMae') result.gseInvestor = 'FANNIE';
+      else if (gseLoanType === 'FreddieMac') result.gseInvestor = 'FREDDIE';
+    }
+  }
+
+  // Down payment — from SalesContract or calculated
+  var salesContractDetail = doc.getElementsByTagName('SALES_CONTRACT_DETAIL')[0];
+  if (salesContractDetail) {
+    var dpAmt = parseDollar(getTag(salesContractDetail, 'DownPaymentAmount'));
+    if (dpAmt) result.downPayment = dpAmt;
+    var scAmt = parseDollar(getTag(salesContractDetail, 'SalesContractAmount'));
+    if (scAmt) result.purchasePrice = scAmt;
+  }
+  // Seller concessions
+  var sellerConc = doc.getElementsByTagName('SELLER_CONCESSION')[0];
+  if (sellerConc) {
+    var concAmt = parseDollar(getTag(sellerConc, 'SalesContractSellerConcessionAmount'));
+    if (concAmt) result.sellerConcessions = concAmt;
+  }
+
+  var borrowerIndex = 0;
+  result.coBorrower = null;
 
   Array.from(doc.getElementsByTagName('PARTY')).forEach(function(party) {
     Array.from(party.getElementsByTagName('ROLE')).forEach(function(role) {
       var roleType = getTag(role, 'PartyRoleType');
       if (roleType === 'Borrower') {
+        var isCoBorrower = borrowerIndex > 0;
+        borrowerIndex++;
         var ind = party.getElementsByTagName('INDIVIDUAL')[0];
         if (ind) {
-          var nameEl = ind.getElementsByTagName('n')[0];
-          if (nameEl) { result.firstName = getTag(nameEl, 'FirstName'); result.lastName = getTag(nameEl, 'LastName'); }
-          Array.from(ind.getElementsByTagName('CONTACT_POINT')).forEach(function(cp) {
-            var tel = cp.getElementsByTagName('CONTACT_POINT_TELEPHONE')[0];
-            var email = cp.getElementsByTagName('CONTACT_POINT_EMAIL')[0];
-            if (tel) result.borrowerPhone = formatPhone(getTag(tel, 'ContactPointTelephoneValue'));
-            if (email) result.borrowerEmail = getTag(email, 'ContactPointEmailValue');
-          });
+          // MISMO 3.4 uses 'NAME' (uppercase) — case-sensitive XML tag
+          var nameEl = ind.getElementsByTagName('NAME')[0];
+          var parsedFirst = nameEl ? getTag(nameEl, 'FirstName') : getTag(ind, 'FirstName');
+          var parsedLast  = nameEl ? getTag(nameEl, 'LastName')  : getTag(ind, 'LastName');
+
+          if (!isCoBorrower) {
+            result.firstName = parsedFirst;
+            result.lastName  = parsedLast;
+          } else if (!result.coBorrower) {
+            // Capture first co-borrower
+            result.coBorrower = { firstName: parsedFirst, lastName: parsedLast, monthlyIncome: '' };
+          }
+
+          if (!isCoBorrower) {
+            Array.from(ind.getElementsByTagName('CONTACT_POINT')).forEach(function(cp) {
+              var tel = cp.getElementsByTagName('CONTACT_POINT_TELEPHONE')[0];
+              var email = cp.getElementsByTagName('CONTACT_POINT_EMAIL')[0];
+              if (tel) result.borrowerPhone = formatPhone(getTag(tel, 'ContactPointTelephoneValue'));
+              if (email) result.borrowerEmail = getTag(email, 'ContactPointEmailValue');
+            });
+          }
         }
         var bd = role.getElementsByTagName('BORROWER_DETAIL')[0];
         if (bd) { result.maritalStatus = getTag(bd, 'MaritalStatusType'); result.dependentCount = getTag(bd, 'DependentCount'); }
@@ -164,9 +220,15 @@ export function parseURLA(xmlString) {
         Array.from(role.getElementsByTagName('CURRENT_INCOME_ITEM')).forEach(function(item) {
           totalIncome += parseFloat(getTag(item, 'CurrentIncomeMonthlyTotalAmount')) || 0;
         });
-        if (totalIncome > 0) result.monthlyIncome = String(totalIncome.toFixed(2));
+        if (totalIncome > 0) {
+          if (!isCoBorrower) {
+            result.monthlyIncome = String(totalIncome.toFixed(2));
+          } else if (result.coBorrower) {
+            result.coBorrower.monthlyIncome = String(totalIncome.toFixed(2));
+          }
+        }
         var employer = role.getElementsByTagName('EMPLOYER')[0];
-        if (employer) {
+        if (employer && !isCoBorrower) {
           var leName = employer.getElementsByTagName('LEGAL_ENTITY_DETAIL')[0];
           if (leName) result.employerName = getTag(leName, 'FullName');
           var empDetail = employer.getElementsByTagName('EMPLOYMENT')[0];
@@ -176,7 +238,7 @@ export function parseURLA(xmlString) {
           }
         }
         Array.from(party.getElementsByTagName('TAXPAYER_IDENTIFIER')).forEach(function(ti) {
-          if (getTag(ti, 'TaxpayerIdentifierType') === 'SocialSecurityNumber') {
+          if (!isCoBorrower && getTag(ti, 'TaxpayerIdentifierType') === 'SocialSecurityNumber') {
             var ssn = getTag(ti, 'TaxpayerIdentifierValue');
             result.ssnPresent = !!(ssn && ssn.replace(/\D/g, '').length >= 9);
           }
@@ -185,8 +247,10 @@ export function parseURLA(xmlString) {
       if (roleType === 'LoanOriginator') {
         var ind2 = party.getElementsByTagName('INDIVIDUAL')[0];
         if (ind2) {
-          var nameEl2 = ind2.getElementsByTagName('n')[0];
+          var nameEl2 = ind2.getElementsByTagName('NAME')[0];
           if (nameEl2) { result.loFirstName = getTag(nameEl2, 'FirstName'); result.loLastName = getTag(nameEl2, 'LastName'); }
+          if (!result.loFirstName) result.loFirstName = getTag(ind2, 'FirstName');
+          if (!result.loLastName)  result.loLastName  = getTag(ind2, 'LastName');
         }
         Array.from(role.getElementsByTagName('LICENSE')).forEach(function(lic) {
           if (getTag(lic, 'LicenseAuthorityLevelType') === 'Private') result.loNMLS = getTag(lic, 'LicenseIdentifier');
@@ -235,17 +299,27 @@ export function parseURLA(xmlString) {
 export function getImportSummary(parsed) {
   var fields = [];
   if (parsed.firstName || parsed.lastName) fields.push('Borrower name');
-  if (parsed.employerName) fields.push('Employer');
-  if (parsed.monthlyIncome) fields.push('Monthly income');
-  if (parsed.loanAmount) fields.push('Loan amount');
-  if (parsed.purchasePrice) fields.push('Purchase price');
-  if (parsed.interestRate) fields.push('Interest rate');
-  if (parsed.term) fields.push('Loan term');
-  if (parsed.loanType) fields.push('Loan type');
-  if (parsed.loanPurpose) fields.push('Loan purpose');
-  if (parsed.streetAddress) fields.push('Property address');
-  if (parsed.monthlyDebts) fields.push('Monthly debts');
-  if (parsed.liabilities.length > 0) fields.push(parsed.liabilities.length + ' liabilities');
-  if (parsed.assets.length > 0) fields.push(parsed.assets.length + ' assets');
+  if (parsed.coBorrower?.firstName)        fields.push('Co-borrower name');
+  if (parsed.employerName)                 fields.push('Employer');
+  if (parsed.monthlyIncome)                fields.push('Monthly income');
+  if (parsed.loanAmount)                   fields.push('Loan amount');
+  if (parsed.purchasePrice)                fields.push('Purchase price');
+  if (parsed.downPayment)                  fields.push('Down payment');
+  if (parsed.sellerConcessions)            fields.push('Seller concessions');
+  if (parsed.interestRate)                 fields.push('Interest rate');
+  if (parsed.term)                         fields.push('Loan term');
+  if (parsed.loanType)                     fields.push('Loan type');
+  if (parsed.loanPurpose)                  fields.push('Loan purpose');
+  if (parsed.gseInvestor)                  fields.push('GSE investor (' + parsed.gseInvestor + ')');
+  if (parsed.streetAddress)               fields.push('Property address');
+  if (parsed.proposedTaxes)               fields.push('Property taxes');
+  if (parsed.proposedInsurance)           fields.push('Homeowners insurance');
+  if (parsed.proposedMIP)                 fields.push('MIP/PMI');
+  if (parsed.proposedHOA)                 fields.push('HOA dues');
+  if (parsed.proposedFlood)               fields.push('Flood insurance');
+  if (parsed.monthlyDebts)                fields.push('Monthly debts');
+  if (parsed.liabilities.length > 0)      fields.push(parsed.liabilities.length + ' liabilities');
+  if (parsed.assets.length > 0)           fields.push(parsed.assets.length + ' assets');
+  if (parsed.cashToClose)                 fields.push('Cash to close');
   return fields;
 }

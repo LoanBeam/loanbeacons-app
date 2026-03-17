@@ -29,7 +29,7 @@ const PATHS = {
         modules: [
           { key: 'SCENARIO_CREATOR', label: 'Scenario Creator', route: '/scenario-creator', live: true },
           { key: 'QUALIFYING_INTEL', label: 'Qualifying Intel', route: '/qualifying', live: false },
-          { key: 'INCOME_ANALYZER', label: 'Income Analyzer', route: '/income', live: false },
+          { key: 'INCOME_ANALYZER', label: 'Income Analyzer', route: '/income-analyzer', live: true },
           { key: 'ASSET_ANALYZER', label: 'Asset Analyzer', route: '/assets', live: false },
           { key: 'CREDIT_INTEL', label: 'Credit Intel', route: '/credit', live: false },
         ]
@@ -81,7 +81,7 @@ const PATHS = {
         id: 1, label: 'Profile & Docs', icon: '📋',
         modules: [
           { key: 'SCENARIO_CREATOR', label: 'Scenario Creator', route: '/scenario-creator', live: true },
-          { key: 'INCOME_ANALYZER', label: 'Income Analyzer', route: '/income', live: false, note: 'Bank stmt / P&L' },
+          { key: 'INCOME_ANALYZER', label: 'Income Analyzer', route: '/income-analyzer', live: true, note: 'Bank stmt / P&L' },
           { key: 'ASSET_ANALYZER', label: 'Asset Analyzer', route: '/assets', live: false, note: 'Asset depletion' },
           { key: 'DEBT_CONSOLIDATION', label: 'Debt Consolidation', route: '/debt-consolidation', live: true },
         ]
@@ -135,7 +135,7 @@ const PATHS = {
         id: 2, label: 'Rescue', icon: '🛠️',
         modules: [
           { key: 'AUS_RESCUE_STRAT', label: 'Rescue Strategies', route: '/aus-rescue', live: true, note: '23 ranked' },
-          { key: 'INCOME_ANALYZER', label: 'Income Analyzer', route: '/income', live: false },
+          { key: 'INCOME_ANALYZER', label: 'Income Analyzer', route: '/income-analyzer', live: true },
           { key: 'ASSET_ANALYZER', label: 'Asset Analyzer', route: '/assets', live: false, note: 'Reserves' },
         ]
       },

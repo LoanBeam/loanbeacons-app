@@ -9,7 +9,7 @@ import { getAuth } from 'firebase/auth';
 const MODULE_LABELS = {
   SCENARIO_CREATOR:      { num: 1,  label: 'Scenario Creator',       route: '/scenario-creator'    },
   QUALIFYING_INTEL:      { num: 2,  label: 'Qualifying Intelligence', route: '/qualifying'           },
-  INCOME_ANALYZER:       { num: 3,  label: 'Income Analyzer',         route: '/income-analyzer'               },
+  INCOME_ANALYZER:       { num: 3,  label: 'Income Analyzer',         route: '/income-analyzer'      },
   ASSET_ANALYZER:        { num: 4,  label: 'Asset Analyzer',          route: '/assets'               },
   CREDIT_INTEL:          { num: 5,  label: 'Credit Intelligence',     route: '/credit'               },
   LENDER_MATCH:          { num: 6,  label: 'Lender Match™',           route: '/lender-match'         },
@@ -80,7 +80,7 @@ function Section({ id, title, badge, badgeColor = 'bg-amber-100 text-amber-800',
 }
 
 // ─── Module Findings Grid ────────────────────────────────────────────────────
-function ModuleFindingsGrid({ moduleVersionTags, evidence }) {
+function ModuleFindingsGrid({ moduleVersionTags, evidence, scenarioId }) {
   const navigate = useNavigate();
   const evidenceByModule = {};
   (evidence || []).forEach(e => {
@@ -139,7 +139,7 @@ function ModuleFindingsGrid({ moduleVersionTags, evidence }) {
                 {!ran && <span className="text-xs text-slate-400 italic">Not yet run</span>}
                 {ran && <span className="text-xs text-emerald-600 font-semibold">✓ Logged</span>}
                 <button
-                  onClick={() => navigate(cfg.route)}
+                  onClick={() => navigate(scenarioId ? `${cfg.route}?scenarioId=${scenarioId}` : cfg.route)}
                   className={`text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors ${
                     ran
                       ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
@@ -743,7 +743,7 @@ export default function DecisionRecordDetail() {
               {nextModules.map(key => {
                 const cfg = MODULE_LABELS[key];
                 return (
-                  <button key={key} onClick={() => navigate(cfg.route)}
+                  <button key={key} onClick={() => navigate(scenarioId ? `${cfg.route}?scenarioId=${scenarioId}` : cfg.route)}
                     className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-amber-300 hover:border-amber-500 hover:bg-amber-50 transition-all text-left group">
                     <div className="w-7 h-7 rounded-full bg-amber-100 flex items-center justify-center text-xs font-black text-amber-700 shrink-0 group-hover:bg-amber-200">
                       {cfg.num}
@@ -762,7 +762,7 @@ export default function DecisionRecordDetail() {
         {/* ── Module Findings ── */}
         <div id="modules">
           <Section title="Module Findings" badge={`${moduleCount} / 17`} badgeColor={moduleCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}>
-            <ModuleFindingsGrid moduleVersionTags={moduleVersionTags} evidence={evidence} />
+            <ModuleFindingsGrid moduleVersionTags={moduleVersionTags} evidence={evidence} scenarioId={record?.header?.scenarioId || record?.scenarioId} />
           </Section>
         </div>
 

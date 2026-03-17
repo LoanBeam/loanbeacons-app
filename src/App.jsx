@@ -10,7 +10,7 @@ import MIOptimizer from './pages/MIOptimizer'
 import FHAStreamline from './pages/FHAStreamline'
 import DebtConsolidation from './pages/DebtConsolidation'
 import AUSRescue from './pages/AUSRescue'
-import RehabIntelligence from './modules/RehabIntelligence'
+import RehabIntelligence from './modules/RehabIntelligence';
 import Admin from './pages/Admin'
 import AESharePage from './pages/AESharePage'
 import LenderMatch from './modules/LenderMatch'
@@ -31,12 +31,11 @@ import PropertyIntel from './pages/PropertyIntel'
 import TitleIntel from './pages/TitleIntel'
 import ClosingCostCalc from './pages/ClosingCostCalc'
 import RateIntel from './pages/RateIntel'
+import IntelligentChecklist from './pages/IntelligentChecklist'
+import PiggybackOptimizer from './pages/PiggybackOptimizer'
 import DisclosureIntel from './pages/DisclosureIntel'
 import ComplianceIntel from './pages/ComplianceIntel'
 import FloodIntel from './pages/FloodIntel'
-import IntelligentChecklist from './pages/IntelligentChecklist'
-import PiggybackOptimizer from './pages/PiggybackOptimizer'
-import BankStatementIntel from './pages/BankStatementIntel'
 
 const STANDALONE_ROUTES = ['/ae-share']
 
@@ -86,7 +85,6 @@ function AppShell() {
         <Route path="/flood-intel" element={<FloodIntel />} />
         <Route path="/intelligent-checklist" element={<IntelligentChecklist />} />
         <Route path="/piggyback-optimizer" element={<PiggybackOptimizer />} />
-        <Route path="/bank-statement-intel" element={<BankStatementIntel />} />
       </Routes>
       {!isStandalone && <Footer />}
     </div>

@@ -5,6 +5,10 @@ export async function validateAddress({ address, city, state, zip }) {
   if (!address || !state) {
     return { status: "MISSING_INPUT", uspsAddress: null, verdict: null };
   }
+  // Guard: if no API key configured, skip silently
+  if (!API_KEY) {
+    return { status: "API_ERROR", uspsAddress: null, verdict: null };
+  }
   try {
     const response = await fetch(`${ENDPOINT}?key=${API_KEY}`, {
       method: "POST",
@@ -18,50 +22,69 @@ export async function validateAddress({ address, city, state, zip }) {
         },
       }),
     });
+
+    // Non-200: API key not enabled for Address Validation or quota exceeded
     if (!response.ok) {
+      const errBody = await response.json().catch(() => ({}));
+      const errCode = errBody?.error?.status || '';
+      // API not enabled — treat as soft skip rather than hard failure
+      if (errCode === 'PERMISSION_DENIED' || errCode === 'API_KEY_INVALID' || response.status === 403) {
+        return { status: "API_ERROR", uspsAddress: null, verdict: null };
+      }
       return { status: "API_ERROR", uspsAddress: null, verdict: null };
     }
+
     const data = await response.json();
-    const verdict = data?.result?.verdict;
-    const usps = data?.result?.uspsData;
+    const verdict  = data?.result?.verdict;
+    const usps     = data?.result?.uspsData;
+    const granularity = verdict?.validationGranularity || '';
+
     let status = "UNCONFIRMED";
-    if (
-      verdict?.validationGranularity === "PREMISE" ||
-      verdict?.validationGranularity === "SUB_PREMISE"
-    ) {
+
+    if (granularity === "PREMISE" || granularity === "SUB_PREMISE") {
       const components = data?.result?.address?.addressComponents || [];
-      const problematic = components.filter(
+      const suspicious = components.filter(
         c => c.confirmationLevel === "UNCONFIRMED_AND_SUSPICIOUS"
       );
-      if (problematic.length === 0) {
-        status = "CONFIRMED";
-      } else {
-        status = "PARTIAL";
-      }
-    } else if (verdict?.validationGranularity === "ROUTE") {
+      status = suspicious.length === 0 ? "CONFIRMED" : "PARTIAL";
+    } else if (granularity === "ROUTE" || granularity === "BLOCK") {
+      status = "PARTIAL";
+    } else if (granularity === "PREMISE_PROXIMITY") {
+      // Close enough — treat as partial
       status = "PARTIAL";
     } else {
       status = "FAILED";
     }
+
+    // USPS delivery point check overrides if undeliverable
     const delivery = usps?.deliveryPointValidation;
     if (delivery === "MISSING" || delivery === "NO_STAT_PLUS") {
       status = "UNDELIVERABLE";
     }
+
+    // If Google confirmed but USPS not available, keep CONFIRMED
+    if (
+      status === "FAILED" &&
+      (verdict?.addressComplete === true || verdict?.hasInferredComponents === false)
+    ) {
+      status = "PARTIAL";
+    }
+
     return {
       status,
       uspsAddress: usps?.standardizedAddress ? {
         line1: usps.standardizedAddress.firstAddressLine || "",
-        city: usps.standardizedAddress.city || "",
+        city:  usps.standardizedAddress.city || "",
         state: usps.standardizedAddress.state || "",
-        zip: usps.standardizedAddress.zipCode || "",
-        zip4: usps.standardizedAddress.zipCodeExtension || "",
+        zip:   usps.standardizedAddress.zipCode || "",
+        zip4:  usps.standardizedAddress.zipCodeExtension || "",
       } : null,
       verdict: {
-        granularity: verdict?.validationGranularity || null,
+        granularity: granularity || null,
         hasUnconfirmed: verdict?.hasUnconfirmedComponents || false,
-        hasInferred: verdict?.hasInferredComponents || false,
+        hasInferred:    verdict?.hasInferredComponents || false,
         addressComplete: verdict?.addressComplete || false,
-        deliveryPoint: delivery || null,
+        deliveryPoint:   delivery || null,
       },
       validatedAt: new Date().toISOString(),
     };
