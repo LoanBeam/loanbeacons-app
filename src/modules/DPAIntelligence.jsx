@@ -8,7 +8,7 @@ import { DPA_PROGRAMS } from '../data/dpa/dpaData';
 import { evaluateAllPrograms, getFreshnessLabel, getConfidenceLabel } from '../engines/dpa/dpaStackOptimizer';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
-import AEShareForm from '../components/ae/AEShareForm';
+import AEShareForm from '../components/lenderMatch/AEShareForm';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 
 // ── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -57,12 +57,12 @@ export default function DPAIntelligence() {
     lenderName:     searchParams.get('lenderName')      || '',
   }), [searchParams]);
 
-  // ── Firestore lender fallback (populated after Lender Match saves DR) ────
+  // ── Firestore lender fallback ────────────────────────────────────────────
   const [firestoreLenderId, setFirestoreLenderId]     = useState('');
   const [firestoreLenderName, setFirestoreLenderName] = useState('');
 
   useEffect(() => {
-    if (!scenarioId || scenario.lenderId) return; // URL already has lenderId
+    if (!scenarioId || scenario.lenderId) return;
     (async () => {
       try {
         const snap = await getDoc(doc(db, 'scenarios', scenarioId));
@@ -75,36 +75,33 @@ export default function DPAIntelligence() {
     })();
   }, [scenarioId, scenario.lenderId]);
 
-  // Effective lender values — URL params take precedence, Firestore as fallback
   const effectiveLenderId   = scenario.lenderId   || firestoreLenderId;
   const effectiveLenderName = scenario.lenderName || firestoreLenderName;
 
   // ── State ────────────────────────────────────────────────────────────────
-  const [brokerOnly, setBrokerOnly]               = useState(true);
-  const [hasRun, setHasRun]                       = useState(false);
-  const [isRunning, setIsRunning]                 = useState(false);
-  const [results, setResults]                     = useState([]);
-  const [selectedProgram, setSelectedProgram]     = useState(null);
-  const [approvalMap, setApprovalMap]             = useState({});   // programId → state
-  const [loadingApprovals, setLoadingApprovals]   = useState(false);
-  const [brokerageApproved, setBrokerageApproved] = useState(false);
+  const [brokerOnly, setBrokerOnly]                   = useState(true);
+  const [fthbOverride, setFthbOverride]               = useState(null); // null = use scenario value
+  const [hasRun, setHasRun]                           = useState(false);
+  const [isRunning, setIsRunning]                     = useState(false);
+  const [results, setResults]                         = useState([]);
+  const [selectedProgram, setSelectedProgram]         = useState(null);
+  const [approvalMap, setApprovalMap]                 = useState({});
+  const [brokerageApproved, setBrokerageApproved]     = useState(false);
   const [brokerageLenderName, setBrokerageLenderName] = useState('');
-  const [haikusLoading, setHaikusLoading]         = useState(false);
-  const [haikus, setHaikus]                       = useState({});    // programId → summary
-  const [showFailDetails, setShowFailDetails]     = useState({});
+  const [haikusLoading, setHaikusLoading]             = useState(false);
+  const [haikus, setHaikus]                           = useState({});
+  const [showFailDetails, setShowFailDetails]         = useState({});
 
   // AE Share Modal state
-  const [aeShareModal, setAeShareModal]           = useState(null);  // { program, evaluation } | null
-  const [aeSending, setAeSending]                 = useState(false);
-  const [aeSent, setAeSent]                       = useState(false);
+  const [aeShareModal, setAeShareModal] = useState(null);
+  const [aeSending, setAeSending]       = useState(false);
+  const [aeSent, setAeSent]             = useState(false);
 
   // Decision Record
-  const { reportFindings, scenarioData } = useDecisionRecord(scenarioId);
+  const { reportFindings } = useDecisionRecord(scenarioId);
 
-  // Brokerage approval is now checked inside handleRunSearch
-  // where auth is guaranteed ready. This useEffect is intentionally minimal.
+  // ── Per-LO approval records ──────────────────────────────────────────────
   useEffect(() => {
-    // per-LO approval records (fallback if no brokerage approval found at run time)
     if (!effectiveLenderId || !auth.currentUser) return;
     const q = query(
       collection(db, 'dpa_lender_approvals'),
@@ -118,6 +115,9 @@ export default function DPAIntelligence() {
     }).catch(e => console.error('per-LO approval load:', e));
   }, [effectiveLenderId, auth.currentUser]);
 
+  // ── Effective FTHB value ─────────────────────────────────────────────────
+  const effectiveFthb = fthbOverride ?? scenario.firstTimeBuyer;
+
   // ── Run DPA Search ────────────────────────────────────────────────────────
   const handleRunSearch = async () => {
     setIsRunning(true);
@@ -125,13 +125,11 @@ export default function DPAIntelligence() {
     setHaikus({});
     setSelectedProgram(null);
 
-    // ── Step 1: Check brokerage approval FIRST (before evaluation) ──────────
+    // Step 1: Check brokerage approval
     let newApprovalMap = {};
     try {
-      // Read ALL lenderProfiles without a where clause to avoid index/rules issues
       const allSnap = await getDocs(collection(db, 'lenderProfiles'));
       const approvedDoc = allSnap.docs.find(d => d.data().brokerage_approved === true);
-      alert('[DPA DEBUG] docs: ' + allSnap.size + ' | approved: ' + (approvedDoc?.data().name || 'none'));
       if (approvedDoc) {
         newApprovalMap = { __brokerage_approved__: true, __lender_name__: approvedDoc.data().name };
       }
@@ -139,13 +137,13 @@ export default function DPAIntelligence() {
       console.error('[DPA] lenderProfiles read failed:', e);
     }
 
-    // ── Step 2: Small delay to show spinner, then evaluate + set all state ───
+    // Step 2: Evaluate programs
     await new Promise(r => setTimeout(r, 800));
 
     const pool = brokerOnly ? DPA_PROGRAMS.filter(p => p.broker_eligible) : DPA_PROGRAMS;
-    const evaluated = evaluateAllPrograms(pool, scenario);
+    const effectiveScenario = { ...scenario, firstTimeBuyer: effectiveFthb };
+    const evaluated = evaluateAllPrograms(pool, effectiveScenario);
 
-    // Set approval map and results together so cards render with correct state
     if (newApprovalMap.__brokerage_approved__) {
       setBrokerageApproved(true);
       setBrokerageLenderName(newApprovalMap.__lender_name__ || '');
@@ -168,7 +166,7 @@ export default function DPAIntelligence() {
           dpa_amount:   r.evaluation.dpa_amount_calculated,
           warnings:     r.evaluation.warnings,
         })),
-        inputs: { brokerOnly, scenario },
+        inputs: { brokerOnly, fthbOverride, scenario: effectiveScenario },
       });
     }
 
@@ -218,7 +216,7 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
     setHaikusLoading(false);
   };
 
-  // ── Open AE Share Modal ───────────────────────────────────────────────────
+  // ── AE Share Modal ────────────────────────────────────────────────────────
   const handleOpenAeModal = useCallback((program, evaluation) => {
     setAeSent(false);
     setAeSending(false);
@@ -231,14 +229,12 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
     setAeSending(false);
   }, []);
 
-  // ── Send via AE Share Service + write Firestore approval record ───────────
   const handleAeSend = useCallback(async (emails, shareType, message) => {
     if (!aeShareModal || !auth.currentUser) return;
     const { program, evaluation } = aeShareModal;
 
     setAeSending(true);
     try {
-      // 1. Call AE Share Service Cloud Function
       const functions = getFunctions();
       const createShare = httpsCallable(functions, 'createScenarioShare');
       await createShare({
@@ -264,7 +260,6 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
         },
       });
 
-      // 2. Write approval request to Firestore
       if (scenario.lenderId) {
         await addDoc(collection(db, 'dpa_lender_approvals'), {
           lo_id:          auth.currentUser.uid,
@@ -281,10 +276,7 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
       }
 
       setAeSent(true);
-
-      // Auto-close after 2s
       setTimeout(() => handleCloseAeModal(), 2000);
-
     } catch (err) {
       console.error('AE send failed:', err);
     } finally {
@@ -292,7 +284,6 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
     }
   }, [aeShareModal, auth.currentUser, scenarioId, scenario.lenderId, scenario.lenderName, handleCloseAeModal]);
 
-  // ── Build dpaContext for AEShareForm pre-population ───────────────────────
   const buildDpaContext = (program, evaluation) => ({
     programName:   program.program_name,
     programType:   TYPE_LABELS[program.program_type]?.label || program.program_type,
@@ -311,9 +302,9 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
   });
 
   // ── Computed display data ─────────────────────────────────────────────────
-  const passCount  = results.filter(r => r.evaluation.status === 'PASS').length;
-  const condCount  = results.filter(r => r.evaluation.status === 'CONDITIONAL').length;
-  const failCount  = results.filter(r => r.evaluation.status === 'FAIL').length;
+  const passCount = results.filter(r => r.evaluation.status === 'PASS').length;
+  const condCount = results.filter(r => r.evaluation.status === 'CONDITIONAL').length;
+  const failCount = results.filter(r => r.evaluation.status === 'FAIL').length;
 
   const borrowerName = [scenario.firstName, scenario.lastName].filter(Boolean).join(' ') || 'No borrower selected';
   const addressLine  = [scenario.streetAddress, scenario.city, scenario.state, scenario.zipCode].filter(Boolean).join(', ');
@@ -322,13 +313,10 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* Decision Record Banner */}
       {scenarioId && <DecisionRecordBanner scenarioId={scenarioId} moduleKey="DPA_INTELLIGENCE" />}
-
-      {/* Scenario Header */}
       <ScenarioHeader moduleTitle="DPA Intelligence™" moduleNumber="07" scenarioId={scenarioId} />
 
-      {/* ── BORROWER INFO BANNER ─────────────────────────────────────────── */}
+      {/* Borrower Info Banner */}
       <div className="bg-[#1B3A6B] px-6 py-3">
         <div className="max-w-7xl mx-auto">
           <p className="text-[11px] font-semibold text-blue-300 uppercase tracking-widest mb-1">
@@ -336,9 +324,7 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
           </p>
           <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
             <span className="text-white font-bold text-base">{borrowerName}</span>
-            {addressLine && (
-              <span className="text-blue-200 text-sm">{addressLine}</span>
-            )}
+            {addressLine && <span className="text-blue-200 text-sm">{addressLine}</span>}
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-blue-100">
               {scenario.creditScore > 0 && <span>FICO <strong className="text-white">{scenario.creditScore}</strong></span>}
               {scenario.loanType     && <span>Loan <strong className="text-white">{scenario.loanType}</strong></span>}
@@ -346,8 +332,8 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
               {scenario.backendDTI > 0 && <span>DTI <strong className="text-white">{(scenario.backendDTI * 100).toFixed(1)}%</strong></span>}
               {scenario.householdSize > 0 && <span>HH <strong className="text-white">{scenario.householdSize}</strong></span>}
               {scenario.annualIncome > 0 && <span>Income <strong className="text-white">${scenario.annualIncome.toLocaleString()}</strong></span>}
-              <span className={scenario.firstTimeBuyer ? 'text-emerald-300 font-semibold' : 'text-blue-200'}>
-                {scenario.firstTimeBuyer ? 'FTHB ✓' : 'Not FTHB'}
+              <span className={effectiveFthb ? 'text-emerald-300 font-semibold' : 'text-blue-200'}>
+                {effectiveFthb ? 'FTHB ✓' : 'Not FTHB'}
               </span>
             </div>
           </div>
@@ -356,34 +342,56 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
 
       <div className="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
-        {/* ── SEARCH CONTROLS ───────────────────────────────────────────── */}
+        {/* Search Controls */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
 
-            {/* Broker Mode Toggle */}
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setBrokerOnly(v => !v)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${brokerOnly ? 'bg-[#1B3A6B]' : 'bg-gray-300'}`}
-              >
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${brokerOnly ? 'translate-x-6' : 'translate-x-1'}`} />
-              </button>
-              <div>
-                <p className="text-sm font-semibold text-gray-800">Broker Programs Only</p>
-                <p className="text-xs text-gray-500">
-                  {brokerOnly
-                    ? `Showing broker-eligible programs — toggle off to see all`
-                    : `Showing all programs including retail-only`}
-                </p>
+            {/* Left toggles */}
+            <div className="flex flex-col gap-3">
+
+              {/* Broker Only Toggle */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setBrokerOnly(v => !v)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${brokerOnly ? 'bg-[#1B3A6B]' : 'bg-gray-300'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${brokerOnly ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">Broker Programs Only</p>
+                  <p className="text-xs text-gray-500">
+                    {brokerOnly ? 'Showing broker-eligible programs — toggle off to see all' : 'Showing all programs including retail-only'}
+                  </p>
+                </div>
+              </div>
+
+              {/* FTHB Override Toggle */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setFthbOverride(v => v === null ? true : v === true ? false : null)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${effectiveFthb ? 'bg-[#1B3A6B]' : 'bg-gray-300'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${effectiveFthb ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">First-Time Homebuyer</p>
+                  <p className="text-xs text-gray-500">
+                    {fthbOverride === null
+                      ? `FTHB ${scenario.firstTimeBuyer ? 'detected from scenario' : 'not detected'}`
+                      : fthbOverride
+                        ? 'FTHB programs included · Manual override'
+                        : 'FTHB programs excluded · Manual override'}
+                  </p>
+                </div>
               </div>
             </div>
 
             {/* Scenario Quick Summary */}
             <div className="flex flex-wrap gap-2 text-xs">
               {[
-                scenario.state    && { label: 'State', value: scenario.state },
+                scenario.state    && { label: 'State',  value: scenario.state },
                 scenario.county   && { label: 'County', value: scenario.county },
-                scenario.loanType && { label: 'Loan', value: scenario.loanType },
+                scenario.loanType && { label: 'Loan',   value: scenario.loanType },
                 scenario.creditScore > 0 && { label: 'FICO', value: scenario.creditScore },
               ].filter(Boolean).map(({ label, value }) => (
                 <span key={label} className="bg-gray-100 text-gray-700 px-2 py-1 rounded-md">
@@ -418,13 +426,13 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
           </div>
         </div>
 
-        {/* ── RESULTS SUMMARY BAR ───────────────────────────────────────── */}
+        {/* Results Summary Bar */}
         {hasRun && (
           <div className="grid grid-cols-3 gap-3">
             {[
-              { label: 'Eligible',     count: passCount,  color: 'emerald' },
-              { label: 'Conditional',  count: condCount,  color: 'amber'   },
-              { label: 'Ineligible',   count: failCount,  color: 'red'     },
+              { label: 'Eligible',    count: passCount, color: 'emerald' },
+              { label: 'Conditional', count: condCount, color: 'amber'   },
+              { label: 'Ineligible',  count: failCount, color: 'red'     },
             ].map(({ label, count, color }) => (
               <div key={label} className={`bg-white rounded-xl border border-${color}-200 p-4 text-center shadow-sm`}>
                 <p className={`text-2xl font-bold text-${color}-600`}>{count}</p>
@@ -434,7 +442,7 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
           </div>
         )}
 
-        {/* ── EMPTY STATE ───────────────────────────────────────────────── */}
+        {/* Empty State */}
         {!hasRun && !isRunning && (
           <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
             <div className="w-14 h-14 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -449,7 +457,7 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
           </div>
         )}
 
-        {/* ── RESULTS LIST ──────────────────────────────────────────────── */}
+        {/* Results List */}
         {hasRun && (
           <div className="space-y-3">
             {results.map(({ program, evaluation }) => (
@@ -473,7 +481,7 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
         )}
       </div>
 
-      {/* ── DETAIL DRAWER ─────────────────────────────────────────────────── */}
+      {/* Detail Drawer */}
       {selectedProgram && (
         <ProgramDrawer
           program={selectedProgram.program}
@@ -486,19 +494,11 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
         />
       )}
 
-      {/* ── AE SHARE MODAL ────────────────────────────────────────────────── */}
+      {/* AE Share Modal */}
       {aeShareModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          {/* Backdrop */}
-          <div
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            onClick={handleCloseAeModal}
-          />
-
-          {/* Modal Panel */}
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={handleCloseAeModal} />
           <div className="relative w-full max-w-lg mx-4 bg-[#0d1117] rounded-2xl shadow-2xl overflow-hidden border border-[#21262d]">
-
-            {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#21262d]">
               <div>
                 <p className="text-[11px] font-semibold text-[#8b949e] uppercase tracking-widest mb-0.5">
@@ -508,17 +508,12 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
                   {aeShareModal.program.program_name}
                 </h2>
               </div>
-              <button
-                onClick={handleCloseAeModal}
-                className="text-[#8b949e] hover:text-white transition-colors"
-              >
+              <button onClick={handleCloseAeModal} className="text-[#8b949e] hover:text-white transition-colors">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
-
-            {/* AEShareForm with DPA context */}
             <AEShareForm
               onSend={handleAeSend}
               sending={aeSending}
@@ -566,8 +561,6 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
             </div>
           </div>
         </div>
-
-        {/* DPA Amount */}
         <div className="text-right flex-shrink-0">
           <p className="text-lg font-bold text-gray-900">{dpaDisplay}</p>
           <p className="text-[11px] text-gray-400">DPA Amount</p>
@@ -585,7 +578,7 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
         </div>
       )}
 
-      {/* CLTV + Data Freshness Row */}
+      {/* CLTV + Freshness Row */}
       {!isFail && evaluation.cltv_details && (
         <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 flex flex-wrap gap-4 text-xs text-gray-600">
           <span>CLTV: <strong className="text-gray-800">{(evaluation.cltv_details.cltv_with_dpa * 100).toFixed(1)}%</strong></span>
@@ -606,11 +599,13 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
         </div>
       )}
 
-      {/* Fail Reasons (collapsible) */}
+      {/* Fail Reasons */}
       {isFail && (
         <div className="px-4 py-2 border-t border-gray-100">
           <button onClick={onToggleFailDetail} className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1">
-            <svg className={`w-3 h-3 transition-transform ${showFailDetail ? 'rotate-90' : ''}`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" /></svg>
+            <svg className={`w-3 h-3 transition-transform ${showFailDetail ? 'rotate-90' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+            </svg>
             {showFailDetail ? 'Hide' : 'Show'} ineligibility reason
           </button>
           {showFailDetail && (
@@ -623,18 +618,10 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
         </div>
       )}
 
-      {/* Card Footer: Lender Badge + Actions */}
+      {/* Card Footer */}
       <div className="px-4 py-3 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
-
-        {/* Left: Lender Approval Badge + Request Approval CTA */}
         <div className="flex items-center gap-2 flex-wrap">
-          <LenderApprovalBadge
-            approvalState={approvalState}
-            lenderName={lenderName}
-            lenderId={lenderId}
-          />
-
-          {/* Request Approval button — only when lender set, not yet approved/requested, and not a fail */}
+          <LenderApprovalBadge approvalState={approvalState} lenderName={lenderName} lenderId={lenderId} />
           {!isFail && lenderId && approvalState === 'unknown' && (
             <button
               onClick={onRequestApproval}
@@ -647,13 +634,8 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
             </button>
           )}
         </div>
-
-        {/* Right: View Details */}
         {!isFail && (
-          <button
-            onClick={onSelect}
-            className="text-xs text-[#1B3A6B] hover:text-blue-800 font-semibold flex items-center gap-1"
-          >
+          <button onClick={onSelect} className="text-xs text-[#1B3A6B] hover:text-blue-800 font-semibold flex items-center gap-1">
             View Full Details
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -665,7 +647,7 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
   );
 }
 
-// ── LENDER APPROVAL BADGE (display only — no CTA) ────────────────────────────
+// ── LENDER APPROVAL BADGE ─────────────────────────────────────────────────────
 function LenderApprovalBadge({ approvalState, lenderName, lenderId }) {
   if (!lenderId) {
     return (
@@ -681,7 +663,9 @@ function LenderApprovalBadge({ approvalState, lenderName, lenderId }) {
   if (approvalState === APPROVAL_STATES.APPROVED) {
     return (
       <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-1">
-        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+        </svg>
         Approved — {name}
       </span>
     );
@@ -690,7 +674,10 @@ function LenderApprovalBadge({ approvalState, lenderName, lenderId }) {
   if (approvalState === APPROVAL_STATES.REQUESTED) {
     return (
       <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1">
-        <svg className="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>
+        <svg className="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+        </svg>
         Approval Requested — {name}
       </span>
     );
@@ -719,10 +706,7 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Drawer Panel */}
       <div className="relative w-full max-w-xl bg-white shadow-2xl flex flex-col overflow-hidden">
 
         {/* Drawer Header */}
@@ -745,7 +729,6 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
 
-          {/* AI Summary */}
           {haiku && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
               <p className="text-xs font-semibold text-blue-700 mb-1">AI Summary</p>
@@ -753,7 +736,6 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
             </div>
           )}
 
-          {/* DPA Amount + CLTV */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-gray-50 rounded-lg p-3">
               <p className="text-xs text-gray-500 mb-0.5">DPA Amount</p>
@@ -768,20 +750,20 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
             )}
           </div>
 
-          {/* Program Description */}
           <div>
             <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Program Description</h4>
             <p className="text-sm text-gray-700 leading-relaxed">{program.description}</p>
           </div>
 
-          {/* Contact Info */}
           <div>
             <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Contact & Resources</h4>
             <div className="space-y-1.5">
               {program.website_url && (
                 <a href={program.website_url} target="_blank" rel="noopener noreferrer"
                   className="flex items-center gap-2 text-sm text-[#1B3A6B] hover:text-blue-800 font-medium">
-                  <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+                  </svg>
                   Official Program Website ↗
                 </a>
               )}
@@ -800,7 +782,6 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
             </div>
           </div>
 
-          {/* Data Freshness */}
           <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${freshness.color === 'green' ? 'bg-emerald-400' : freshness.color === 'amber' ? 'bg-amber-400' : 'bg-red-400'}`} />
             <div className="flex-1">
@@ -809,7 +790,6 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
             </div>
           </div>
 
-          {/* Stack Optimizer™ Step Trace */}
           <div>
             <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Stack Optimizer™ — Eligibility Trace</h4>
             <div className="space-y-2">
@@ -828,7 +808,6 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
             </div>
           </div>
 
-          {/* Warnings */}
           {evaluation.warnings?.length > 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1">
               <p className="text-xs font-semibold text-amber-700">Warnings</p>
@@ -838,15 +817,10 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
             </div>
           )}
 
-          {/* Lender Approval — drawer shows full CTA */}
           <div>
             <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Lender Approval Status</h4>
             <div className="flex items-center gap-3 flex-wrap">
-              <LenderApprovalBadge
-                approvalState={approvalState}
-                lenderName={lenderName}
-                lenderId="mock"
-              />
+              <LenderApprovalBadge approvalState={approvalState} lenderName={lenderName} lenderId="mock" />
               {approvalState === APPROVAL_STATES.UNKNOWN && (
                 <button
                   onClick={onRequestApproval}
@@ -866,7 +840,6 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
             )}
           </div>
 
-          {/* Stacking Rules */}
           {program.stacking_rules?.subordinate_financing_rules && (
             <div>
               <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Stacking Rules</h4>

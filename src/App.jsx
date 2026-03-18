@@ -14,7 +14,7 @@ import RehabIntelligence from './modules/RehabIntelligence';
 import Admin from './pages/Admin'
 import AESharePage from './pages/AESharePage'
 import LenderMatch from './modules/LenderMatch'
-import DPAIntelligence from './modules/dpa-intelligence/DPAIntelligence'
+import DPAIntelligence from './modules/DPAIntelligence';
 import VAIRRRLIntelligence from './modules/VAIRRRLIntelligence'
 import USDAIntelligence from './modules/USDAIntelligence'
 import ARMStructureIntelligence from './modules/ARMStructureIntelligence'
