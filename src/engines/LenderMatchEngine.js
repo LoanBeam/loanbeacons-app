@@ -52,51 +52,44 @@ import {
 
 
 // ─── Engine Configuration ─────────────────────────────────────────────────────
-// From CONFIG.md — these are the locked v1.0 values
 
 export const ENGINE_CONFIG = {
-  resultsPresentationMode: "SEPARATE_SECTIONS",  // UI-locked for v1.0
+  resultsPresentationMode: "SEPARATE_SECTIONS",
   allowUserOverride:       true,
   maxResultsPerSection:    10,
   useConservativeDefaults: true,
 };
 
-// Supported presentation modes — all three built, UI exposes only SEPARATE_SECTIONS
 export const PRESENTATION_MODES = {
   SEPARATE_SECTIONS: "SEPARATE_SECTIONS",
   FALLBACK_ONLY:     "FALLBACK_ONLY",
   COMBINED_RANKED:   "COMBINED_RANKED",
 };
 
-// Overlay risk levels
 export const OVERLAY_RISK = {
   LOW:      "LOW",
   MODERATE: "MODERATE",
   HIGH:     "HIGH",
 };
 
-// Eligibility statuses
 export const ELIGIBILITY_STATUS = {
   ELIGIBLE:     "ELIGIBLE",
   CONDITIONAL:  "CONDITIONAL",
   INELIGIBLE:   "INELIGIBLE",
 };
 
-// Scenario intent flags (Section 6 of Governance doc)
 export const SCENARIO_INTENT = {
   AGENCY_FIRST:       "AGENCY_FIRST",
   ALTERNATIVE_FOCUS:  "ALTERNATIVE_FOCUS",
   SPEED_FOCUS:        "SPEED_FOCUS",
 };
 
-// Agency program identifiers
 export const AGENCY_PROGRAMS = {
   CONVENTIONAL: "Conventional",
   FHA:          "FHA",
   VA:           "VA",
 };
 
-// Credit event types
 const CREDIT_EVENTS = {
   NONE:          "none",
   BANKRUPTCY:    "BK",
@@ -106,85 +99,60 @@ const CREDIT_EVENTS = {
 
 
 // ─── STEP 1: Normalize Scenario ───────────────────────────────────────────────
-/**
- * Takes raw form inputs and returns a clean, validated scenario object.
- * Applies conservative defaults for any missing or ambiguous fields.
- * Calculates derived fields: LTV (if not provided), DTI, DSCR.
- *
- * @param {object} raw  — Raw form inputs from LenderMatchForm.jsx
- * @returns {object}    — Normalized scenario
- */
 export function normalizeScenario(raw = {}) {
   const cfg = ENGINE_CONFIG;
 
-  // ── Loan identification ──────────────────────────────────────────────────
-  const loanType       = raw.loanType        || null;
-  const transactionType = raw.transactionType || "purchase";  // purchase | rateTerm | cashOut
-  const loanAmount     = parseFloat(raw.loanAmount) || 0;
-  const propertyValue  = parseFloat(raw.propertyValue) || 0;
-  const intent         = raw.intent || SCENARIO_INTENT.AGENCY_FIRST;
+  const loanType        = raw.loanType        || null;
+  const transactionType = raw.transactionType || "purchase";
+  const loanAmount      = parseFloat(raw.loanAmount) || 0;
+  const propertyValue   = parseFloat(raw.propertyValue) || 0;
+  const intent          = raw.intent || SCENARIO_INTENT.AGENCY_FIRST;
 
-  // ── LTV calculation ──────────────────────────────────────────────────────
-  // If LTV is manually provided, use it. Otherwise calculate from loan/value.
-  // Conservative default: if both inputs are missing, assume LTV = 100.
   let ltv = parseFloat(raw.ltv) || null;
   if (!ltv && loanAmount > 0 && propertyValue > 0) {
     ltv = parseFloat(((loanAmount / propertyValue) * 100).toFixed(2));
   }
   if (!ltv && cfg.useConservativeDefaults) {
-    ltv = 100;  // Worst case
+    ltv = 100;
   }
 
-  // ── Borrower profile ─────────────────────────────────────────────────────
-  const creditScore    = parseInt(raw.creditScore) || (cfg.useConservativeDefaults ? 580 : null);
-  const propertyType   = raw.propertyType   || "SFR";
-  const occupancy      = raw.occupancy      || "Primary";
-  const state          = raw.state          || null;
-  const selfEmployed   = raw.selfEmployed   === true || raw.selfEmployed === "true";
-  const incomeDocType  = raw.incomeDocType  || "fullDoc";
+  const creditScore   = parseInt(raw.creditScore) || (cfg.useConservativeDefaults ? 580 : null);
+  const propertyType  = raw.propertyType   || "SFR";
+  const occupancy     = raw.occupancy      || "Primary";
+  const state         = raw.state          || null;
+  const selfEmployed  = raw.selfEmployed   === true || raw.selfEmployed === "true";
+  const incomeDocType = raw.incomeDocType  || "fullDoc";
 
-  // ── DTI ──────────────────────────────────────────────────────────────────
-  const monthlyIncome  = parseFloat(raw.monthlyIncome) || 0;
-  const monthlyDebts   = parseFloat(raw.monthlyDebts)  || 0;
+  const monthlyIncome = parseFloat(raw.monthlyIncome) || 0;
+  const monthlyDebts  = parseFloat(raw.monthlyDebts)  || 0;
   let dti = parseFloat(raw.dti) || null;
   if (!dti && monthlyIncome > 0) {
     dti = parseFloat(((monthlyDebts / monthlyIncome) * 100).toFixed(2));
   }
   if (!dti && cfg.useConservativeDefaults) {
-    dti = 50;  // Conservative default: assume high DTI
+    dti = 50;
   }
 
-  // ── DSCR ─────────────────────────────────────────────────────────────────
   const grossRentalIncome = parseFloat(raw.grossRentalIncome) || 0;
   let dscr = parseFloat(raw.dscr) || null;
   if (!dscr && grossRentalIncome > 0 && loanAmount > 0) {
-    // Rough DSCR estimate: gross rent / estimated PITIA
-    // PITIA estimation: 0.6% of loan amount per month (conservative)
     const estimatedPITIA = loanAmount * 0.006;
     dscr = parseFloat((grossRentalIncome / estimatedPITIA).toFixed(2));
   }
 
-  // ── Credit events ────────────────────────────────────────────────────────
-  const creditEvent        = raw.creditEvent        || CREDIT_EVENTS.NONE;
-  const creditEventMonths  = parseInt(raw.creditEventMonths) || 0;
+  const creditEvent       = raw.creditEvent        || CREDIT_EVENTS.NONE;
+  const creditEventMonths = parseInt(raw.creditEventMonths) || 0;
+  const reservesMonths    = parseFloat(raw.reservesMonths) || 0;
+  const totalAssets       = parseFloat(raw.totalAssets) || 0;
+  const vaEntitlement     = raw.vaEntitlement || "Full";
 
-  // ── Reserves ─────────────────────────────────────────────────────────────
-  const reservesMonths = parseFloat(raw.reservesMonths) || 0;
-
-  // ── Asset depletion ──────────────────────────────────────────────────────
-  const totalAssets = parseFloat(raw.totalAssets) || 0;
-
-  // ── VA-specific ──────────────────────────────────────────────────────────
-  const vaEntitlement = raw.vaEntitlement || "Full";  // Full | Reduced | None
-
-  // ── Completeness score (used by confidence calculator in Step 6) ─────────
   const REQUIRED_FIELDS = [
     "creditScore", "ltv", "loanAmount", "propertyType",
     "occupancy", "incomeDocType", "state",
   ];
   const PROGRAM_FIELDS = {
-    dscr:           ["dscr"],
-    assetDepletion: ["totalAssets"],
+    dscr:            ["dscr"],
+    assetDepletion:  ["totalAssets"],
     bankStatement12: [],
     bankStatement24: [],
   };
@@ -200,14 +168,11 @@ export function normalizeScenario(raw = {}) {
     : 1.0;
 
   return {
-    // Identification
     loanType,
     transactionType,
     loanAmount,
     propertyValue,
     intent,
-
-    // Borrower
     creditScore,
     ltv,
     dti,
@@ -217,23 +182,13 @@ export function normalizeScenario(raw = {}) {
     state,
     selfEmployed,
     incomeDocType,
-
-    // Credit events
     creditEvent,
     creditEventMonths,
-
-    // Reserves & assets
     reservesMonths,
     totalAssets,
-
-    // VA
     vaEntitlement,
-
-    // Computed metadata
     completenessScore,
     isNonQMPath: incomeDocType !== "fullDoc",
-
-    // Flags
     highBalance: loanAmount > CONFORMING_LIMIT,
     pmiRequired: ltv > 80 && (loanType === "Conventional" || !loanType),
   };
@@ -241,15 +196,6 @@ export function normalizeScenario(raw = {}) {
 
 
 // ─── STEP 2A: Agency Eligibility Gating ──────────────────────────────────────
-/**
- * Runs the 10-gate hard eligibility check for a single Agency lender + program.
- * One failure = INELIGIBLE. Returns { eligible, reasons, failReason }.
- *
- * @param {object} lender   — Agency lender record
- * @param {string} program  — "Conventional" | "FHA" | "VA"
- * @param {object} scenario — Normalized scenario from Step 1
- * @returns {object}        — { eligible: boolean, reasons: string[], failReason: string|null }
- */
 export function checkAgencyEligibility(lender, program, scenario) {
   const g = lender.guidelines[program];
   if (!g) {
@@ -264,12 +210,10 @@ export function checkAgencyEligibility(lender, program, scenario) {
 
   const reasons = [];
 
-  // Gate 1 — Program offered
   if (!lender.programs.includes(program)) {
     return { eligible: false, failReason: `${lender.shortName} does not offer ${program}`, reasons };
   }
 
-  // Gate 2 — Loan amount
   if (loanAmount > g.maxLoanAmount) {
     return {
       eligible: false,
@@ -279,7 +223,6 @@ export function checkAgencyEligibility(lender, program, scenario) {
     };
   }
 
-  // Gate 3 — FICO minimum
   if (creditScore < g.minFICO) {
     return {
       eligible: false,
@@ -288,7 +231,6 @@ export function checkAgencyEligibility(lender, program, scenario) {
     };
   }
 
-  // Gate 3b — FHA reduced LTV for FICO 500–579
   if (program === AGENCY_PROGRAMS.FHA && creditScore < g.ficoCutoffForReducedLTV) {
     const reducedMax = g.reducedLTVBelowCutoff || 90;
     if (ltv > reducedMax) {
@@ -301,7 +243,6 @@ export function checkAgencyEligibility(lender, program, scenario) {
     }
   }
 
-  // Gate 4 — LTV maximum by transaction type
   const ltvMap = { purchase: "purchase", "rate-term": "rateTerm", cashout: "cashOut" };
   const ltvKey = ltvMap[transactionType] || "purchase";
   const maxLTV = g.maxLTV?.[ltvKey] ?? g.maxLTV?.purchase;
@@ -314,7 +255,6 @@ export function checkAgencyEligibility(lender, program, scenario) {
     };
   }
 
-  // Gate 5 — DTI maximum
   if (dti > g.maxDTI) {
     return {
       eligible: false,
@@ -323,19 +263,16 @@ export function checkAgencyEligibility(lender, program, scenario) {
     };
   }
 
-  // Gate 6 — Property type
   const propertyFails = checkAgencyPropertyType(g, propertyType, program);
   if (propertyFails) {
     return { eligible: false, failReason: propertyFails, reasons };
   }
 
-  // Gate 7 — Occupancy / investment restrictions
   const occupancyFail = checkAgencyOccupancy(g, lender, occupancy, ltv, transactionType, program);
   if (occupancyFail) {
     return { eligible: false, failReason: occupancyFail, reasons };
   }
 
-  // Gate 8 — State licensing
   if (lender.states && !lender.states.includes("ALL") && state) {
     if (!lender.states.includes(state)) {
       return {
@@ -346,13 +283,11 @@ export function checkAgencyEligibility(lender, program, scenario) {
     }
   }
 
-  // Gate 9 — Credit event seasoning
   const seasoningFail = checkSeasoning(g, creditEvent, creditEventMonths, lender.shortName, program);
   if (seasoningFail) {
     return { eligible: false, failReason: seasoningFail, reasons };
   }
 
-  // Gate 10 — Income documentation type
   if (g.incomeTypes && !g.incomeTypes.includes(incomeDocType) && incomeDocType !== "fullDoc") {
     return {
       eligible: false,
@@ -362,7 +297,6 @@ export function checkAgencyEligibility(lender, program, scenario) {
     };
   }
 
-  // VA-specific: primary residence requirement
   if (program === AGENCY_PROGRAMS.VA && g.requiresPrimaryResidence && occupancy !== "Primary") {
     return {
       eligible: false,
@@ -371,7 +305,6 @@ export function checkAgencyEligibility(lender, program, scenario) {
     };
   }
 
-  // All gates passed — build passing reasons
   reasons.push(`FICO ${creditScore} meets ${lender.shortName} minimum (${g.minFICO})`);
   reasons.push(`LTV ${ltv}% within ${lender.shortName} ceiling (${maxLTV}%)`);
   reasons.push(`DTI ${dti}% within ${lender.shortName} limit (${g.maxDTI}%)`);
@@ -382,7 +315,6 @@ export function checkAgencyEligibility(lender, program, scenario) {
   return { eligible: true, failReason: null, reasons };
 }
 
-// Agency property type check helper
 function checkAgencyPropertyType(g, propertyType, program) {
   if (propertyType === "Manufactured" && g.allowsManufactured === false) {
     return `Manufactured housing not accepted for ${program}`;
@@ -396,7 +328,6 @@ function checkAgencyPropertyType(g, propertyType, program) {
   return null;
 }
 
-// Agency occupancy check helper
 function checkAgencyOccupancy(g, lender, occupancy, ltv, transactionType, program) {
   if (occupancy === "Investment" && !g.allowsInvestment) {
     return `${lender.shortName} ${program} does not allow investment properties`;
@@ -414,7 +345,6 @@ function checkAgencyOccupancy(g, lender, occupancy, ltv, transactionType, progra
   return null;
 }
 
-// Shared seasoning check helper (used by both Agency and Non-QM)
 function checkSeasoning(g, creditEvent, creditEventMonths, lenderName, program) {
   if (!creditEvent || creditEvent === CREDIT_EVENTS.NONE) return null;
 
@@ -441,14 +371,6 @@ function checkSeasoning(g, creditEvent, creditEventMonths, lenderName, program) 
 
 
 // ─── STEP 2B: Non-QM Eligibility Gating ──────────────────────────────────────
-/**
- * Runs the 10-gate hard eligibility check for a single Non-QM lender + program.
- *
- * @param {object} lender   — Non-QM lender record
- * @param {string} program  — Program key (BankStatement12, DSCR, AssetDepletion, etc.)
- * @param {object} scenario — Normalized scenario
- * @returns {object}        — { eligible, failReason, reasons, seasoningViolation, conditionalFlags }
- */
 export function checkNonQMEligibility(lender, program, scenario) {
   const g = lender.guidelines[program];
   if (!g) {
@@ -471,7 +393,6 @@ export function checkNonQMEligibility(lender, program, scenario) {
   const conditionalFlags = [];
   let   seasoningViolation = false;
 
-  // Occupancy key mapping for LTV lookup
   const occupancyKey = occupancy === "Primary"    ? "primary"
                      : occupancy === "SecondHome"  ? "secondHome"
                      : "investment";
@@ -480,7 +401,6 @@ export function checkNonQMEligibility(lender, program, scenario) {
               : transactionType === "rateTerm" ? "rateTerm"
               : "purchase";
 
-  // Gate 1 — Program offered
   if (!lender.programs.includes(program)) {
     return {
       eligible: false,
@@ -489,7 +409,6 @@ export function checkNonQMEligibility(lender, program, scenario) {
     };
   }
 
-  // Gate 2 — FICO minimum
   if (creditScore < g.minFICO) {
     return {
       eligible: false,
@@ -499,7 +418,6 @@ export function checkNonQMEligibility(lender, program, scenario) {
     };
   }
 
-  // Gate 3 — Loan amount
   if (loanAmount > g.maxLoanAmount) {
     return {
       eligible: false,
@@ -509,7 +427,6 @@ export function checkNonQMEligibility(lender, program, scenario) {
     };
   }
 
-  // Gate 4 — LTV by occupancy + transaction type
   const ltvBlock = g.maxLTV?.[occupancyKey];
   if (!ltvBlock) {
     return {
@@ -528,9 +445,7 @@ export function checkNonQMEligibility(lender, program, scenario) {
     };
   }
 
-  // Gate 5 — Property type
   if (g.allowedPropertyTypes && !g.allowedPropertyTypes.includes(propertyType)) {
-    // Handle "ALL" shorthand
     if (g.allowedPropertyTypes[0] !== "ALL") {
       return {
         eligible: false,
@@ -540,7 +455,6 @@ export function checkNonQMEligibility(lender, program, scenario) {
     }
   }
 
-  // Gate 6 — Occupancy restriction (some Non-QM programs investment-only)
   if (program === PROGRAMS.DSCR && occupancy === "Primary") {
     return {
       eligible: false,
@@ -549,7 +463,6 @@ export function checkNonQMEligibility(lender, program, scenario) {
     };
   }
 
-  // Gate 7 — DSCR minimum (DSCR program only)
   if (program === PROGRAMS.DSCR) {
     if (dscr === null || dscr === undefined) {
       return {
@@ -567,7 +480,6 @@ export function checkNonQMEligibility(lender, program, scenario) {
     }
   }
 
-  // Gate 8 — Asset minimum (Asset Depletion program only)
   if (program === PROGRAMS.ASSET_DEPLETION) {
     if (!totalAssets || totalAssets < g.minAssets) {
       return {
@@ -579,7 +491,6 @@ export function checkNonQMEligibility(lender, program, scenario) {
     }
   }
 
-  // Gate 9 — Credit event seasoning
   const seasoningFail = checkSeasoning(g, creditEvent, creditEventMonths, lender.shortName, program);
   if (seasoningFail) {
     seasoningViolation = true;
@@ -590,7 +501,6 @@ export function checkNonQMEligibility(lender, program, scenario) {
     };
   }
 
-  // Gate 10 — State licensing
   if (lender.states && !lender.states.includes("ALL") && state) {
     if (!lender.states.includes(state)) {
       return {
@@ -601,17 +511,14 @@ export function checkNonQMEligibility(lender, program, scenario) {
     }
   }
 
-  // Short-term rental check (non-blocking — adds conditional flag)
   if (scenario.isShortTermRental && !g.allowsShortTermRental) {
     conditionalFlags.push("SHORT_TERM_RENTAL_NOT_ACCEPTED");
   }
 
-  // Reserve check (non-blocking — adds conditional flag)
   if (g.minReserveMonths && reservesMonths < g.minReserveMonths) {
     conditionalFlags.push(`RESERVES_BELOW_MINIMUM_${g.minReserveMonths}MO`);
   }
 
-  // Cash-out cap check (non-blocking — adds conditional flag for BS programs)
   if (transactionType === "cashOut" && g.cashOutMax) {
     const cashOutAmount = loanAmount - (scenario.propertyValue * (1 - ltv / 100));
     if (cashOutAmount > g.cashOutMax) {
@@ -619,7 +526,6 @@ export function checkNonQMEligibility(lender, program, scenario) {
     }
   }
 
-  // All gates passed
   reasons.push(`FICO ${creditScore} meets minimum (${g.minFICO}) — ${creditScore - g.minFICO}pt cushion`);
   reasons.push(`LTV ${ltv}% within ${occupancy} ${transactionType} limit (${maxLTV}%)`);
   if (program === PROGRAMS.DSCR && dscr) {
@@ -643,19 +549,7 @@ export function checkNonQMEligibility(lender, program, scenario) {
 }
 
 
-// ─── STEP 3A: Agency Fit Scoring (0–100 pts) ─────────────────────────────────
-/**
- * Scores an eligible Agency lender on a 100-point scale.
- * Higher score = better fit for this scenario.
- *
- * Scoring weights (from PRD Section 9):
- *   FICO Cushion:    25 pts
- *   LTV Cushion:     20 pts
- *   DTI Cushion:     20 pts
- *   Program Strength: 20 pts
- *   Priority Weight:  15 pts
- *   TOTAL MAX:       100 pts
- */
+// ─── STEP 3A: Agency Fit Scoring ─────────────────────────────────────────────
 export function scoreAgencyLender(lender, program, scenario) {
   const g = lender.guidelines[program];
   const { creditScore, ltv, dti, transactionType } = scenario;
@@ -668,74 +562,50 @@ export function scoreAgencyLender(lender, program, scenario) {
   let score = 0;
   const breakdown = {};
 
-  // ── FICO Cushion (25 pts) ────────────────────────────────────────────────
-  // Score increases as borrower FICO rises above lender minimum
-  // Max points at 200+ pt cushion; diminishing returns curve
   const ficoCushion = creditScore - g.minFICO;
   const ficoScore   = Math.min(25, Math.round((ficoCushion / 200) * 25));
   score += ficoScore;
-  breakdown.ficoScore = ficoScore;
+  breakdown.ficoScore   = ficoScore;
   breakdown.ficoCushion = ficoCushion;
 
-  // ── LTV Cushion (20 pts) ─────────────────────────────────────────────────
-  // Score increases as borrower LTV drops below lender maximum
   const ltvCushion = maxLTV - ltv;
   const ltvScore   = Math.min(20, Math.round((ltvCushion / 30) * 20));
   score += Math.max(0, ltvScore);
-  breakdown.ltvScore = Math.max(0, ltvScore);
+  breakdown.ltvScore   = Math.max(0, ltvScore);
   breakdown.ltvCushion = ltvCushion;
 
-  // ── DTI Cushion (20 pts) ─────────────────────────────────────────────────
   const dtiCushion = g.maxDTI - dti;
   const dtiScore   = Math.min(20, Math.round((dtiCushion / 20) * 20));
   score += Math.max(0, dtiScore);
-  breakdown.dtiScore = Math.max(0, dtiScore);
+  breakdown.dtiScore   = Math.max(0, dtiScore);
   breakdown.dtiCushion = dtiCushion;
 
-  // ── Program Strength (20 pts) ────────────────────────────────────────────
-  // Derived from tier — reflects lender's known strength for this program
   const programStrengthScore = getProgramStrengthScore(lender, program);
   score += programStrengthScore;
   breakdown.programStrengthScore = programStrengthScore;
 
-  // ── Priority Weight (15 pts) ─────────────────────────────────────────────
   const priorityScore = Math.round((lender.priorityWeight / 100) * 15);
   score += priorityScore;
   breakdown.priorityScore = priorityScore;
 
   return {
-    fitScore: Math.min(100, Math.max(0, score)),
+    fitScore:    Math.min(100, Math.max(0, score)),
     breakdown,
     maxPossible: 100,
   };
 }
 
-// Program strength mapping from tier
 function getProgramStrengthScore(lender, program) {
   const tierToScore = { "A+": 20, "A": 16, "B+": 12, "B": 8, "C": 4 };
   const base = tierToScore[lender.tier] ?? 10;
-
-  // Bonus for known program specialization (from lender strengths)
   const strengthText = (lender.strengths || []).join(" ").toLowerCase();
   const progLower    = program.toLowerCase();
   const specialBonus = strengthText.includes(progLower) ? 2 : 0;
-
   return Math.min(20, base + specialBonus);
 }
 
 
-// ─── STEP 3B: Non-QM Fit Scoring (0–90 pts placeholder / 0–100 pts real) ─────
-/**
- * Scores an eligible Non-QM lender.
- *
- * Scoring weights (from PRD Section 10 + Governance Section 5.2):
- *   Program Match Quality:  30 pts  (identical placeholder/real)
- *   FICO Cushion:           20 pts  (identical)
- *   LTV Cushion:            25 pts  (identical)
- *   Profile Strength:       10 pts  (placeholder) / 15 pts (real)
- *   Priority Weight:         5 pts  (placeholder) / 10 pts (real)
- *   TOTAL MAX:              90 pts  (placeholder) / 100 pts (real)
- */
+// ─── STEP 3B: Non-QM Fit Scoring ─────────────────────────────────────────────
 export function scoreNonQMLender(lender, program, scenario) {
   const g = lender.guidelines[program];
   const { creditScore, ltv, dscr, totalAssets, occupancy, transactionType } = scenario;
@@ -750,7 +620,6 @@ export function scoreNonQMLender(lender, program, scenario) {
   const ltvBlock  = g.maxLTV?.[occupancyKey] ?? g.maxLTV?.investment ?? {};
   const maxLTV    = ltvBlock[txKey] ?? ltvBlock.purchase ?? 80;
 
-  // Weight caps based on dataSource
   const profileStrengthMax = isPlaceholder ? 10 : 15;
   const priorityWeightMax  = isPlaceholder ?  5 : 10;
   const totalMax           = isPlaceholder ? 90 : 100;
@@ -758,38 +627,31 @@ export function scoreNonQMLender(lender, program, scenario) {
   let score = 0;
   const breakdown = {};
 
-  // ── Program Match Quality (30 pts) ───────────────────────────────────────
-  // How well does this lender's specialty align with the exact program needed?
   const pmqScore = scoreNonQMProgramMatch(lender, program);
   score += pmqScore;
   breakdown.programMatchScore = pmqScore;
 
-  // ── FICO Cushion (20 pts) ────────────────────────────────────────────────
   const ficoCushion = creditScore - g.minFICO;
   const ficoScore   = Math.min(20, Math.round((ficoCushion / 150) * 20));
   score += Math.max(0, ficoScore);
-  breakdown.ficoScore = Math.max(0, ficoScore);
+  breakdown.ficoScore   = Math.max(0, ficoScore);
   breakdown.ficoCushion = ficoCushion;
 
-  // ── LTV Cushion (25 pts) — weighted higher than Agency ───────────────────
   const ltvCushion = maxLTV - ltv;
   const ltvScore   = Math.min(25, Math.round((ltvCushion / 25) * 25));
   score += Math.max(0, ltvScore);
-  breakdown.ltvScore = Math.max(0, ltvScore);
-  breakdown.ltvCushion = ltvCushion;
-  breakdown.applicableMaxLTV = maxLTV;
+  breakdown.ltvScore          = Math.max(0, ltvScore);
+  breakdown.ltvCushion        = ltvCushion;
+  breakdown.applicableMaxLTV  = maxLTV;
 
-  // ── Profile Strength (10 pts placeholder / 15 pts real) ──────────────────
   const strengthScore = scoreNonQMProfileStrength(lender, program, isPlaceholder);
   score += strengthScore;
   breakdown.profileStrengthScore = strengthScore;
 
-  // ── Priority Weight (5 pts placeholder / 10 pts real) ────────────────────
   const priorityScore = Math.round((lender.priorityWeight / 100) * priorityWeightMax);
   score += priorityScore;
   breakdown.priorityScore = priorityScore;
 
-  // ── DSCR bonus (if DSCR program, extra cushion above minDSCR) ────────────
   if (program === PROGRAMS.DSCR && dscr && g.minDSCR) {
     const dscrCushion = dscr - g.minDSCR;
     const dscrBonus   = dscrCushion >= 0.25 ? 3 : dscrCushion >= 0.10 ? 1 : 0;
@@ -797,7 +659,6 @@ export function scoreNonQMLender(lender, program, scenario) {
     breakdown.dscrBonus = dscrBonus;
   }
 
-  // ── Asset Depletion bonus (if assets significantly exceed minimum) ────────
   if (program === PROGRAMS.ASSET_DEPLETION && totalAssets && g.minAssets) {
     const assetRatio = totalAssets / g.minAssets;
     const assetBonus = assetRatio >= 3 ? 3 : assetRatio >= 2 ? 2 : 0;
@@ -814,20 +675,12 @@ export function scoreNonQMLender(lender, program, scenario) {
 }
 
 function scoreNonQMProgramMatch(lender, program) {
-  // tierBasis tells us how aggressive the profile is — more aggressive = better match
-  // for scenarios that need flexibility (which is why they're in Non-QM)
-  const tierBasisScore = {
-    "Aggressive":   30,
-    "Market":       22,
-    "Conservative": 15,
-  };
+  const tierBasisScore = { "Aggressive": 30, "Market": 22, "Conservative": 15 };
   return tierBasisScore[lender.tierBasis] ?? 15;
 }
 
 function scoreNonQMProfileStrength(lender, program, isPlaceholder) {
   const max = isPlaceholder ? 10 : 15;
-  // Real lenders: full strength from verified reputation
-  // Placeholders: reduced strength (unknown real-world performance)
   const tierStrength = {
     "Aggressive":   isPlaceholder ? 10 : 14,
     "Market":       isPlaceholder ?  7 : 10,
@@ -838,12 +691,6 @@ function scoreNonQMProfileStrength(lender, program, isPlaceholder) {
 
 
 // ─── STEP 4: Overlay Risk Assessment ─────────────────────────────────────────
-/**
- * Evaluates stacked risk factors across the scenario.
- * Multiple compounding risk signals increase the overlay risk level.
- *
- * Returns: { level: "LOW"|"MODERATE"|"HIGH", signals: string[], signalCount: number }
- */
 export function assessOverlayRisk(scenario) {
   const {
     creditScore, ltv, dti, creditEvent, creditEventMonths,
@@ -852,28 +699,24 @@ export function assessOverlayRisk(scenario) {
 
   const signals = [];
 
-  // ── FICO signals ──────────────────────────────────────────────────────────
   if (creditScore < 620) {
     signals.push({ label: "FICO below 620", weight: 2 });
   } else if (creditScore < 660) {
     signals.push({ label: "FICO below 660", weight: 1 });
   }
 
-  // ── LTV signals ───────────────────────────────────────────────────────────
   if (ltv > 95) {
     signals.push({ label: "LTV above 95%", weight: 2 });
   } else if (ltv > 90) {
     signals.push({ label: "LTV above 90%", weight: 1 });
   }
 
-  // ── DTI signals ───────────────────────────────────────────────────────────
   if (dti > 50) {
     signals.push({ label: "DTI above 50%", weight: 2 });
   } else if (dti > 43) {
     signals.push({ label: "DTI above 43%", weight: 1 });
   }
 
-  // ── Credit event signals ──────────────────────────────────────────────────
   if (creditEvent && creditEvent !== CREDIT_EVENTS.NONE) {
     const recentThreshold = creditEvent === CREDIT_EVENTS.BANKRUPTCY ? 48 : 84;
     if (creditEventMonths < recentThreshold) {
@@ -881,31 +724,25 @@ export function assessOverlayRisk(scenario) {
     }
   }
 
-  // ── Self-employed signal ──────────────────────────────────────────────────
   if (selfEmployed) {
     signals.push({ label: "Self-employed borrower", weight: 1 });
   }
 
-  // ── Non-QM income signal ─────────────────────────────────────────────────
   if (incomeDocType !== "fullDoc") {
     signals.push({ label: `Non-standard income documentation (${incomeDocType})`, weight: 1 });
   }
 
-  // ── Investment property signal ────────────────────────────────────────────
   if (occupancy === "Investment") {
     signals.push({ label: "Investment property", weight: 1 });
   }
 
-  // ── Loan amount signal ────────────────────────────────────────────────────
   if (loanAmount > CONFORMING_LIMIT) {
     signals.push({ label: "Loan exceeds conforming limit", weight: 1 });
   }
 
-  // ── Compound multiplier: Non-QM + any high-weight signal ─────────────────
   const highWeightCount = signals.filter((s) => s.weight >= 2).length;
   const totalWeight     = signals.reduce((sum, s) => sum + s.weight, 0);
 
-  // Determine risk level
   let level;
   if (totalWeight === 0) {
     level = OVERLAY_RISK.LOW;
@@ -928,25 +765,14 @@ export function assessOverlayRisk(scenario) {
 
 
 // ─── STEP 5: Tier Indicator ───────────────────────────────────────────────────
-/**
- * Returns the UI-safe tier display for a lender result.
- * For Agency: reads lender.tier (A+/A/B/C) mapped to display label.
- * For Non-QM: reads lender.tierBasis (Aggressive/Market/Conservative).
- * NEVER returns pricing language. (AC2)
- *
- * @param {object} lender   — Agency or Non-QM lender record
- * @param {string} universe — "Agency" | "NonQM"
- * @returns {object}        — { display: string, basis: string }
- */
 export function getTierIndicator(lender, universe = "Agency") {
   if (universe === "NonQM") {
     return {
-      display: getTierDisplayLabel(lender),   // from nonQMLenderSchema
+      display: getTierDisplayLabel(lender),
       basis:   lender.tierBasis,
     };
   }
 
-  // Agency tier → display label (no pricing)
   const agencyTierDisplay = {
     "A+": "Premier Platform",
     "A":  "Solid Platform",
@@ -963,28 +789,16 @@ export function getTierIndicator(lender, universe = "Agency") {
 
 
 // ─── STEP 6: Confidence Score ─────────────────────────────────────────────────
-/**
- * Calculates how confident the engine is in this result set.
- * Based on two factors (50% each):
- *   1. Input data completeness (from normalizeScenario)
- *   2. Guideline currency (how recent is the data)
- *
- * Returns: { score: 0.0–1.0, level: "HIGH"|"MODERATE"|"LOW", message: string }
- */
 export function calculateConfidenceScore(scenario, options = {}) {
   const { firestoreAvailable = true, guidelineAgesDays = {} } = options;
 
-  // Factor 1: Data completeness (50% of confidence)
-  const completeness = scenario.completenessScore ?? 1.0;
+  const completeness       = scenario.completenessScore ?? 1.0;
   const completenessWeight = completeness * 0.50;
 
-  // Factor 2: Guideline currency (50% of confidence)
-  // guidelineAgesDays: { "UWM-AGENCY-2026-Q1": 45, "PLACEHOLDER-v0": 0 }
-  // Guideline ages: 0–30 days = full score, 31–90 days = partial, 90+ = reduced
   let currencyScore = 1.0;
 
   if (!firestoreAvailable) {
-    currencyScore = 0.70;  // Firebase offline — static data only
+    currencyScore = 0.70;
   } else if (Object.keys(guidelineAgesDays).length > 0) {
     const ages    = Object.values(guidelineAgesDays);
     const maxAge  = Math.max(...ages);
@@ -994,7 +808,6 @@ export function calculateConfidenceScore(scenario, options = {}) {
                   : 0.55;
   }
 
-  // Placeholder penalty: results with any placeholder data get a currency penalty
   if (scenario.hasPlaceholderResults) {
     currencyScore = Math.min(currencyScore, 0.75);
   }
@@ -1002,12 +815,10 @@ export function calculateConfidenceScore(scenario, options = {}) {
   const currencyWeight = currencyScore * 0.50;
   const total = Math.round((completenessWeight + currencyWeight) * 100) / 100;
 
-  // Level classification
-  const level   = total >= 0.85 ? "HIGH"
-                : total >= 0.60 ? "MODERATE"
-                : "LOW";
+  const level = total >= 0.85 ? "HIGH"
+              : total >= 0.60 ? "MODERATE"
+              : "LOW";
 
-  // Human-readable message
   const messages = {
     HIGH:     "All inputs provided. Guidelines current.",
     MODERATE: "Some inputs estimated or guidelines may need verification.",
@@ -1019,18 +830,6 @@ export function calculateConfidenceScore(scenario, options = {}) {
 
 
 // ─── STEP 7: Rank + Package Results ──────────────────────────────────────────
-/**
- * Sorts eligible lenders by fitScore (descending), applies intent adjustments,
- * and packages the full result payload for the UI.
- *
- * @param {Array}  agencyResults  — Array of agency eval objects
- * @param {Array}  nonQMResults   — Array of Non-QM eval objects
- * @param {object} scenario       — Normalized scenario
- * @param {object} overlayRisk    — Result from assessOverlayRisk
- * @param {object} confidence     — Result from calculateConfidenceScore
- * @param {string} mode           — Presentation mode
- * @returns {object}              — Complete packaged result for UI
- */
 export function rankAndPackageResults(
   agencyResults,
   nonQMResults,
@@ -1041,49 +840,28 @@ export function rankAndPackageResults(
 ) {
   const { intent = SCENARIO_INTENT.AGENCY_FIRST } = scenario;
 
-  // Split eligible from ineligible
   const agencyEligible   = agencyResults.filter((r) => r.eligible);
   const agencyIneligible = agencyResults.filter((r) => !r.eligible);
   const nonQMEligible    = nonQMResults.filter((r) => r.eligible);
   const nonQMIneligible  = nonQMResults.filter((r) => !r.eligible);
 
-  // Sort eligible lenders — base: fitScore descending
   const sortByScore = (a, b) => b.fitScore - a.fitScore;
   agencyEligible.sort(sortByScore);
   nonQMEligible.sort(sortByScore);
 
-  // Intent: ALTERNATIVE_FOCUS — promote Non-QM section visually
-  // Intent: SPEED_FOCUS — boost lenders with strong speed indicators
-  if (intent === SCENARIO_INTENT.ALTERNATIVE_FOCUS) {
-    // Non-QM section becomes the primary recommendation
-    // (handled in UI — engine just flags it)
-  }
-
-  // Cap results per section
   const cap = ENGINE_CONFIG.maxResultsPerSection;
-  const agencyDisplay   = agencyEligible.slice(0, cap);
-  const nonQMDisplay    = nonQMEligible.slice(0, cap);
+  const agencyDisplay = agencyEligible.slice(0, cap);
+  const nonQMDisplay  = nonQMEligible.slice(0, cap);
 
-  // Build section-level summaries
   const agencySection = buildSectionSummary(
-    "Agency",
-    agencyDisplay,
-    agencyIneligible,
-    agencyEligible.length,
-    scenario,
-    overlayRisk
+    "Agency", agencyDisplay, agencyIneligible, agencyEligible.length, scenario, overlayRisk
   );
 
   const nonQMSection = buildNonQMSectionSummary(
-    nonQMDisplay,
-    nonQMIneligible,
-    nonQMEligible.length,
-    scenario,
-    agencyEligible.length === 0,
-    overlayRisk
+    nonQMDisplay, nonQMIneligible, nonQMEligible.length, scenario,
+    agencyEligible.length === 0, overlayRisk
   );
 
-  // Combined mode: merge Agency + real Non-QM only (placeholders excluded)
   let combinedSection = null;
   if (mode === PRESENTATION_MODES.COMBINED_RANKED) {
     const combinedEligible = [
@@ -1093,7 +871,6 @@ export function rankAndPackageResults(
     combinedSection = { results: combinedEligible };
   }
 
-  // Fallback mode: Non-QM section only if Agency has 0 eligible
   if (mode === PRESENTATION_MODES.FALLBACK_ONLY && agencyEligible.length > 0) {
     nonQMSection.visible = false;
   }
@@ -1107,9 +884,7 @@ export function rankAndPackageResults(
     agencySection,
     nonQMSection,
     combinedSection,
-    hasPlaceholderResults: nonQMEligible.some(
-      (r) => r.dataSource === DATA_SOURCES.PLACEHOLDER
-    ),
+    hasPlaceholderResults: nonQMEligible.some((r) => r.dataSource === DATA_SOURCES.PLACEHOLDER),
     totalEligible: agencyEligible.length + nonQMEligible.length,
     timestamp: new Date().toISOString(),
   };
@@ -1117,12 +892,6 @@ export function rankAndPackageResults(
 
 function buildSectionSummary(type, eligible, ineligible, totalEligible, scenario, overlayRisk) {
   const noMatch = totalEligible === 0;
-
-  let noMatchMessage = null;
-  if (noMatch) {
-    noMatchMessage = buildNoAgencyMatchMessage(scenario);
-  }
-
   return {
     type,
     eligible,
@@ -1130,15 +899,14 @@ function buildSectionSummary(type, eligible, ineligible, totalEligible, scenario
     totalEligible,
     totalIneligible: ineligible.length,
     noMatch,
-    noMatchMessage,
+    noMatchMessage: noMatch ? buildNoAgencyMatchMessage(scenario) : null,
     visible: true,
   };
 }
 
 function buildNonQMSectionSummary(eligible, ineligible, totalEligible, scenario, isHero, overlayRisk) {
-  const noMatch = totalEligible === 0;
+  const noMatch        = totalEligible === 0;
   const hasPlaceholders = eligible.some((r) => r.dataSource === DATA_SOURCES.PLACEHOLDER);
-
   return {
     type:             "NonQM",
     eligible,
@@ -1147,23 +915,23 @@ function buildNonQMSectionSummary(eligible, ineligible, totalEligible, scenario,
     totalIneligible:  ineligible.length,
     noMatch,
     noMatchMessage:   noMatch ? buildNoNonQMMatchMessage(scenario) : null,
-    isHero,            // true when Agency has 0 results — Non-QM is the primary path
+    isHero,
     hasPlaceholders,
     showPlaceholderWarning: hasPlaceholders,
-    visible:           true,
+    visible: true,
   };
 }
 
 function buildScenarioSummary(scenario) {
   const parts = [];
-  if (scenario.loanType) parts.push(scenario.loanType);
+  if (scenario.loanType)      parts.push(scenario.loanType);
   if (scenario.transactionType) parts.push(formatTxType(scenario.transactionType));
-  if (scenario.loanAmount) parts.push(`$${scenario.loanAmount.toLocaleString()}`);
-  if (scenario.creditScore) parts.push(`${scenario.creditScore} FICO`);
-  if (scenario.ltv) parts.push(`${scenario.ltv}% LTV`);
-  if (scenario.propertyType) parts.push(scenario.propertyType);
-  if (scenario.occupancy) parts.push(scenario.occupancy);
-  if (scenario.state) parts.push(scenario.state);
+  if (scenario.loanAmount)    parts.push(`$${scenario.loanAmount.toLocaleString()}`);
+  if (scenario.creditScore)   parts.push(`${scenario.creditScore} FICO`);
+  if (scenario.ltv)           parts.push(`${scenario.ltv}% LTV`);
+  if (scenario.propertyType)  parts.push(scenario.propertyType);
+  if (scenario.occupancy)     parts.push(scenario.occupancy);
+  if (scenario.state)         parts.push(scenario.state);
   return parts.join(" | ");
 }
 
@@ -1187,11 +955,9 @@ function buildNoAgencyMatchMessage(scenario) {
   if (scenario.ltv > 97) {
     reasons.push(`LTV ${scenario.ltv}% exceeds all Agency maximums`);
   }
-
   const commonReason = reasons.length > 0
     ? reasons.join(" | ")
     : "Review FICO, LTV, DTI, and credit event seasoning";
-
   return `No Agency lenders matched this scenario. ${commonReason}. See Alternative Path below.`;
 }
 
@@ -1210,47 +976,29 @@ function buildNoNonQMMatchMessage(scenario) {
 
 
 // ─── Main Entry Point ─────────────────────────────────────────────────────────
-/**
- * runLenderMatch — the single public API for the engine.
- *
- * Accepts raw form inputs + lender matrices + Firestore overrides.
- * Returns a complete, packaged result object ready for the UI to render.
- *
- * @param {object} rawInputs          — Raw form values from LenderMatchForm.jsx
- * @param {object} options
- *   @param {Array}  options.agencyOverrides   — Docs from Firestore lenderOverrides
- *   @param {Array}  options.nonQMOverrides     — Docs from Firestore nonQMOverrides
- *   @param {boolean} options.firestoreAvailable
- *   @param {string}  options.mode              — Presentation mode (v1.0: SEPARATE_SECTIONS)
- * @returns {object}  — Full result payload for UI
- */
 export function runLenderMatch(rawInputs = {}, options = {}) {
   const {
-    agencyOverrides   = [],
-    nonQMOverrides    = [],
+    agencyOverrides    = [],
+    nonQMOverrides     = [],
     firestoreAvailable = true,
-    mode              = ENGINE_CONFIG.resultsPresentationMode,
+    mode               = ENGINE_CONFIG.resultsPresentationMode,
   } = options;
 
   // ── STEP 1: Normalize scenario ─────────────────────────────────────────
   const scenario = normalizeScenario(rawInputs);
 
-  // ── Build active lender lists with Firestore overrides merged in ───────
-  // Agency: merge static matrix with Firestore overrides
+  // ── Build active lender lists ──────────────────────────────────────────
   const agencyLenders = applyAgencyOverrides(getActiveAgencyLenders(), agencyOverrides);
-
-  // Non-QM: merge placeholder matrix with Firestore overrides
-  const nonQMLenders = mergeNonQMWithOverrides(nonQMOverrides);
+  const nonQMLenders  = mergeNonQMWithOverrides(nonQMOverrides);
 
   // ── Determine which programs to evaluate ──────────────────────────────
-  const agencyProgramsToEval  = resolveAgencyPrograms(scenario);
-  const nonQMProgramToEval    = resolveNonQMProgram(scenario);
+  const agencyProgramsToEval = resolveAgencyPrograms(scenario);
+  const nonQMProgramToEval   = resolveNonQMProgram(scenario);
 
-  // ── STEP 2 + 3 + 4 + 5: Evaluate all Agency lenders ───────────────────
+  // ── STEP 2–5: Evaluate all Agency lenders ─────────────────────────────
   const agencyResults = [];
 
   if (!scenario.isNonQMPath) {
-    // Only evaluate Agency lenders on full-doc scenarios
     agencyLenders.forEach((lender) => {
       agencyProgramsToEval.forEach((program) => {
         if (!lender.programs.includes(program)) return;
@@ -1259,8 +1007,8 @@ export function runLenderMatch(rawInputs = {}, options = {}) {
         const overlayRisk = assessOverlayRisk(scenario);
         const tier        = getTierIndicator(lender, "Agency");
 
-        let fitScore    = 0;
-        let breakdown   = {};
+        let fitScore  = 0;
+        let breakdown = {};
 
         if (eligibility.eligible) {
           const scored = scoreAgencyLender(lender, program, scenario);
@@ -1299,25 +1047,24 @@ export function runLenderMatch(rawInputs = {}, options = {}) {
       });
     });
   } else {
-    // Non-QM path: suppress Agency results with explanation
     agencyLenders.forEach((lender) => {
       agencyResults.push({
-        lenderId:          lender.id,
-        lenderName:        lender.name,
-        shortName:         lender.shortName,
-        program:           "Agency",
-        eligible:          false,
-        eligibilityStatus: ELIGIBILITY_STATUS.INELIGIBLE,
-        failReason:        `Agency lenders require full income documentation. ` +
-                           `Selected: ${scenario.incomeDocType}. See Alternative Path below.`,
-        fitScore:          0,
-        dataSource:        lender.dataSource,
+        lenderId:            lender.id,
+        lenderName:          lender.name,
+        shortName:           lender.shortName,
+        program:             "Agency",
+        eligible:            false,
+        eligibilityStatus:   ELIGIBILITY_STATUS.INELIGIBLE,
+        failReason:          `Agency lenders require full income documentation. ` +
+                             `Selected: ${scenario.incomeDocType}. See Alternative Path below.`,
+        fitScore:            0,
+        dataSource:          lender.dataSource,
         guidelineVersionRef: lender.guidelineVersionRef,
       });
     });
   }
 
-  // ── STEP 2 + 3 + 4 + 5: Evaluate all Non-QM lenders ──────────────────
+  // ── STEP 2–5: Evaluate all Non-QM lenders ─────────────────────────────
   const nonQMResults = [];
 
   if (nonQMProgramToEval) {
@@ -1330,22 +1077,21 @@ export function runLenderMatch(rawInputs = {}, options = {}) {
       const overlayRisk = assessOverlayRisk(scenario);
       const tier        = getTierIndicator(lender, "NonQM");
 
-      let fitScore    = 0;
-      let breakdown   = {};
-      let eligStatus  = ELIGIBILITY_STATUS.INELIGIBLE;
+      let fitScore  = 0;
+      let breakdown = {};
+      let eligStatus = ELIGIBILITY_STATUS.INELIGIBLE;
 
       if (eligibility.eligible) {
         const scored = scoreNonQMLender(lender, nonQMProgramToEval, scenario);
         fitScore  = scored.fitScore;
         breakdown = scored.breakdown;
 
-        // Determine eligibility status for placeholder
         if (lender.dataSource === DATA_SOURCES.PLACEHOLDER) {
           const meetsException = placeholderMeetsControlledException(
             scenario,
             {
               overlayRisk:        overlayRisk.level,
-              confidenceScore:    0.85,  // Will be recalculated in Step 6
+              confidenceScore:    0.85,
               seasoningViolation: eligibility.seasoningViolation || false,
               conditionalFlags:   eligibility.conditionalFlags   || [],
               applicableMaxLTV:   breakdown.applicableMaxLTV,
@@ -1412,26 +1158,16 @@ export function runLenderMatch(rawInputs = {}, options = {}) {
 
   // ── STEP 7: Rank and package ──────────────────────────────────────────
   return rankAndPackageResults(
-    agencyResults,
-    nonQMResults,
-    scenario,
-    overlayRisk,
-    confidence,
-    mode
+    agencyResults, nonQMResults, scenario, overlayRisk, confidence, mode
   );
 }
 
 
 // ─── Agency Override Merge ────────────────────────────────────────────────────
-/**
- * Merges Firestore Agency overrides into the static Agency matrix.
- * Same precedence pattern as Non-QM: Firestore > static.
- */
 function applyAgencyOverrides(lenders, overrides = []) {
   if (!overrides.length) return lenders;
   const overrideMap = {};
   overrides.forEach((o) => { if (o.id) overrideMap[o.id] = o; });
-
   return lenders.map((lender) => {
     const override = overrideMap[lender.id];
     if (!override) return lender;
@@ -1444,41 +1180,38 @@ function applyAgencyOverrides(lenders, overrides = []) {
 // ─── Program Resolution ───────────────────────────────────────────────────────
 
 function resolveAgencyPrograms(scenario) {
-  // Which Agency programs should we evaluate?
-  if (scenario.loanType && scenario.loanType !== "All") {
-    return [scenario.loanType];
+  // ── Normalize casing — Firestore may store "CONVENTIONAL", form sends "All Programs" ──
+  const lt = scenario.loanType?.toLowerCase?.() || "";
+  if (!lt || lt === "all" || lt === "all programs") {
+    return [AGENCY_PROGRAMS.CONVENTIONAL, AGENCY_PROGRAMS.FHA, AGENCY_PROGRAMS.VA];
   }
-  // Default: evaluate all three Agency programs
-  return [
-    AGENCY_PROGRAMS.CONVENTIONAL,
-    AGENCY_PROGRAMS.FHA,
-    AGENCY_PROGRAMS.VA,
-  ];
+  const normalizedMap = {
+    "conventional": AGENCY_PROGRAMS.CONVENTIONAL,
+    "fha":          AGENCY_PROGRAMS.FHA,
+    "va":           AGENCY_PROGRAMS.VA,
+  };
+  if (normalizedMap[lt]) return [normalizedMap[lt]];
+  // Unknown value — evaluate all three
+  return [AGENCY_PROGRAMS.CONVENTIONAL, AGENCY_PROGRAMS.FHA, AGENCY_PROGRAMS.VA];
 }
 
 function resolveNonQMProgram(scenario) {
-  // Map incomeDocType → Non-QM program key
   const map = {
-    bankStatement12: PROGRAMS.BANK_STATEMENT_12,
-    bankStatement24: PROGRAMS.BANK_STATEMENT_24,
-    dscr:            PROGRAMS.DSCR,
-    assetDepletion:  PROGRAMS.ASSET_DEPLETION,
-    ninetyNineOnly:  PROGRAMS.NINETY_NINE_ONLY,
-    noDoc:           PROGRAMS.NO_DOC,
+    bankStatement12:  PROGRAMS.BANK_STATEMENT_12,
+    bankStatement24:  PROGRAMS.BANK_STATEMENT_24,
+    dscr:             PROGRAMS.DSCR,
+    assetDepletion:   PROGRAMS.ASSET_DEPLETION,
+    ninetyNineOnly:   PROGRAMS.NINETY_NINE_ONLY,
+    noDoc:            PROGRAMS.NO_DOC,
   };
   return map[scenario.incomeDocType] ?? null;
 }
 
 
 // ─── Narrative Generator ─────────────────────────────────────────────────────
-/**
- * Auto-generates "Why this lender?" narrative from score components.
- * Pure template logic — no external API call. (PRD Section 16)
- */
 function buildAgencyNarrative(lender, program, scenario, fitScore, breakdown) {
   const parts = [];
 
-  // Opening: lender rank context
   if (fitScore >= 80) {
     parts.push(`${lender.shortName} is an excellent match for this ${program} ${formatTxType(scenario.transactionType).toLowerCase()}.`);
   } else if (fitScore >= 65) {
@@ -1487,7 +1220,6 @@ function buildAgencyNarrative(lender, program, scenario, fitScore, breakdown) {
     parts.push(`${lender.shortName} qualifies for this ${program} scenario but offers less cushion than top-ranked options.`);
   }
 
-  // FICO cushion
   if (breakdown.ficoCushion >= 100) {
     parts.push(`Your ${scenario.creditScore} FICO is ${breakdown.ficoCushion} points above their minimum — strong cushion.`);
   } else if (breakdown.ficoCushion >= 40) {
@@ -1496,14 +1228,12 @@ function buildAgencyNarrative(lender, program, scenario, fitScore, breakdown) {
     parts.push(`Your ${scenario.creditScore} FICO is close to their minimum — expect possible file scrutiny.`);
   }
 
-  // Tier context
   if (lender.tier === "A+") {
     parts.push(`Their premier platform typically delivers competitive execution for this loan type.`);
   } else if (lender.tier === "A") {
     parts.push(`${lender.tierNotes}`);
   }
 
-  // Risk note if moderate/high
   if (breakdown.ltvCushion < 5) {
     parts.push(`Note: LTV is close to their ceiling — strong documentation will be important.`);
   }
@@ -1521,7 +1251,6 @@ function buildNonQMNarrative(lender, program, scenario, fitScore, breakdown, age
     parts.push(`${lender.shortName}'s ${programLabel} program offers a viable path where Agency lending is not available.`);
   }
 
-  // Program-specific detail
   if (program === PROGRAMS.DSCR && scenario.dscr) {
     parts.push(`Your DSCR of ${scenario.dscr.toFixed(2)} meets their minimum of ${lender.guidelines[program]?.minDSCR} — no personal income documentation required.`);
   } else if ((program === PROGRAMS.BANK_STATEMENT_12 || program === PROGRAMS.BANK_STATEMENT_24) && scenario.selfEmployed) {
@@ -1531,13 +1260,11 @@ function buildNonQMNarrative(lender, program, scenario, fitScore, breakdown, age
     parts.push(`Your $${scenario.totalAssets.toLocaleString()} in assets qualifies as ~$${monthlyIncome.toLocaleString()}/month income using the ${lender.guidelines[program]?.depletionMonths}-month depletion method.`);
   }
 
-  // FICO cushion note
   const ficoCushion = scenario.creditScore - (lender.guidelines[program]?.minFICO || 620);
   if (ficoCushion >= 40) {
     parts.push(`Your ${scenario.creditScore} FICO provides a ${ficoCushion}-point cushion above their minimum.`);
   }
 
-  // Placeholder reminder
   if (lender.dataSource === DATA_SOURCES.PLACEHOLDER) {
     parts.push(`Verify current guidelines directly with this lender type before quoting.`);
   }
@@ -1547,79 +1274,51 @@ function buildNonQMNarrative(lender, program, scenario, fitScore, breakdown, age
 
 function formatProgramLabel(program) {
   const labels = {
-    BankStatement12:  "12-Month Bank Statement",
-    BankStatement24:  "24-Month Bank Statement",
-    DSCR:             "DSCR",
-    AssetDepletion:   "Asset Depletion",
-    NinetyNineOnly:   "1099",
-    NoDoc:            "No-Doc",
+    BankStatement12: "12-Month Bank Statement",
+    BankStatement24: "24-Month Bank Statement",
+    DSCR:            "DSCR",
+    AssetDepletion:  "Asset Depletion",
+    NinetyNineOnly:  "1099",
+    NoDoc:           "No-Doc",
   };
   return labels[program] ?? program;
 }
 
 
 // ─── Decision Record Builder ─────────────────────────────────────────────────
-/**
- * Builds a Decision Record™ payload for Firestore storage.
- * Called when the LO selects a lender from results. (AC5)
- *
- * @param {object} selectedResult  — The lender result object from the engine
- * @param {object} scenario        — The normalized scenario
- * @param {object} engineOutput    — The full engine result (for confidence/overlay)
- * @returns {object}               — Firestore-ready Decision Record payload
- */
 export function buildDecisionRecord(selectedResult, scenario, engineOutput) {
   const isPlaceholder = selectedResult.dataSource === DATA_SOURCES.PLACEHOLDER;
 
-  const record = {
-    recordType:    "LENDER_MATCH_SELECTION",
-
-    // Full scenario snapshot — sealed at selection time
-    scenarioSnapshot: { ...scenario },
-
-    // Selection
-    selectedLenderId:   selectedResult.lenderId,
-    selectedProgramId:  `${selectedResult.lenderId}_${selectedResult.program}`,
-    profileName:        selectedResult.lenderName,
-
-    // Data provenance (AC3, AC5)
+  return {
+    recordType: "LENDER_MATCH_SELECTION",
+    scenarioSnapshot:    { ...scenario },
+    selectedLenderId:    selectedResult.lenderId,
+    selectedProgramId:   `${selectedResult.lenderId}_${selectedResult.program}`,
+    profileName:         selectedResult.lenderName,
     dataSource:          selectedResult.dataSource,
     rulesetVersion:      isPlaceholder ? 0 : (selectedResult.version ?? 1),
     guidelineVersionRef: selectedResult.guidelineVersionRef,
-
-    // Scores at time of selection — never retroactively modified
-    fitScore:          selectedResult.fitScore,
-    eligibilityStatus: selectedResult.eligibilityStatus,
-    overlayRisk:       selectedResult.overlayRisk,
-    confidenceScore:   engineOutput?.confidence?.score ?? null,
-    tierBasis:         selectedResult.tierBasis,
-    tier:              selectedResult.tier,
-
-    // Reasons snapshot
+    fitScore:            selectedResult.fitScore,
+    eligibilityStatus:   selectedResult.eligibilityStatus,
+    overlayRisk:         selectedResult.overlayRisk,
+    confidenceScore:     engineOutput?.confidence?.score ?? null,
+    tierBasis:           selectedResult.tierBasis,
+    tier:                selectedResult.tier,
     reasonsSnapshot: [
       ...(selectedResult.passReasons || []),
       ...(selectedResult.conditionalFlags?.map((f) => `⚠️ ${f}`) || []),
     ],
-
-    // Narrative at time of selection
     narrativeSnapshot: selectedResult.narrative,
-
-    // Placeholder-specific provenance
     ...(isPlaceholder && {
       placeholderCreatedDate: selectedResult.guidelineVersionRef,
       placeholderDisclaimer:  selectedResult.disclaimer,
     }),
-
-    // Timestamps
     selectedAt: new Date().toISOString(),
   };
-
-  return record;
 }
 
 
 // ─── Engine Version ───────────────────────────────────────────────────────────
-
 export const ENGINE_VERSION      = "1.0.0";
 export const ENGINE_RELEASE_DATE = "2026-02-18";
 

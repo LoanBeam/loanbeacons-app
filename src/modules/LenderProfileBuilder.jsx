@@ -7,8 +7,6 @@ import {
 import { useSearchParams } from "react-router-dom";
 
 // ─── Agency Standards (Layer 1 — Pre-loaded by LoanBeacons) ─────────────────
-// Source: FHA 4000.1, Fannie Mae Selling Guide, Freddie Mac SF Guide,
-//         VA Lenders Handbook (VA Pamphlet 26-7), USDA HB-1-3555
 const AGENCY_STANDARDS = {
   FHA: {
     label: "FHA", fullName: "Federal Housing Administration",
@@ -93,16 +91,14 @@ const AGENCY_STANDARDS = {
   }
 };
 
-// ─── Field helpers ────────────────────────────────────────────────────────────
 const f$ = n => "$" + Number(n).toLocaleString("en-US");
 const fp = (n, u) => u === "%" ? `${n}%` : u === "months" ? `${n} mo` : u === "months PITI" ? `${n} mo PITI` : u ? `${n} ${u}` : String(n);
 
-// Color maps
 const agencyColors = {
-  blue: { bg: "bg-blue-900/20", border: "border-blue-700/50", badge: "bg-blue-800/60 text-blue-300", text: "text-blue-400" },
-  indigo: { bg: "bg-indigo-900/20", border: "border-indigo-700/50", badge: "bg-indigo-800/60 text-indigo-300", text: "text-indigo-400" },
+  blue:    { bg: "bg-blue-900/20",    border: "border-blue-700/50",    badge: "bg-blue-800/60 text-blue-300",       text: "text-blue-400"    },
+  indigo:  { bg: "bg-indigo-900/20",  border: "border-indigo-700/50",  badge: "bg-indigo-800/60 text-indigo-300",   text: "text-indigo-400"  },
   emerald: { bg: "bg-emerald-900/20", border: "border-emerald-700/50", badge: "bg-emerald-800/60 text-emerald-300", text: "text-emerald-400" },
-  amber: { bg: "bg-amber-900/20", border: "border-amber-700/50", badge: "bg-amber-800/60 text-amber-300", text: "text-amber-400" },
+  amber:   { bg: "bg-amber-900/20",   border: "border-amber-700/50",   badge: "bg-amber-800/60 text-amber-300",     text: "text-amber-400"   },
 };
 
 // ─── Overlay input component ─────────────────────────────────────────────────
@@ -179,7 +175,6 @@ function AgencyStandardsTab() {
         <p className="text-sm text-slate-300">Pre-loaded and maintained by LoanBeacons™. Updated within 5 business days of any agency publication. These are the baseline values — lender overlays (Layer 2) and channel overrides (Layer 3) are applied on top.</p>
       </div>
 
-      {/* Agency selector */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         {Object.entries(AGENCY_STANDARDS).map(([key, ag]) => (
           <button key={key} onClick={() => setActiveAgency(key)}
@@ -191,7 +186,6 @@ function AgencyStandardsTab() {
         ))}
       </div>
 
-      {/* Agency header */}
       <div className={`rounded-xl p-5 border mb-5 ${colors.bg} ${colors.border}`}>
         <div className="flex items-start justify-between flex-wrap gap-3">
           <div>
@@ -208,7 +202,6 @@ function AgencyStandardsTab() {
         </div>
       </div>
 
-      {/* Fields */}
       <div className="space-y-3">
         {Object.entries(agency.fields).map(([key, field]) => (
           <div key={key} className={`rounded-xl border p-4 cursor-pointer transition-all hover:border-slate-500 ${expandedField === key ? "bg-slate-800/60 border-slate-500" : "bg-slate-800/30 border-slate-700"}`}
@@ -237,43 +230,161 @@ function AgencyStandardsTab() {
   );
 }
 
+// ─── Brokerage Approved Toggle ───────────────────────────────────────────────
+function BrokerageApprovedToggle({ lender, onToggled }) {
+  const [saving, setSaving] = useState(false);
+  const [saved,  setSaved]  = useState(false);
+  const isApproved = lender.brokerage_approved === true;
+
+  const toggle = async () => {
+    setSaving(true);
+    try {
+      const next = !isApproved;
+      await updateDoc(doc(db, "lenderProfiles", lender.id), {
+        brokerage_approved:    next,
+        brokerage_approved_at: next ? serverTimestamp() : null,
+        updatedAt:             serverTimestamp(),
+      });
+      setSaved(true);
+      onToggled({ ...lender, brokerage_approved: next });
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      console.error("Approved toggle failed:", e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-600 mb-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">
+            Brokerage Approval Status
+          </p>
+          <p className="text-xs text-slate-500">
+            {isApproved
+              ? "This lender is approved — DPA programs will show as approved for all LOs"
+              : "Toggle on once your brokerage is approved to submit loans with this lender"}
+          </p>
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {saved && <span className="text-xs text-green-400 font-semibold">✓ Saved</span>}
+          <button
+            onClick={toggle}
+            disabled={saving}
+            className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 ${isApproved ? 'bg-green-600' : 'bg-slate-600'}`}
+          >
+            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${isApproved ? 'translate-x-8' : 'translate-x-1'}`} />
+          </button>
+          <span className={`text-sm font-bold ${isApproved ? 'text-green-400' : 'text-slate-500'}`}>
+            {saving ? 'Saving…' : isApproved ? 'Approved' : 'Not Approved'}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Inline AE Editor ────────────────────────────────────────────────────────
+function InlineAEEditor({ lender, onSaved, onCancel }) {
+  const [fields, setFields] = useState({
+    aeContact: lender.aeContact || "",
+    aeEmail:   lender.aeEmail   || "",
+    aePhone:   lender.aePhone   || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [saved,  setSaved]  = useState(false);
+
+  const f = (k, v) => setFields(prev => ({ ...prev, [k]: v }));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, "lenderProfiles", lender.id), {
+        aeContact:  fields.aeContact,
+        aeEmail:    fields.aeEmail,
+        aePhone:    fields.aePhone,
+        updatedAt:  serverTimestamp(),
+      });
+      setSaved(true);
+      setTimeout(() => {
+        onSaved({ ...lender, ...fields });
+      }, 800);
+    } catch (e) {
+      console.error("AE save failed:", e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-slate-900/70 rounded-xl p-4 border border-green-700/50 mb-4">
+      <p className="text-xs font-bold text-green-400 uppercase tracking-wider mb-3">✏️ Edit Account Executive</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+        {[["AE Name", "aeContact", "text", "e.g. Sarah Johnson"],
+          ["AE Email", "aeEmail", "email", "ae@lender.com"],
+          ["AE Phone", "aePhone", "tel", "(800) 555-0100"]].map(([label, key, type, ph]) => (
+          <div key={key}>
+            <label className="block text-xs font-semibold text-slate-400 mb-1">{label}</label>
+            <input
+              type={type}
+              value={fields[key]}
+              onChange={e => f(key, e.target.value)}
+              placeholder={ph}
+              className="w-full bg-slate-800 border border-slate-600 focus:border-green-500 rounded-lg px-3 py-2 text-white text-sm outline-none"
+            />
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={save}
+          disabled={saving || saved}
+          className="px-4 py-2 rounded-lg bg-green-700 hover:bg-green-600 disabled:bg-green-900 text-white font-bold text-sm transition-all"
+        >
+          {saved ? "✅ Saved" : saving ? "Saving…" : "💾 Save AE Contact"}
+        </button>
+        <button
+          onClick={onCancel}
+          className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold text-sm"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function LenderProfileBuilder() {
   const [sp] = useSearchParams();
-  const [tab, setTab] = useState("standards"); // standards | profiles | add
+  const [tab, setTab] = useState("standards");
   const [lenders, setLenders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
   const [viewLender, setViewLender] = useState(null);
+  const [editingAeId, setEditingAeId] = useState(null); // lender id being AE-edited
 
-  // New lender form state
   const [form, setForm] = useState({
-    name: "", nmls: "", type: "wholesale", // wholesale | correspondent | retail
+    name: "", nmls: "", type: "wholesale",
     loanTypes: [],
     aeContact: "", aeEmail: "", aePhone: "",
     notes: "",
   });
 
-  // Layer 2 overlays (lender differs from agency)
   const [overlays, setOverlays] = useState({});
-  // Layer 3 channel overrides (AE-negotiated)
   const [channelOverrides, setChannelOverrides] = useState({});
-  // Which agencies does this lender offer?
   const [lenderAgencies, setLenderAgencies] = useState([]);
 
-  // Load saved lenders from Firestore
-  useEffect(() => {
-    loadLenders();
-  }, []);
+  useEffect(() => { loadLenders(); }, []);
 
   const loadLenders = async () => {
     setLoading(true);
     try {
       const snap = await getDocs(collection(db, "lenderProfiles"));
       setLenders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    } catch (e) {
-      console.error("Load lenders:", e);
-    }
+    } catch (e) { console.error("Load lenders:", e); }
     setLoading(false);
   };
 
@@ -293,7 +404,6 @@ export default function LenderProfileBuilder() {
         layer1: "AGENCY_STANDARDS_V1",
       };
       const ref = await addDoc(collection(db, "lenderProfiles"), payload);
-      // Decision log
       try {
         await addDoc(collection(db, "platform_activity"), {
           module: "Lender Profile Builder",
@@ -311,22 +421,24 @@ export default function LenderProfileBuilder() {
       await loadLenders();
       setTab("profiles");
       setTimeout(() => setSaved(false), 3000);
-    } catch (e) {
-      console.error("Save lender:", e);
-    }
+    } catch (e) { console.error("Save lender:", e); }
   };
 
-  const toggleAgency = (a) => setLenderAgencies(prev => prev.includes(a) ? prev.filter(x => x !== a) : [...prev, a]);
-  const toggleLoanType = (t) => setForm(f => ({ ...f, loanTypes: f.loanTypes.includes(t) ? f.loanTypes.filter(x => x !== t) : [...f.loanTypes, t] }));
+  // After inline AE save — patch local lenders list without full reload
+  const handleAeSaved = (updatedLender) => {
+    setLenders(prev => prev.map(l => l.id === updatedLender.id ? updatedLender : l));
+    setViewLender(updatedLender);
+    setEditingAeId(null);
+  };
 
-  const setOverlay = (field, val) => setOverlays(prev => ({ ...prev, [field]: val }));
-  const setChannel = (field, val) => setChannelOverrides(prev => ({ ...prev, [field]: val }));
+  const toggleAgency    = (a) => setLenderAgencies(prev => prev.includes(a) ? prev.filter(x => x !== a) : [...prev, a]);
+  const toggleLoanType  = (t) => setForm(f => ({ ...f, loanTypes: f.loanTypes.includes(t) ? f.loanTypes.filter(x => x !== t) : [...f.loanTypes, t] }));
+  const setOverlay      = (field, val) => setOverlays(prev => ({ ...prev, [field]: val }));
+  const setChannel      = (field, val) => setChannelOverrides(prev => ({ ...prev, [field]: val }));
 
-  // Count overlays
-  const overlayCount = Object.values(overlays).filter(v => v !== "" && v !== null && v !== undefined).length;
-  const channelCount = Object.values(channelOverrides).filter(v => v !== "" && v !== null && v !== undefined).length;
+  const overlayCount  = Object.values(overlays).filter(v => v !== "" && v !== null && v !== undefined).length;
+  const channelCount  = Object.values(channelOverrides).filter(v => v !== "" && v !== null && v !== undefined).length;
 
-  // Effective fields for selected agencies
   const effectiveFields = lenderAgencies.flatMap(ag =>
     Object.entries(AGENCY_STANDARDS[ag]?.fields || {}).map(([k, f]) => ({ key: `${ag}_${k}`, agencyField: f, agency: ag }))
   );
@@ -369,13 +481,13 @@ export default function LenderProfileBuilder() {
               <p className="text-sm text-slate-300 leading-relaxed">These are the baseline agency guidelines pre-loaded by LoanBeacons™. Every lender profile starts here — you only need to capture where your lender <strong className="text-white">differs</strong> from the standard. This dramatically reduces data entry time and eliminates errors from re-typing known values.</p>
               <div className="grid grid-cols-3 gap-3 mt-4">
                 {[
-                  ["FHA 4000.1", "HUD/FHA", "blue"],
-                  ["Fannie Mae Selling Guide", "FHFA/FNMA", "indigo"],
-                  ["Freddie Mac SF Guide", "FHFA/FHLMC", "indigo"],
-                  ["VA Pamphlet 26-7", "Dept. Veterans Affairs", "emerald"],
-                  ["USDA HB-1-3555", "USDA Rural Dev.", "amber"],
-                  ["HomeReady + Home Possible", "FNMA/FHLMC", "indigo"],
-                ].map(([doc, agency, color]) => (
+                  ["FHA 4000.1", "HUD/FHA"],
+                  ["Fannie Mae Selling Guide", "FHFA/FNMA"],
+                  ["Freddie Mac SF Guide", "FHFA/FHLMC"],
+                  ["VA Pamphlet 26-7", "Dept. Veterans Affairs"],
+                  ["USDA HB-1-3555", "USDA Rural Dev."],
+                  ["HomeReady + Home Possible", "FNMA/FHLMC"],
+                ].map(([doc, agency]) => (
                   <div key={doc} className="bg-slate-800/50 border border-slate-700 rounded-lg p-3">
                     <p className="text-xs font-bold text-slate-300">{doc}</p>
                     <p className="text-xs text-slate-500 mt-0.5">{agency}</p>
@@ -418,6 +530,9 @@ export default function LenderProfileBuilder() {
                 {lenders.map(lender => {
                   const oCount = Object.values(lender.overlays || {}).filter(v => v !== "" && v !== null).length;
                   const cCount = Object.values(lender.channelOverrides || {}).filter(v => v !== "" && v !== null).length;
+                  const isExpanded = viewLender?.id === lender.id;
+                  const isEditingAe = editingAeId === lender.id;
+
                   return (
                     <div key={lender.id} className="bg-slate-800/50 border border-slate-700 hover:border-green-700/50 rounded-2xl p-5 transition-all">
                       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -442,16 +557,22 @@ export default function LenderProfileBuilder() {
                             <p className="text-lg font-bold text-purple-400">{cCount}</p>
                             <p className="text-xs text-slate-500">Channel</p>
                           </div>
-                          <button onClick={() => setViewLender(viewLender?.id === lender.id ? null : lender)}
-                            className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold text-sm">
-                            {viewLender?.id === lender.id ? "Hide" : "View"}
+                          <button
+                            onClick={() => {
+                              if (isExpanded) { setViewLender(null); setEditingAeId(null); }
+                              else { setViewLender(lender); setEditingAeId(null); }
+                            }}
+                            className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold text-sm"
+                          >
+                            {isExpanded ? "Hide" : "View"}
                           </button>
                         </div>
                       </div>
 
                       {/* Expanded profile view */}
-                      {viewLender?.id === lender.id && (
+                      {isExpanded && (
                         <div className="mt-5 pt-5 border-t border-slate-700">
+
                           {/* Three-layer summary */}
                           <div className="grid grid-cols-3 gap-3 mb-5">
                             <div className="bg-green-900/20 border border-green-700/40 rounded-xl p-3 text-center">
@@ -471,13 +592,47 @@ export default function LenderProfileBuilder() {
                             </div>
                           </div>
 
-                          {/* AE Contact */}
-                          {lender.aeContact && (
+                          {/* ── Brokerage Approved Toggle ── */}
+                          <BrokerageApprovedToggle
+                            lender={lender}
+                            onToggled={(updated) => {
+                              setLenders(prev => prev.map(l => l.id === updated.id ? updated : l));
+                              if (viewLender?.id === updated.id) setViewLender(updated);
+                            }}
+                          />
+
+                          {/* AE Contact block */}
+                          {isEditingAe ? (
+                            <InlineAEEditor
+                              lender={lender}
+                              onSaved={handleAeSaved}
+                              onCancel={() => setEditingAeId(null)}
+                            />
+                          ) : (
                             <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-600 mb-4">
-                              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Account Executive</p>
-                              <p className="text-white font-semibold">{lender.aeContact}</p>
-                              {lender.aeEmail && <p className="text-slate-400 text-sm">{lender.aeEmail}</p>}
-                              {lender.aePhone && <p className="text-slate-400 text-sm">{lender.aePhone}</p>}
+                              <div className="flex items-center justify-between mb-2">
+                                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Account Executive</p>
+                                <button
+                                  onClick={() => setEditingAeId(lender.id)}
+                                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-400 hover:text-green-300 bg-green-900/30 hover:bg-green-900/50 border border-green-700/50 rounded-lg px-3 py-1.5 transition-all"
+                                >
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                  </svg>
+                                  Edit
+                                </button>
+                              </div>
+                              {lender.aeContact || lender.aeEmail || lender.aePhone ? (
+                                <>
+                                  {lender.aeContact && <p className="text-white font-semibold">{lender.aeContact}</p>}
+                                  {lender.aeEmail   && <p className="text-slate-400 text-sm">{lender.aeEmail}</p>}
+                                  {lender.aePhone   && <p className="text-slate-400 text-sm">{lender.aePhone}</p>}
+                                </>
+                              ) : (
+                                <p className="text-slate-500 text-sm italic">No AE contact saved.
+                                  <button onClick={() => setEditingAeId(lender.id)} className="ml-2 text-green-400 hover:text-green-300 not-italic font-semibold">Add one →</button>
+                                </p>
+                              )}
                             </div>
                           )}
 
@@ -544,9 +699,8 @@ export default function LenderProfileBuilder() {
         {tab === "add" && (
           <div>
             <h2 className="text-xl font-bold text-white mb-2">Add New Lender Profile</h2>
-            <p className="text-slate-400 text-sm mb-6">Start with the lender's identity, then capture <strong className="text-orange-300">only where they differ</strong> from agency standard. Fields that follow agency standard require no entry.</p>
+            <p className="text-slate-400 text-sm mb-6">Start with the lender's identity, then capture <strong className="text-orange-300">only where they differ</strong> from agency standard.</p>
 
-            {/* Layer legend */}
             <div className="grid grid-cols-3 gap-3 mb-6">
               {[
                 ["Layer 1", "Agency Standard", "Pre-loaded. You don't enter these.", "green"],
@@ -604,33 +758,23 @@ export default function LenderProfileBuilder() {
               </div>
             </div>
 
-            {/* AE Contact (Layer 3 context) */}
+            {/* AE Contact */}
             <div className="bg-slate-800/60 border border-slate-700 rounded-2xl p-6 mb-5">
               <h3 className="text-sm font-bold text-slate-300 mb-1">Account Executive Contact</h3>
-              <p className="text-xs text-slate-500 mb-4">This is the person who communicates channel overlays to you. Store their info here so it's always with the profile.</p>
+              <p className="text-xs text-slate-500 mb-4">This is the person who communicates channel overlays to you.</p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">AE Name</label>
-                  <input value={form.aeContact} onChange={e => setForm(f => ({ ...f, aeContact: e.target.value }))}
-                    placeholder="e.g. Sarah Johnson"
-                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-green-500"/>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">AE Email</label>
-                  <input value={form.aeEmail} onChange={e => setForm(f => ({ ...f, aeEmail: e.target.value }))}
-                    placeholder="e.g. sarah.j@lender.com"
-                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-green-500"/>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">AE Phone</label>
-                  <input value={form.aePhone} onChange={e => setForm(f => ({ ...f, aePhone: e.target.value }))}
-                    placeholder="e.g. (800) 555-0100"
-                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-green-500"/>
-                </div>
+                {[["AE Name","aeContact","text","e.g. Sarah Johnson"],["AE Email","aeEmail","email","e.g. sarah.j@lender.com"],["AE Phone","aePhone","tel","e.g. (800) 555-0100"]].map(([label, key, type, ph]) => (
+                  <div key={key}>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">{label}</label>
+                    <input type={type} value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                      placeholder={ph}
+                      className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-green-500"/>
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* Guideline Overlays — only show if agencies selected */}
+            {/* Guideline Overlays */}
             {lenderAgencies.length > 0 && (
               <div className="bg-slate-800/60 border border-slate-700 rounded-2xl p-6 mb-5">
                 <div className="flex items-center gap-3 mb-2">
@@ -638,8 +782,7 @@ export default function LenderProfileBuilder() {
                   {overlayCount > 0 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-orange-900/50 border border-orange-700/50 text-orange-300">{overlayCount} overlay{overlayCount !== 1 ? "s" : ""}</span>}
                   {channelCount > 0 && <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-900/50 border border-purple-700/50 text-purple-300">{channelCount} channel</span>}
                 </div>
-                <p className="text-xs text-slate-500 mb-5">Click <strong className="text-white">✏️ Edit</strong> on any field where this lender differs from agency standard. Leave all other fields blank — they automatically inherit the agency value.</p>
-
+                <p className="text-xs text-slate-500 mb-5">Click <strong className="text-white">✏️ Edit</strong> on any field where this lender differs from agency standard.</p>
                 {lenderAgencies.map(agKey => (
                   <div key={agKey} className="mb-6">
                     <div className={`flex items-center gap-2 mb-3 pb-2 border-b ${agencyColors[AGENCY_STANDARDS[agKey].color].border}`}>
@@ -672,12 +815,11 @@ export default function LenderProfileBuilder() {
               <label className="block text-xs font-semibold text-slate-400 mb-1">Notes / Special Guidelines</label>
               <p className="text-xs text-slate-500 mb-2">Anything that doesn't fit a structured field — pricing tiers, niche programs, submission preferences, turn times, etc.</p>
               <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                placeholder="e.g. Strong on Non-QM. AE prefers pre-approval calls. Fast turn on VA — typically 15 days. Avoid after 3pm EST submissions..."
+                placeholder="e.g. Strong on Non-QM. AE prefers pre-approval calls. Fast turn on VA — typically 15 days..."
                 rows={4}
                 className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-green-500 resize-none"/>
             </div>
 
-            {/* Save */}
             <div className="flex items-center gap-4">
               <button onClick={saveLender} disabled={!formValid}
                 className={`flex-1 py-3.5 rounded-xl font-bold text-sm transition-all ${formValid ? "bg-green-700 hover:bg-green-600 text-white shadow-lg shadow-green-900/40" : "bg-slate-700 text-slate-500 cursor-not-allowed"}`}>

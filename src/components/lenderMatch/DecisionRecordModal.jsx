@@ -2,26 +2,7 @@
  * ============================================================
  * LoanBeacons Lender Match™
  * src/components/lenderMatch/DecisionRecordModal.jsx
- * Version: 1.0.0 — Decision Record™ Modal
- * Step 10 of Build Sequence | February 18, 2026
- * ============================================================
- *
- * Modal that opens when an LO selects a lender from results.
- * Displays the full Decision Record™ payload and provides:
- *   - Save to Firestore (via onSave callback from LenderMatch.jsx)
- *   - Copy summary to clipboard
- *   - Close
- *
- * The record is sealed at selection time — all displayed data
- * reflects the exact scenario inputs and scores at click time.
- *
- * Props:
- *   record   {object}    — Full Decision Record from buildDecisionRecord()
- *   result   {object}    — The selected lender result (for display context)
- *   saved    {boolean}   — Whether save already completed
- *   saving   {boolean}   — Save in-progress state
- *   onSave   {function}  — Called with record to persist to Firestore
- *   onClose  {function}  — Close handler
+ * Version: 1.0.1 — Fixed z-index + maxHeight for CanonicalSequenceBar
  * ============================================================
  */
 
@@ -33,30 +14,24 @@ const T = {
   bgModal:     "#0d1117",
   border:      "#21262d",
   borderLight: "#30363d",
-
   amber:       "#d97706",
   amberLight:  "#fbbf24",
   amberBg:     "#451a03",
   amberBorder: "#92400e",
-
   greenLight:  "#3fb950",
   greenBg:     "#0f2913",
   greenBorder: "#1f6527",
-
   blueLight:   "#58a6ff",
   blueBg:      "#0a1929",
   blueBorder:  "#1d6fa440",
-
   redLight:    "#f85149",
   redBg:       "#280d0b",
   redBorder:   "#6e1b18",
-
   textPrimary:   "#e6edf3",
   textSecondary: "#8b949e",
   textMuted:     "#484f58",
   textAmber:     "#fbbf24",
   textGreen:     "#3fb950",
-
   fontMono:    "'DM Mono', 'Fira Code', monospace",
   fontDisplay: "'Sora', 'Plus Jakarta Sans', system-ui, sans-serif",
   fontBody:    "'DM Sans', 'Outfit', system-ui, sans-serif",
@@ -66,9 +41,9 @@ const T = {
 };
 
 const OVERLAY_COLORS = {
-  LOW:      { color: T.greenLight,  bg: T.greenBg,  border: T.greenBorder },
-  MODERATE: { color: T.amberLight,  bg: T.amberBg,  border: T.amberBorder },
-  HIGH:     { color: T.redLight,    bg: T.redBg,    border: T.redBorder   },
+  LOW:      { color: T.greenLight, bg: T.greenBg, border: T.greenBorder },
+  MODERATE: { color: T.amberLight, bg: T.amberBg, border: T.amberBorder },
+  HIGH:     { color: T.redLight,   bg: T.redBg,   border: T.redBorder   },
 };
 
 const SID = "drm-styles";
@@ -84,6 +59,7 @@ if (typeof document !== "undefined" && !document.getElementById(SID)) {
       from { opacity:0; transform:translateY(16px) scale(0.98); }
       to   { opacity:1; transform:translateY(0) scale(1); }
     }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .drm-overlay { animation: drm-bg 0.18s ease both; }
     .drm-modal   { animation: drm-slide 0.22s cubic-bezier(0.16,1,0.3,1) both; }
     .drm-copy-btn:hover  { background-color: #1c2128 !important; color: #e6edf3 !important; }
@@ -93,45 +69,20 @@ if (typeof document !== "undefined" && !document.getElementById(SID)) {
   document.head.appendChild(el);
 }
 
-// ─── Field Row ────────────────────────────────────────────────────────────────
 function FieldRow({ label, value, valueColor, mono }) {
   if (value == null || value === "") return null;
   return (
-    <div style={{
-      display: "grid", gridTemplateColumns: "160px 1fr",
-      gap: "8px", padding: "7px 0",
-      borderBottom: `1px solid ${T.border}`,
-    }}>
-      <span style={{
-        fontSize: "11px", fontFamily: T.fontMono,
-        color: T.textMuted, letterSpacing: "0.06em",
-        alignSelf: "start", paddingTop: "1px",
-      }}>
-        {label}
-      </span>
-      <span style={{
-        fontSize: mono ? "12px" : "13px",
-        fontFamily: mono ? T.fontMono : T.fontBody,
-        color: valueColor || T.textPrimary,
-        lineHeight: "1.4", wordBreak: "break-word",
-      }}>
-        {value}
-      </span>
+    <div style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: "8px", padding: "7px 0", borderBottom: `1px solid ${T.border}` }}>
+      <span style={{ fontSize: "11px", fontFamily: T.fontMono, color: T.textMuted, letterSpacing: "0.06em", alignSelf: "start", paddingTop: "1px" }}>{label}</span>
+      <span style={{ fontSize: mono ? "12px" : "13px", fontFamily: mono ? T.fontMono : T.fontBody, color: valueColor || T.textPrimary, lineHeight: "1.4", wordBreak: "break-word" }}>{value}</span>
     </div>
   );
 }
 
-// ─── Section Header ───────────────────────────────────────────────────────────
 function ModalSection({ title, children }) {
   return (
     <div style={{ marginBottom: "20px" }}>
-      <div style={{
-        fontSize: "10px", fontFamily: T.fontMono,
-        letterSpacing: "0.1em", textTransform: "uppercase",
-        color: T.textMuted, fontWeight: 500,
-        paddingBottom: "8px", marginBottom: "0px",
-        borderBottom: `1px solid ${T.border}`,
-      }}>
+      <div style={{ fontSize: "10px", fontFamily: T.fontMono, letterSpacing: "0.1em", textTransform: "uppercase", color: T.textMuted, fontWeight: 500, paddingBottom: "8px", marginBottom: "0px", borderBottom: `1px solid ${T.border}` }}>
         {title}
       </div>
       {children}
@@ -139,9 +90,7 @@ function ModalSection({ title, children }) {
   );
 }
 
-// ─── Scenario Field Formatter ─────────────────────────────────────────────────
 function fmt$(n) { return n ? `$${Number(n).toLocaleString()}` : "—"; }
-function fmtPct(n) { return n != null ? `${n}%` : "—"; }
 
 function buildScenarioRows(snap) {
   if (!snap) return [];
@@ -150,8 +99,8 @@ function buildScenarioRows(snap) {
     { label: "Loan Amount",      value: fmt$(snap.loanAmount),      mono: true },
     { label: "Property Value",   value: fmt$(snap.propertyValue),   mono: true },
     { label: "Credit Score",     value: snap.creditScore?.toString(), mono: true },
-    { label: "LTV",              value: snap.ltv ? `${snap.ltv}%` : "—",  mono: true },
-    { label: "DTI",              value: snap.dti ? `${snap.dti}%` : "—",  mono: true },
+    { label: "LTV",              value: snap.ltv  ? `${snap.ltv}%`  : "—", mono: true },
+    { label: "DTI",              value: snap.dti  ? `${snap.dti}%`  : "—", mono: true },
     { label: "DSCR",             value: snap.dscr ? snap.dscr.toFixed(2) : null, mono: true },
     { label: "Property Type",    value: snap.propertyType },
     { label: "Occupancy",        value: snap.occupancy },
@@ -164,7 +113,6 @@ function buildScenarioRows(snap) {
   ].filter((r) => r.value && r.value !== "—" && r.value !== "null");
 }
 
-// ─── Clipboard Builder ────────────────────────────────────────────────────────
 function buildClipboardText(record, result) {
   const s = record.scenarioSnapshot || {};
   const lines = [
@@ -195,23 +143,17 @@ function buildClipboardText(record, result) {
   return lines.join("\n");
 }
 
-
-// ─── Main Component ───────────────────────────────────────────────────────────
 export function DecisionRecordModal({ record, result, saved, saving, onSave, onClose }) {
   const [copied, setCopied] = useState(false);
   const modalRef = useRef(null);
 
-  // Close on Escape key
   useEffect(() => {
     const fn = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", fn);
     return () => document.removeEventListener("keydown", fn);
   }, [onClose]);
 
-  // Trap focus inside modal
-  useEffect(() => {
-    modalRef.current?.focus();
-  }, []);
+  useEffect(() => { modalRef.current?.focus(); }, []);
 
   if (!record) return null;
 
@@ -232,18 +174,14 @@ export function DecisionRecordModal({ record, result, saved, saving, onSave, onC
 
   return (
     <>
-      {/* ── Backdrop ── */}
+      {/* Backdrop — z-index 9998 clears CanonicalSequenceBar */}
       <div
         className="drm-overlay"
-        style={{
-          position: "fixed", inset: 0, zIndex: 1000,
-          backgroundColor: "rgba(0,0,0,0.72)",
-          backdropFilter: "blur(4px)",
-        }}
+        style={{ position: "fixed", inset: 0, zIndex: 9998, backgroundColor: "rgba(0,0,0,0.72)", backdropFilter: "blur(4px)" }}
         onClick={onClose}
       />
 
-      {/* ── Modal ── */}
+      {/* Modal — z-index 9999, maxHeight leaves room for CanonicalSequenceBar */}
       <div
         className="drm-modal"
         ref={modalRef}
@@ -252,211 +190,78 @@ export function DecisionRecordModal({ record, result, saved, saving, onSave, onC
         aria-modal="true"
         aria-label="Decision Record"
         style={{
-          position:  "fixed",
-          top:       "50%",
-          left:      "50%",
-          transform: "translate(-50%, -50%)",
-          zIndex:    1001,
-          width:     "min(680px, 96vw)",
-          maxHeight: "90vh",
-          display:   "flex",
-          flexDirection: "column",
+          position:        "fixed",
+          top:             "8px",
+          left:            "50%",
+          transform:       "translateX(-50%)",
+          zIndex:          9999,
+          width:           "min(680px, 96vw)",
+          maxHeight:       "calc(100vh - 72px)",
+          display:         "flex",
+          flexDirection:   "column",
           backgroundColor: T.bgModal,
-          border:    `1px solid ${T.borderLight}`,
-          borderRadius: T.radiusLg,
-          overflow:  "hidden",
-          boxShadow: "0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)",
-          outline:   "none",
+          border:          `1px solid ${T.borderLight}`,
+          borderRadius:    T.radiusLg,
+          overflow:        "hidden",
+          boxShadow:       "0 24px 64px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)",
+          outline:         "none",
         }}
       >
-
-        {/* ── Modal Header ── */}
-        <div style={{
-          padding:    "16px 20px",
-          borderBottom: `1px solid ${T.border}`,
-          display:    "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexShrink: 0,
-          backgroundColor: T.bgCard,
-        }}>
+        {/* Header */}
+        <div style={{ padding: "16px 20px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, backgroundColor: T.bgCard }}>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <div style={{
-              width: "34px", height: "34px", borderRadius: "8px",
-              backgroundColor: T.amberBg, border: `1px solid ${T.amberBorder}`,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: "16px",
-            }}>
-              📌
-            </div>
+            <div style={{ width: "34px", height: "34px", borderRadius: "8px", backgroundColor: T.amberBg, border: `1px solid ${T.amberBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px" }}>📌</div>
             <div>
-              <div style={{
-                fontFamily: T.fontDisplay, fontWeight: 700,
-                fontSize: "15px", color: T.textPrimary, letterSpacing: "-0.3px",
-              }}>
-                Decision Record™
-              </div>
-              <div style={{
-                fontSize: "11px", fontFamily: T.fontMono,
-                color: T.textMuted, letterSpacing: "0.04em", marginTop: "2px",
-              }}>
-                {record.selectedAt
-                  ? new Date(record.selectedAt).toLocaleString()
-                  : "Sealed at selection"}
+              <div style={{ fontFamily: T.fontDisplay, fontWeight: 700, fontSize: "15px", color: T.textPrimary, letterSpacing: "-0.3px" }}>Decision Record™</div>
+              <div style={{ fontSize: "11px", fontFamily: T.fontMono, color: T.textMuted, letterSpacing: "0.04em", marginTop: "2px" }}>
+                {record.selectedAt ? new Date(record.selectedAt).toLocaleString() : "Sealed at selection"}
               </div>
             </div>
           </div>
-
-          <button
-            className="drm-close-btn"
-            onClick={onClose}
-            style={{
-              background: "none", border: "none",
-              cursor: "pointer", color: T.textMuted,
-              fontSize: "22px", lineHeight: 1,
-              padding: "4px 6px",
-              transition: "color 0.12s ease",
-            }}
-          >
-            ×
-          </button>
+          <button className="drm-close-btn" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: "22px", lineHeight: 1, padding: "4px 6px", transition: "color 0.12s ease" }}>×</button>
         </div>
 
-        {/* ── Scrollable Body ── */}
-        <div style={{
-          overflowY:  "auto",
-          flex:       1,
-          padding:    "20px",
-          display:    "flex",
-          flexDirection: "column",
-          gap:        "20px",
-        }}>
+        {/* Scrollable Body */}
+        <div style={{ overflowY: "auto", flex: 1, padding: "20px", display: "flex", flexDirection: "column", gap: "20px" }}>
 
-          {/* Score summary strip */}
-          <div style={{
-            display: "flex", gap: "10px", flexWrap: "wrap",
-          }}>
-            {/* Fit score chip */}
-            <div style={{
-              display: "flex", flexDirection: "column", alignItems: "center",
-              padding: "12px 18px",
-              backgroundColor: T.bgCard, border: `1px solid ${T.border}`,
-              borderRadius: T.radius, flex: "1 1 90px",
-            }}>
-              <span style={{
-                fontFamily: T.fontMono, fontWeight: 700,
-                fontSize: "28px", lineHeight: 1,
-                color: record.fitScore >= 75 ? T.greenLight
-                     : record.fitScore >= 55 ? T.amberLight
-                     : T.redLight,
-              }}>
-                {record.fitScore}
-              </span>
-              <span style={{
-                fontSize: "10px", fontFamily: T.fontMono,
-                color: T.textMuted, marginTop: "4px", letterSpacing: "0.08em",
-              }}>
-                FIT SCORE / {scoreMax}
-              </span>
+          {/* Score strip */}
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+            {/* Fit score */}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "12px 18px", backgroundColor: T.bgCard, border: `1px solid ${T.border}`, borderRadius: T.radius, flex: "1 1 90px" }}>
+              <span style={{ fontFamily: T.fontMono, fontWeight: 700, fontSize: "28px", lineHeight: 1, color: record.fitScore >= 75 ? T.greenLight : record.fitScore >= 55 ? T.amberLight : T.redLight }}>{record.fitScore}</span>
+              <span style={{ fontSize: "10px", fontFamily: T.fontMono, color: T.textMuted, marginTop: "4px", letterSpacing: "0.08em" }}>FIT SCORE / {scoreMax}</span>
             </div>
-
-            {/* Eligibility status chip */}
-            <div style={{
-              display: "flex", flexDirection: "column", alignItems: "center",
-              justifyContent: "center",
-              padding: "12px 18px",
-              backgroundColor: record.eligibilityStatus === "ELIGIBLE" ? T.greenBg
-                             : record.eligibilityStatus === "CONDITIONAL" ? T.amberBg
-                             : T.redBg,
-              border: `1px solid ${
-                record.eligibilityStatus === "ELIGIBLE" ? T.greenBorder
-                : record.eligibilityStatus === "CONDITIONAL" ? T.amberBorder
-                : T.redBorder}`,
-              borderRadius: T.radius, flex: "1 1 90px",
-            }}>
-              <span style={{
-                fontFamily: T.fontMono, fontWeight: 700,
-                fontSize: "13px", letterSpacing: "0.07em",
-                color: record.eligibilityStatus === "ELIGIBLE" ? T.greenLight
-                     : record.eligibilityStatus === "CONDITIONAL" ? T.amberLight
-                     : T.redLight,
-              }}>
-                {record.eligibilityStatus}
-              </span>
-              <span style={{
-                fontSize: "10px", fontFamily: T.fontMono,
-                color: T.textMuted, marginTop: "4px", letterSpacing: "0.06em",
-              }}>
-                ELIGIBILITY
-              </span>
+            {/* Eligibility */}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "12px 18px", backgroundColor: record.eligibilityStatus === "ELIGIBLE" ? T.greenBg : record.eligibilityStatus === "CONDITIONAL" ? T.amberBg : T.redBg, border: `1px solid ${record.eligibilityStatus === "ELIGIBLE" ? T.greenBorder : record.eligibilityStatus === "CONDITIONAL" ? T.amberBorder : T.redBorder}`, borderRadius: T.radius, flex: "1 1 90px" }}>
+              <span style={{ fontFamily: T.fontMono, fontWeight: 700, fontSize: "13px", letterSpacing: "0.07em", color: record.eligibilityStatus === "ELIGIBLE" ? T.greenLight : record.eligibilityStatus === "CONDITIONAL" ? T.amberLight : T.redLight }}>{record.eligibilityStatus}</span>
+              <span style={{ fontSize: "10px", fontFamily: T.fontMono, color: T.textMuted, marginTop: "4px", letterSpacing: "0.06em" }}>ELIGIBILITY</span>
             </div>
-
-            {/* Overlay risk chip */}
-            <div style={{
-              display: "flex", flexDirection: "column", alignItems: "center",
-              justifyContent: "center",
-              padding: "12px 18px",
-              backgroundColor: riskCfg.bg, border: `1px solid ${riskCfg.border}`,
-              borderRadius: T.radius, flex: "1 1 90px",
-            }}>
-              <span style={{
-                fontFamily: T.fontMono, fontWeight: 700,
-                fontSize: "13px", letterSpacing: "0.07em",
-                color: riskCfg.color,
-              }}>
-                {record.overlayRisk}
-              </span>
-              <span style={{
-                fontSize: "10px", fontFamily: T.fontMono,
-                color: T.textMuted, marginTop: "4px", letterSpacing: "0.06em",
-              }}>
-                OVERLAY RISK
-              </span>
+            {/* Overlay risk */}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "12px 18px", backgroundColor: riskCfg.bg, border: `1px solid ${riskCfg.border}`, borderRadius: T.radius, flex: "1 1 90px" }}>
+              <span style={{ fontFamily: T.fontMono, fontWeight: 700, fontSize: "13px", letterSpacing: "0.07em", color: riskCfg.color }}>{record.overlayRisk}</span>
+              <span style={{ fontSize: "10px", fontFamily: T.fontMono, color: T.textMuted, marginTop: "4px", letterSpacing: "0.06em" }}>OVERLAY RISK</span>
             </div>
-
-            {/* Confidence chip */}
-            <div style={{
-              display: "flex", flexDirection: "column", alignItems: "center",
-              justifyContent: "center",
-              padding: "12px 18px",
-              backgroundColor: T.bgCard, border: `1px solid ${T.border}`,
-              borderRadius: T.radius, flex: "1 1 90px",
-            }}>
-              <span style={{
-                fontFamily: T.fontMono, fontWeight: 700,
-                fontSize: "28px", lineHeight: 1,
-                color: confidencePct >= 85 ? T.greenLight
-                     : confidencePct >= 60 ? T.amberLight
-                     : T.redLight,
-              }}>
-                {confidencePct}%
-              </span>
-              <span style={{
-                fontSize: "10px", fontFamily: T.fontMono,
-                color: T.textMuted, marginTop: "4px", letterSpacing: "0.08em",
-              }}>
-                CONFIDENCE
-              </span>
+            {/* Confidence */}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "12px 18px", backgroundColor: T.bgCard, border: `1px solid ${T.border}`, borderRadius: T.radius, flex: "1 1 90px" }}>
+              <span style={{ fontFamily: T.fontMono, fontWeight: 700, fontSize: "28px", lineHeight: 1, color: confidencePct >= 85 ? T.greenLight : confidencePct >= 60 ? T.amberLight : T.redLight }}>{confidencePct}%</span>
+              <span style={{ fontSize: "10px", fontFamily: T.fontMono, color: T.textMuted, marginTop: "4px", letterSpacing: "0.08em" }}>CONFIDENCE</span>
             </div>
           </div>
 
-          {/* Selection Details */}
+          {/* Selection */}
           <ModalSection title="Selection">
             <FieldRow label="Lender / Profile" value={record.profileName} />
             <FieldRow label="Program"          value={result?.program} mono />
             <FieldRow label="Tier"             value={record.tier} />
             <FieldRow label="Tier Basis"       value={record.tierBasis} mono />
-            <FieldRow label="Data Source"      value={record.dataSource}
-              valueColor={isPlaceholder ? T.amberLight : T.greenLight} mono />
+            <FieldRow label="Data Source"      value={record.dataSource} valueColor={isPlaceholder ? T.amberLight : T.greenLight} mono />
             <FieldRow label="Ruleset Version"  value={`v${record.rulesetVersion ?? 0}`} mono />
             <FieldRow label="Guideline Ref"    value={record.guidelineVersionRef} mono />
           </ModalSection>
 
           {/* Scenario Snapshot */}
           <ModalSection title="Scenario Snapshot (sealed at selection)">
-            {scoreRows.map((row, i) => (
-              <FieldRow key={i} label={row.label} value={row.value} mono={row.mono} />
-            ))}
+            {scoreRows.map((row, i) => <FieldRow key={i} label={row.label} value={row.value} mono={row.mono} />)}
           </ModalSection>
 
           {/* Eligibility Factors */}
@@ -464,22 +269,8 @@ export function DecisionRecordModal({ record, result, saved, saving, onSave, onC
             <ModalSection title="Eligibility Factors">
               <div style={{ paddingTop: "8px", display: "flex", flexDirection: "column", gap: "5px" }}>
                 {record.reasonsSnapshot.map((r, i) => (
-                  <div key={i} style={{
-                    display: "flex", alignItems: "flex-start", gap: "8px",
-                    fontSize: "12px", color: T.textSecondary,
-                    fontFamily: T.fontBody, lineHeight: "1.4",
-                    padding: "5px 8px",
-                    backgroundColor: r.startsWith("⚠️") ? T.amberBg : T.bgCard,
-                    border: `1px solid ${r.startsWith("⚠️") ? T.amberBorder : T.border}`,
-                    borderRadius: T.radiusSm,
-                  }}>
-                    <span style={{
-                      flexShrink: 0, marginTop: "1px",
-                      color: r.startsWith("⚠️") ? T.amberLight : T.greenLight,
-                      fontSize: "11px",
-                    }}>
-                      {r.startsWith("⚠️") ? "⚠" : "✓"}
-                    </span>
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "12px", color: T.textSecondary, fontFamily: T.fontBody, lineHeight: "1.4", padding: "5px 8px", backgroundColor: r.startsWith("⚠️") ? T.amberBg : T.bgCard, border: `1px solid ${r.startsWith("⚠️") ? T.amberBorder : T.border}`, borderRadius: T.radiusSm }}>
+                    <span style={{ flexShrink: 0, marginTop: "1px", color: r.startsWith("⚠️") ? T.amberLight : T.greenLight, fontSize: "11px" }}>{r.startsWith("⚠️") ? "⚠" : "✓"}</span>
                     {r.startsWith("⚠️") ? r.replace("⚠️ ", "") : r}
                   </div>
                 ))}
@@ -487,18 +278,10 @@ export function DecisionRecordModal({ record, result, saved, saving, onSave, onC
             </ModalSection>
           )}
 
-          {/* Narrative snapshot */}
+          {/* Narrative */}
           {record.narrativeSnapshot && (
             <ModalSection title="Why This Lender — Narrative (at time of selection)">
-              <div style={{
-                padding: "12px 14px", marginTop: "8px",
-                backgroundColor: T.blueBg,
-                border: `1px solid ${T.blueBorder}`,
-                borderLeft: `3px solid #1d6fa4`,
-                borderRadius: T.radiusSm,
-                fontSize: "13px", color: T.textSecondary,
-                fontFamily: T.fontBody, lineHeight: "1.55",
-              }}>
+              <div style={{ padding: "12px 14px", marginTop: "8px", backgroundColor: T.blueBg, border: `1px solid ${T.blueBorder}`, borderLeft: `3px solid #1d6fa4`, borderRadius: T.radiusSm, fontSize: "13px", color: T.textSecondary, fontFamily: T.fontBody, lineHeight: "1.55" }}>
                 {record.narrativeSnapshot}
               </div>
             </ModalSection>
@@ -507,15 +290,7 @@ export function DecisionRecordModal({ record, result, saved, saving, onSave, onC
           {/* Placeholder disclaimer */}
           {isPlaceholder && record.placeholderDisclaimer && (
             <ModalSection title="Placeholder Disclaimer">
-              <div style={{
-                padding: "10px 12px", marginTop: "8px",
-                backgroundColor: T.amberBg,
-                border: `1px solid ${T.amberBorder}`,
-                borderRadius: T.radiusSm,
-                fontSize: "11px", color: T.textAmber,
-                fontFamily: T.fontBody, lineHeight: "1.5",
-                fontStyle: "italic",
-              }}>
+              <div style={{ padding: "10px 12px", marginTop: "8px", backgroundColor: T.amberBg, border: `1px solid ${T.amberBorder}`, borderRadius: T.radiusSm, fontSize: "11px", color: T.textAmber, fontFamily: T.fontBody, lineHeight: "1.5", fontStyle: "italic" }}>
                 {record.placeholderDisclaimer}
               </div>
             </ModalSection>
@@ -523,117 +298,31 @@ export function DecisionRecordModal({ record, result, saved, saving, onSave, onC
 
           {/* Save confirmation */}
           {saved && (
-            <div style={{
-              display: "flex", alignItems: "center", gap: "10px",
-              padding: "12px 16px",
-              backgroundColor: T.greenBg,
-              border: `1px solid ${T.greenBorder}`,
-              borderRadius: T.radius,
-              fontSize: "13px", color: T.textGreen,
-              fontFamily: T.fontBody,
-            }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 16px", backgroundColor: T.greenBg, border: `1px solid ${T.greenBorder}`, borderRadius: T.radius, fontSize: "13px", color: T.textGreen, fontFamily: T.fontBody }}>
               <span style={{ fontSize: "16px" }}>✓</span>
               Decision Record saved to file. It will appear in this loan's Decision Log.
             </div>
           )}
+        </div>
 
-        </div>{/* /scrollable body */}
-
-        {/* ── Footer Actions ── */}
-        <div style={{
-          padding:      "14px 20px",
-          borderTop:    `1px solid ${T.border}`,
-          display:      "flex",
-          alignItems:   "center",
-          gap:          "10px",
-          flexShrink:   0,
-          backgroundColor: T.bgCard,
-          flexWrap:     "wrap",
-        }}>
-          {/* Copy */}
-          <button
-            className="drm-copy-btn"
-            onClick={handleCopy}
-            style={{
-              padding:         "8px 16px",
-              backgroundColor: "transparent",
-              color:           copied ? T.textGreen : T.textSecondary,
-              border:          `1px solid ${copied ? T.greenBorder : T.borderLight}`,
-              borderRadius:    T.radius,
-              fontFamily:      T.fontBody,
-              fontWeight:      500,
-              fontSize:        "13px",
-              cursor:          "pointer",
-              transition:      "all 0.15s ease",
-              display:         "flex",
-              alignItems:      "center",
-              gap:             "6px",
-            }}
-          >
+        {/* Footer */}
+        <div style={{ padding: "14px 20px", borderTop: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: "10px", flexShrink: 0, backgroundColor: T.bgCard, flexWrap: "wrap" }}>
+          <button className="drm-copy-btn" onClick={handleCopy} style={{ padding: "8px 16px", backgroundColor: "transparent", color: copied ? T.textGreen : T.textSecondary, border: `1px solid ${copied ? T.greenBorder : T.borderLight}`, borderRadius: T.radius, fontFamily: T.fontBody, fontWeight: 500, fontSize: "13px", cursor: "pointer", transition: "all 0.15s ease", display: "flex", alignItems: "center", gap: "6px" }}>
             {copied ? "✓ Copied" : "⎘ Copy Summary"}
           </button>
-
           <div style={{ flex: 1 }} />
-
-          {/* Close */}
-          <button
-            onClick={onClose}
-            style={{
-              padding:         "8px 16px",
-              backgroundColor: "transparent",
-              color:           T.textSecondary,
-              border:          `1px solid ${T.borderLight}`,
-              borderRadius:    T.radius,
-              fontFamily:      T.fontBody,
-              fontSize:        "13px",
-              cursor:          "pointer",
-            }}
-          >
+          <button onClick={onClose} style={{ padding: "8px 16px", backgroundColor: "transparent", color: T.textSecondary, border: `1px solid ${T.borderLight}`, borderRadius: T.radius, fontFamily: T.fontBody, fontSize: "13px", cursor: "pointer" }}>
             Close
           </button>
-
-          {/* Save */}
           {!saved && (
-            <button
-              className="drm-save-btn"
-              disabled={saving}
-              onClick={() => onSave(record)}
-              style={{
-                padding:         "8px 20px",
-                backgroundColor: saving ? T.amberBg : T.amber,
-                color:           saving ? T.amberLight : T.bg,
-                border:          `1px solid ${T.amberBorder}`,
-                borderRadius:    T.radius,
-                fontFamily:      T.fontDisplay,
-                fontWeight:      700,
-                fontSize:        "13px",
-                cursor:          saving ? "not-allowed" : "pointer",
-                transition:      "background-color 0.15s ease",
-                display:         "flex",
-                alignItems:      "center",
-                gap:             "7px",
-                letterSpacing:   "-0.2px",
-              }}
-            >
+            <button className="drm-save-btn" disabled={saving} onClick={() => onSave(record)} style={{ padding: "8px 20px", backgroundColor: saving ? T.amberBg : T.amber, color: saving ? T.amberLight : T.bg, border: `1px solid ${T.amberBorder}`, borderRadius: T.radius, fontFamily: T.fontDisplay, fontWeight: 700, fontSize: "13px", cursor: saving ? "not-allowed" : "pointer", transition: "background-color 0.15s ease", display: "flex", alignItems: "center", gap: "7px", letterSpacing: "-0.2px" }}>
               {saving ? (
-                <>
-                  <div style={{
-                    width: "12px", height: "12px",
-                    border: `2px solid ${T.amberBorder}`,
-                    borderTop: `2px solid ${T.amberLight}`,
-                    borderRadius: "50%",
-                    animation: "spin 0.7s linear infinite",
-                  }} />
-                  Saving…
-                </>
-              ) : (
-                <>📌 Save Decision Record</>
-              )}
+                <><div style={{ width: "12px", height: "12px", border: `2px solid ${T.amberBorder}`, borderTop: `2px solid ${T.amberLight}`, borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />Saving…</>
+              ) : <>📌 Save Decision Record</>}
             </button>
           )}
         </div>
-
-      </div>{/* /modal */}
+      </div>
     </>
   );
 }
