@@ -381,3 +381,5 @@ exports.retryScenarioShare = onCall(async (request) => {
 }); 
 const { lockDecisionRecord } = require('./src/lockDecisionRecord.cjs'); 
 exports.lockDecisionRecord = lockDecisionRecord; 
+const { respondToScenarioShare } = require('./src/respondToScenarioShare.cjs');
+exports.respondToScenarioShare = respondToScenarioShare;

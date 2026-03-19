@@ -10,6 +10,7 @@ import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
 import AEShareForm from '../components/lenderMatch/AEShareForm';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
 // ── CONSTANTS ────────────────────────────────────────────────────────────────
 const APPROVAL_STATES = { APPROVED: 'approved', REQUESTED: 'requested', UNKNOWN: 'unknown' };
@@ -33,7 +34,6 @@ export default function DPAIntelligence() {
   const navigate = useNavigate();
   const auth = getAuth();
 
-  // ── Scenario from URL params ────────────────────────────────────────────
   const scenarioId = searchParams.get('scenarioId') || '';
   const scenario = useMemo(() => ({
     scenarioId,
@@ -51,13 +51,12 @@ export default function DPAIntelligence() {
     annualIncome:   parseFloat(searchParams.get('annualIncome'))   || 0,
     householdSize:  parseInt(searchParams.get('householdSize'))    || 1,
     firstTimeBuyer: searchParams.get('firstTimeBuyer') === 'true',
-    backendDTI:     parseFloat(searchParams.get('backendDTI'))     || 0,
+    backendDTI:     (() => { const v = parseFloat(searchParams.get('backendDTI')) || 0; return v > 1 ? v / 100 : v; })(),
     occupancy:      searchParams.get('occupancy')       || 'primary',
     lenderId:       searchParams.get('lenderId')        || '',
     lenderName:     searchParams.get('lenderName')      || '',
   }), [searchParams]);
 
-  // ── Firestore lender fallback ────────────────────────────────────────────
   const [firestoreLenderId, setFirestoreLenderId]     = useState('');
   const [firestoreLenderName, setFirestoreLenderName] = useState('');
 
@@ -78,9 +77,8 @@ export default function DPAIntelligence() {
   const effectiveLenderId   = scenario.lenderId   || firestoreLenderId;
   const effectiveLenderName = scenario.lenderName || firestoreLenderName;
 
-  // ── State ────────────────────────────────────────────────────────────────
   const [brokerOnly, setBrokerOnly]                   = useState(true);
-  const [fthbOverride, setFthbOverride]               = useState(null); // null = use scenario value
+  const [fthbOverride, setFthbOverride]               = useState(null);
   const [hasRun, setHasRun]                           = useState(false);
   const [isRunning, setIsRunning]                     = useState(false);
   const [results, setResults]                         = useState([]);
@@ -91,16 +89,12 @@ export default function DPAIntelligence() {
   const [haikusLoading, setHaikusLoading]             = useState(false);
   const [haikus, setHaikus]                           = useState({});
   const [showFailDetails, setShowFailDetails]         = useState({});
+  const [aeShareModal, setAeShareModal]               = useState(null);
+  const [aeSending, setAeSending]                     = useState(false);
+  const [aeSent, setAeSent]                           = useState(false);
 
-  // AE Share Modal state
-  const [aeShareModal, setAeShareModal] = useState(null);
-  const [aeSending, setAeSending]       = useState(false);
-  const [aeSent, setAeSent]             = useState(false);
-
-  // Decision Record
   const { reportFindings } = useDecisionRecord(scenarioId);
 
-  // ── Per-LO approval records ──────────────────────────────────────────────
   useEffect(() => {
     if (!effectiveLenderId || !auth.currentUser) return;
     const q = query(
@@ -115,17 +109,14 @@ export default function DPAIntelligence() {
     }).catch(e => console.error('per-LO approval load:', e));
   }, [effectiveLenderId, auth.currentUser]);
 
-  // ── Effective FTHB value ─────────────────────────────────────────────────
   const effectiveFthb = fthbOverride ?? scenario.firstTimeBuyer;
 
-  // ── Run DPA Search ────────────────────────────────────────────────────────
   const handleRunSearch = async () => {
     setIsRunning(true);
     setHasRun(false);
     setHaikus({});
     setSelectedProgram(null);
 
-    // Step 1: Check brokerage approval
     let newApprovalMap = {};
     try {
       const allSnap = await getDocs(collection(db, 'lenderProfiles'));
@@ -137,7 +128,6 @@ export default function DPAIntelligence() {
       console.error('[DPA] lenderProfiles read failed:', e);
     }
 
-    // Step 2: Evaluate programs
     await new Promise(r => setTimeout(r, 800));
 
     const pool = brokerOnly ? DPA_PROGRAMS.filter(p => p.broker_eligible) : DPA_PROGRAMS;
@@ -153,7 +143,6 @@ export default function DPAIntelligence() {
     setHasRun(true);
     setIsRunning(false);
 
-    // Auto-log top 3 PASS programs to Decision Record
     const top3 = evaluated.filter(r => r.evaluation.status === 'PASS').slice(0, 3);
     if (top3.length > 0 && scenarioId) {
       reportFindings({
@@ -170,16 +159,13 @@ export default function DPAIntelligence() {
       });
     }
 
-    // Fire Haiku summaries for PASS/CONDITIONAL programs
     const passPrograms = evaluated.filter(r => r.evaluation.status !== 'FAIL').slice(0, 6);
     if (passPrograms.length > 0) generateHaikus(passPrograms);
   };
 
-  // ── Haiku summaries via Claude ────────────────────────────────────────────
   const generateHaikus = async (programs) => {
     setHaikusLoading(true);
     const results = {};
-
     await Promise.all(programs.map(async ({ program, evaluation }) => {
       try {
         const prompt = `You are a mortgage loan officer assistant. Write exactly ONE sentence (under 25 words) summarizing this DPA program result for the loan officer. Be specific about amount, type, and the key eligibility reason. No preamble.
@@ -211,12 +197,10 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
         results[program.id] = '';
       }
     }));
-
     setHaikus(results);
     setHaikusLoading(false);
   };
 
-  // ── AE Share Modal ────────────────────────────────────────────────────────
   const handleOpenAeModal = useCallback((program, evaluation) => {
     setAeSent(false);
     setAeSending(false);
@@ -232,7 +216,6 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
   const handleAeSend = useCallback(async (emails, shareType, message) => {
     if (!aeShareModal || !auth.currentUser) return;
     const { program, evaluation } = aeShareModal;
-
     setAeSending(true);
     try {
       const functions = getFunctions();
@@ -259,7 +242,6 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
           programStatus: evaluation.status,
         },
       });
-
       if (scenario.lenderId) {
         await addDoc(collection(db, 'dpa_lender_approvals'), {
           lo_id:          auth.currentUser.uid,
@@ -274,7 +256,6 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
         });
         setApprovalMap(prev => ({ ...prev, [program.id]: APPROVAL_STATES.REQUESTED }));
       }
-
       setAeSent(true);
       setTimeout(() => handleCloseAeModal(), 2000);
     } catch (err) {
@@ -301,7 +282,6 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
     programStatus: evaluation.status,
   });
 
-  // ── Computed display data ─────────────────────────────────────────────────
   const passCount = results.filter(r => r.evaluation.status === 'PASS').length;
   const condCount = results.filter(r => r.evaluation.status === 'CONDITIONAL').length;
   const failCount = results.filter(r => r.evaluation.status === 'FAIL').length;
@@ -309,7 +289,6 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
   const borrowerName = [scenario.firstName, scenario.lastName].filter(Boolean).join(' ') || 'No borrower selected';
   const addressLine  = [scenario.streetAddress, scenario.city, scenario.state, scenario.zipCode].filter(Boolean).join(', ');
 
-  // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
 
@@ -329,7 +308,7 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
               {scenario.creditScore > 0 && <span>FICO <strong className="text-white">{scenario.creditScore}</strong></span>}
               {scenario.loanType     && <span>Loan <strong className="text-white">{scenario.loanType}</strong></span>}
               {scenario.purchasePrice > 0 && <span>Price <strong className="text-white">${scenario.purchasePrice.toLocaleString()}</strong></span>}
-              {scenario.backendDTI > 0 && <span>DTI <strong className="text-white">{(scenario.backendDTI * 100).toFixed(1)}%</strong></span>}
+              {scenario.backendDTI > 0 && <span>DTI <strong className="text-white">{scenario.backendDTI.toFixed(1)}%</strong></span>}
               {scenario.householdSize > 0 && <span>HH <strong className="text-white">{scenario.householdSize}</strong></span>}
               {scenario.annualIncome > 0 && <span>Income <strong className="text-white">${scenario.annualIncome.toLocaleString()}</strong></span>}
               <span className={effectiveFthb ? 'text-emerald-300 font-semibold' : 'text-blue-200'}>
@@ -346,9 +325,7 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
 
-            {/* Left toggles */}
             <div className="flex flex-col gap-3">
-
               {/* Broker Only Toggle */}
               <div className="flex items-center gap-3">
                 <button
@@ -501,12 +478,8 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
           <div className="relative w-full max-w-lg mx-4 bg-[#0d1117] rounded-2xl shadow-2xl overflow-hidden border border-[#21262d]">
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#21262d]">
               <div>
-                <p className="text-[11px] font-semibold text-[#8b949e] uppercase tracking-widest mb-0.5">
-                  DPA Approval Request
-                </p>
-                <h2 className="text-white font-bold text-sm leading-snug">
-                  {aeShareModal.program.program_name}
-                </h2>
+                <p className="text-[11px] font-semibold text-[#8b949e] uppercase tracking-widest mb-0.5">DPA Approval Request</p>
+                <h2 className="text-white font-bold text-sm leading-snug">{aeShareModal.program.program_name}</h2>
               </div>
               <button onClick={handleCloseAeModal} className="text-[#8b949e] hover:text-white transition-colors">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -523,6 +496,9 @@ ${evaluation.warnings?.length ? 'Warning: ' + evaluation.warnings[0] : ''}`;
           </div>
         </div>
       )}
+
+      {/* Canonical Sequence Bar */}
+      <CanonicalSequenceBar scenarioId={scenarioId} />
     </div>
   );
 }
@@ -542,8 +518,6 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
 
   return (
     <div className={`bg-white rounded-xl border ${isFail ? 'border-gray-200 opacity-75' : cfg.border} shadow-sm overflow-hidden`}>
-
-      {/* Card Header */}
       <div className={`flex items-start justify-between gap-3 p-4 ${isFail ? '' : cfg.bg}`}>
         <div className="flex items-start gap-3 flex-1 min-w-0">
           <div className={`mt-0.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
@@ -567,7 +541,6 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
         </div>
       </div>
 
-      {/* Haiku Summary */}
       {!isFail && (
         <div className="px-4 py-2 border-t border-gray-100">
           {haikusLoading && !haiku ? (
@@ -578,7 +551,6 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
         </div>
       )}
 
-      {/* CLTV + Freshness Row */}
       {!isFail && evaluation.cltv_details && (
         <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 flex flex-wrap gap-4 text-xs text-gray-600">
           <span>CLTV: <strong className="text-gray-800">{(evaluation.cltv_details.cltv_with_dpa * 100).toFixed(1)}%</strong></span>
@@ -590,7 +562,6 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
         </div>
       )}
 
-      {/* Warnings */}
       {evaluation.warnings?.length > 0 && (
         <div className="px-4 py-2 bg-amber-50 border-t border-amber-100">
           {evaluation.warnings.map((w, i) => (
@@ -599,7 +570,6 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
         </div>
       )}
 
-      {/* Fail Reasons */}
       {isFail && (
         <div className="px-4 py-2 border-t border-gray-100">
           <button onClick={onToggleFailDetail} className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1">
@@ -618,15 +588,12 @@ function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState,
         </div>
       )}
 
-      {/* Card Footer */}
       <div className="px-4 py-3 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 flex-wrap">
           <LenderApprovalBadge approvalState={approvalState} lenderName={lenderName} lenderId={lenderId} />
           {!isFail && lenderId && approvalState === 'unknown' && (
-            <button
-              onClick={onRequestApproval}
-              className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1B3A6B] hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full px-2.5 py-1 transition-colors"
-            >
+            <button onClick={onRequestApproval}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1B3A6B] hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full px-2.5 py-1 transition-colors">
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
@@ -657,9 +624,7 @@ function LenderApprovalBadge({ approvalState, lenderName, lenderId }) {
       </span>
     );
   }
-
   const name = lenderName || 'your lender';
-
   if (approvalState === APPROVAL_STATES.APPROVED) {
     return (
       <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-1">
@@ -670,7 +635,6 @@ function LenderApprovalBadge({ approvalState, lenderName, lenderId }) {
       </span>
     );
   }
-
   if (approvalState === APPROVAL_STATES.REQUESTED) {
     return (
       <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1">
@@ -682,7 +646,6 @@ function LenderApprovalBadge({ approvalState, lenderName, lenderId }) {
       </span>
     );
   }
-
   return (
     <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-500 bg-gray-100 border border-gray-200 rounded-full px-2.5 py-1">
       <span className="w-1.5 h-1.5 rounded-full bg-gray-400 inline-block" />
@@ -708,8 +671,6 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-xl bg-white shadow-2xl flex flex-col overflow-hidden">
-
-        {/* Drawer Header */}
         <div className="bg-[#1B3A6B] px-5 py-4 flex items-start justify-between gap-3 flex-shrink-0">
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -726,9 +687,7 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
           </button>
         </div>
 
-        {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
-
           {haiku && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
               <p className="text-xs font-semibold text-blue-700 mb-1">AI Summary</p>
@@ -822,10 +781,8 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
             <div className="flex items-center gap-3 flex-wrap">
               <LenderApprovalBadge approvalState={approvalState} lenderName={lenderName} lenderId="mock" />
               {approvalState === APPROVAL_STATES.UNKNOWN && (
-                <button
-                  onClick={onRequestApproval}
-                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-white bg-[#1B3A6B] hover:bg-blue-800 rounded-lg px-3 py-1.5 transition-colors"
-                >
+                <button onClick={onRequestApproval}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-white bg-[#1B3A6B] hover:bg-blue-800 rounded-lg px-3 py-1.5 transition-colors">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                   </svg>
@@ -834,9 +791,7 @@ function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, 
               )}
             </div>
             {approvalState === APPROVAL_STATES.UNKNOWN && (
-              <p className="text-xs text-gray-400 mt-1.5">
-                Sends program details and scenario to your AE via the AE Share Service.
-              </p>
+              <p className="text-xs text-gray-400 mt-1.5">Sends program details and scenario to your AE via the AE Share Service.</p>
             )}
           </div>
 

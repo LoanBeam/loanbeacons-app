@@ -25,7 +25,7 @@ function buildParams(s) {
                                        : 0),
     householdSize:  s.householdSize                                             || 1,
     firstTimeBuyer: s.firstTimeBuyer                                            || false,
-    backendDTI:     s.backEndDTI      || s.backDti        || s.dtiRatio         || 0,
+    backendDTI:     ((s.backEndDTI || s.backDti || s.dtiRatio || 0) / 100),
     occupancy:      s.occupancy                                                 || 'primary',
     lenderId:       s.lenderId                                                  || '',
     lenderName:     s.lenderName                                                || '',
