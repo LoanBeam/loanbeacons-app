@@ -4,10 +4,11 @@
 //   NEW: scenario={obj} module={{ number, stage, name }}
 //   OLD: moduleTitle="..." moduleNumber="07" scenarioId="..."
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAuth } from 'firebase/auth';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../firebase/config';
 import AEShareForm from './lenderMatch/AEShareForm';
 
 const STAGE_LABELS = {
@@ -64,76 +65,106 @@ const AE_BTN_CSS = `
 `;
 
 export default function ScenarioHeader({
-  // ── NEW pattern ──────────────────────────────────────────────────────────
-  scenario      = null,
-  module        = null,
-  badge         = null,
+  // NEW pattern
+  scenario       = null,
+  module         = null,
+  badge          = null,
   qualifyingScore = null,
   children,
-  // ── OLD pattern (URL-param modules) ──────────────────────────────────────
-  moduleTitle   = '',
-  moduleNumber  = '00',
-  scenarioId    = '',
+  // OLD pattern (URL-param modules)
+  moduleTitle    = '',
+  moduleNumber   = '00',
+  scenarioId     = '',
 }) {
   const navigate = useNavigate();
   const auth     = getAuth();
 
-  // ── Normalise to a single shape ──────────────────────────────────────────
-  const isOldPattern = !scenario && (moduleTitle || scenarioId);
-
+  const isOldPattern     = !scenario && (moduleTitle || scenarioId);
   const resolvedScenario = scenario || (isOldPattern ? { id: scenarioId } : null);
   const resolvedModule   = module   || { number: moduleNumber, stage: 2, name: moduleTitle || 'Module' };
   const resolvedId       = resolvedScenario?.id || scenarioId || '';
 
-  // ── AE Share modal state ─────────────────────────────────────────────────
+  // Inject animation CSS once into document head — prevents layout reflow on re-renders
+  useEffect(() => {
+    const id = 'lb-ae-btn-styles';
+    if (!document.getElementById(id)) {
+      const el = document.createElement('style');
+      el.id = id;
+      el.textContent = AE_BTN_CSS;
+      document.head.appendChild(el);
+    }
+  }, []);
+
+  // AE Share modal state
   const [aeOpen,    setAeOpen]    = useState(false);
   const [aeSending, setAeSending] = useState(false);
   const [aeSent,    setAeSent]    = useState(false);
+  const [aeError,   setAeError]   = useState('');
 
-  const handleOpenAe  = useCallback(() => { setAeSent(false); setAeOpen(true);  }, []);
-  const handleCloseAe = useCallback(() => { setAeOpen(false); setAeSent(false); }, []);
+  const handleOpenAe  = useCallback(() => { setAeSent(false); setAeError(''); setAeOpen(true);  }, []);
+  const handleCloseAe = useCallback(() => { setAeOpen(false); setAeSent(false); setAeError(''); }, []);
 
+  // ── Write to scenarioShares collection ──────────────────────────────────
+  // createScenarioShare Cloud Function is a Firestore onDocumentCreated trigger
+  // so we write the doc directly — Firebase fires the function automatically
   const handleAeSend = useCallback(async (emails, shareType, message) => {
-    if (!resolvedId) return;
+    if (!resolvedId) {
+      setAeError('No scenario selected.');
+      return;
+    }
+
+    const validEmails = emails.filter(e => e && e.includes('@'));
+    if (validEmails.length === 0) {
+      setAeError('Please enter at least one valid AE email address.');
+      return;
+    }
+
     setAeSending(true);
+    setAeError('');
+
     try {
-      const fns         = getFunctions();
-      const createShare = httpsCallable(fns, 'createScenarioShare');
-      const borrower    = scenario
+      const borrowerName = scenario
         ? `${scenario.firstName || ''} ${scenario.lastName || ''}`.trim()
         : '';
-      await createShare({
-        scenarioId:      resolvedId,
-        recipientEmails: emails,
-        shareType,
-        message,
+
+      const propertyAddress = scenario
+        ? [scenario.streetAddress, scenario.city, scenario.state, scenario.zipCode]
+            .filter(Boolean).join(', ')
+        : '';
+
+      // Write to scenarioShares — triggers createScenarioShare Cloud Function
+      await addDoc(collection(db, 'scenarioShares'), {
+        scenarioId:   resolvedId,
+        aeEmails:     validEmails,
+        shareType:    shareType || 'AE_SUPPORT',
+        message:      message   || '',
+        status:       'pending',
+        createdAt:    serverTimestamp(),
         moduleContext: {
           moduleName:      resolvedModule.name,
           moduleNumber:    resolvedModule.number,
-          borrowerName:    borrower,
+          borrowerName,
           loanType:        scenario?.loanType    || '',
           loanAmount:      scenario?.loanAmount  || 0,
           creditScore:     scenario?.creditScore || 0,
-          propertyAddress: scenario
-            ? [scenario.streetAddress, scenario.city, scenario.state, scenario.zipCode]
-                .filter(Boolean).join(', ')
-            : '',
+          propertyAddress,
         },
       });
+
       setAeSent(true);
-      setTimeout(() => handleCloseAe(), 2000);
+      setTimeout(() => handleCloseAe(), 2500);
     } catch (err) {
-      console.error('[ScenarioHeader] AE share failed:', err);
+      console.error('[ScenarioHeader] AE share write failed:', err);
+      setAeError('Failed to send. Please try again.');
     } finally {
       setAeSending(false);
     }
-  }, [auth.currentUser, resolvedId, resolvedModule, scenario, handleCloseAe]);
+  }, [resolvedId, resolvedModule, scenario, handleCloseAe]);
 
-  // ── OLD pattern renders a minimal dark banner ────────────────────────────
+  // ── OLD pattern — compact banner ─────────────────────────────────────────
   if (isOldPattern) {
     return (
       <div className="mb-4">
-        <style>{AE_BTN_CSS}</style>
         <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-2xl px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">
@@ -179,8 +210,12 @@ export default function ScenarioHeader({
                   </svg>
                 </button>
               </div>
-              <AEShareForm onSend={handleAeSend} sending={aeSending} sent={aeSent}
-                moduleContext={{ moduleName: resolvedModule.name, moduleNumber: resolvedModule.number }} />
+              {aeError && (
+                <div className="mx-6 mt-4 bg-red-900/30 border border-red-500/40 rounded-lg px-4 py-2 text-red-300 text-xs">
+                  {aeError}
+                </div>
+              )}
+              <AEShareForm onSend={handleAeSend} sending={aeSending} sent={aeSent} />
             </div>
           </div>
         )}
@@ -207,7 +242,6 @@ export default function ScenarioHeader({
 
   return (
     <div className="mb-6">
-      <style>{AE_BTN_CSS}</style>
 
       {hasMismatch && (
         <div className="bg-red-50 border-l-4 border-red-500 rounded-xl px-5 py-4 mb-3 flex items-start gap-3">
@@ -347,7 +381,9 @@ export default function ScenarioHeader({
           <div className="relative w-full max-w-lg mx-4 bg-[#0d1117] rounded-2xl shadow-2xl overflow-hidden border border-[#21262d]">
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#21262d]">
               <div>
-                <p className="text-[11px] font-semibold text-[#8b949e] uppercase tracking-widest mb-0.5">Share with Account Executive</p>
+                <p className="text-[11px] font-semibold text-[#8b949e] uppercase tracking-widest mb-0.5">
+                  Share with Account Executive
+                </p>
                 <h2 className="text-white font-bold text-sm">{resolvedModule.name} — {borrowerName}</h2>
               </div>
               <button onClick={handleCloseAe} className="text-[#8b949e] hover:text-white transition-colors">
@@ -356,20 +392,12 @@ export default function ScenarioHeader({
                 </svg>
               </button>
             </div>
-            <AEShareForm
-              onSend={handleAeSend}
-              sending={aeSending}
-              sent={aeSent}
-              moduleContext={{
-                moduleName:      resolvedModule.name,
-                moduleNumber:    resolvedModule.number,
-                borrowerName,
-                loanType:        scenario.loanType    || '',
-                loanAmount:      scenario.loanAmount  || 0,
-                creditScore:     scenario.creditScore || 0,
-                propertyAddress,
-              }}
-            />
+            {aeError && (
+              <div className="mx-6 mt-4 bg-red-900/30 border border-red-500/40 rounded-lg px-4 py-2 text-red-300 text-xs">
+                {aeError}
+              </div>
+            )}
+            <AEShareForm onSend={handleAeSend} sending={aeSending} sent={aeSent} />
           </div>
         </div>
       )}

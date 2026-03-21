@@ -1,4 +1,4 @@
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+﻿const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { onCall, onRequest } = require("firebase-functions/v2/https");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
@@ -12,20 +12,18 @@ const db = getFirestore();
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // HELPER: Build Scenario Snapshot
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function buildScenarioSnapshot(shareDoc) {
   const { scenarioId, userId, aeEmails, shareType, message, moduleContext, dpaContext } = shareDoc;
-
-  if (!scenarioId) throw new Error("scenarioId is required but was empty");
 
   // Fetch scenario
   const scenarioSnap = await db.collection("scenarios").doc(scenarioId).get();
   if (!scenarioSnap.exists) throw new Error("Scenario not found: " + scenarioId);
   const s = scenarioSnap.data();
 
-  // Fetch LO profile — try userId first, then loProfiles, then userProfiles/default
+  // Fetch LO profile â€” try userId first, then loProfiles, then userProfiles/default
   let lo = {};
   if (userId) {
     const loSnap = await db.collection("loProfiles").doc(userId).get();
@@ -53,21 +51,21 @@ async function buildScenarioSnapshot(shareDoc) {
     }
   }
 
-  // Borrower name — support both storage patterns
+  // â”€â”€ Borrower name â€” support both storage patterns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const borrowerName =
     s.borrowerName ||
     (`${s.firstName || ""} ${s.lastName || ""}`.trim()) ||
     s.scenarioName ||
     "Unknown Borrower";
 
-  // Property address — support both storage patterns
+  // â”€â”€ Property address â€” support both storage patterns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const propertyAddress =
     s.propertyAddress ||
     s.subjectPropertyAddress ||
     [s.streetAddress, s.city, s.state, s.zipCode].filter(Boolean).join(", ") ||
     "";
 
-  // Annual income → monthly
+  // â”€â”€ Annual income â†’ monthly â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const monthlyIncome =
     s.monthlyIncome ||
     s.grossMonthlyIncome ||
@@ -82,7 +80,7 @@ async function buildScenarioSnapshot(shareDoc) {
     moduleContext: moduleContext || null,
     dpaContext:    dpaContext    || null,
     lo: {
-      name:    lo.displayName || lo.name || [lo.firstName, lo.lastName].filter(Boolean).join(" ") || "Loan Officer",
+    name:    lo.displayName || lo.name || [lo.firstName, lo.lastName].filter(Boolean).join(' ') || 'Loan Officer',
       email:   lo.email    || "",
       phone:   lo.phone    || "",
       nmls:    lo.nmlsId   || lo.nmls || "",
@@ -109,16 +107,16 @@ async function buildScenarioSnapshot(shareDoc) {
       loanProduct: s.loanProduct || s.loanProgram         || "",
     },
     piti: {
-      principal: s.principalAndInterest || s.piPayment              || "",
-      taxes:     s.monthlyTaxes         || s.propertyTaxMonthly     || "",
+      principal: s.principalAndInterest || s.piPayment           || "",
+      taxes:     s.monthlyTaxes         || s.propertyTaxMonthly  || "",
       insurance: s.monthlyInsurance     || s.hazardInsuranceMonthly || "",
-      hoa:       s.hoaMonthly           || s.monthlyHOA             || "",
-      mip:       s.mipMonthly           || s.monthlyMIP             || "",
-      total:     s.totalHousing         || s.totalPITI              || "",
+      hoa:       s.hoaMonthly           || s.monthlyHOA          || "",
+      mip:       s.mipMonthly           || s.monthlyMIP          || "",
+      total:     s.totalHousing         || s.totalPITI           || "",
     },
     dti: {
-      front: s.frontDti || s.frontEndDTI || s.frontDTI || "",
-      back:  s.backDti  || s.backEndDTI  || s.backDTI  || s.dtiRatio || "",
+      front: s.frontDti    || s.frontEndDTI || s.frontDTI || "",
+      back:  s.backDti     || s.backEndDTI  || s.backDTI  || s.dtiRatio || "",
     },
     intelligence: {
       ausResult:    s.ausResult    || s.ausFindings || "",
@@ -132,9 +130,9 @@ async function buildScenarioSnapshot(shareDoc) {
   };
 }
 
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // HELPER: Build HTML Email
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function buildEmailHtml(snap) {
   const {
     lo, lender, borrower, property, piti, dti, intelligence,
@@ -145,29 +143,24 @@ function buildEmailHtml(snap) {
   const shareTypeLabel = {
     AE_SUPPORT:       "I need AE support on this scenario",
     SCENARIO_REVIEW:  "Please review this scenario for eligibility",
-    FINAL_SUBMISSION: "This is ready — please prepare for submission",
+    FINAL_SUBMISSION: "This is ready â€” please prepare for submission",
   }[shareType] || shareType || "Scenario Share";
 
-  const flag        = (val) => val ? "✅ Yes" : "—";
-  const fmt         = (val) => val || "—";
-  const fmtCurrency = (val) => val ? `$${Number(val).toLocaleString()}` : "—";
-  const fmtPct      = (val) => val ? `${Number(val).toFixed(2)}%` : "—";
+  const flag        = (val) => val ? "âœ… Yes" : "â€”";
+  const fmt         = (val) => val || "â€”";
+  const fmtCurrency = (val) => val ? `$${Number(val).toLocaleString()}` : "â€”";
+  const fmtPct      = (val) => val ? `${Number(val).toFixed(2)}%` : "â€”";
 
-  // Use Firebase hosting URL until loanbeacons.com is live
-  const appBaseUrl  = process.env.APP_BASE_URL || "https://loanbeacon.web.app";
-  const viewUrl     = publicShareToken ? `${appBaseUrl}/ae-share/${publicShareToken}` : "#";
-
+  const viewUrl = `https://loanbeacons.com/ae-share/${publicShareToken}`;
   const replySubject = (dpaContext && dpaContext.programName)
-    ? `Re: ${dpaContext.programName} — ${borrower.name || ""}`
-    : `Re: Loan Scenario — ${borrower.name || ""}`;
-  const replyHref = lo.email
-    ? `mailto:${lo.email}?subject=${encodeURIComponent(replySubject)}`
-    : "#";
+    ? `Re: ${dpaContext.programName} â€” ${borrower.name || ''}`
+    : `Re: Loan Scenario â€” ${borrower.name || ''}`;
+  const replyHref = lo.email ? `mailto:${lo.email}?subject=${encodeURIComponent(replySubject)}` : '#';
 
-  // DPA Program Section (when sent from a program card)
+  // â”€â”€ DPA Program Section (when sent from a program card) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const dpaProgramSection = dpaContext ? `
   <div class="section" style="background:#f0fdf4;border-left:4px solid #16a34a;">
-    <div class="section-title" style="color:#16a34a;">DPA Program — ${fmt(dpaContext.programName)}</div>
+    <div class="section-title" style="color:#16a34a;">DPA Program â€” ${fmt(dpaContext.programName)}</div>
     <div class="grid">
       <div class="field"><div class="label">Program Type</div><div class="value">${fmt(dpaContext.programType)}</div></div>
       <div class="field"><div class="label">DPA Amount</div><div class="value">${fmt(dpaContext.dpaAmount)}</div></div>
@@ -180,19 +173,19 @@ function buildEmailHtml(snap) {
     ${dpaContext.fitReasons && dpaContext.fitReasons.length > 0 ? `
     <div style="margin-top:12px;">
       <div style="font-size:12px;font-weight:bold;color:#166534;margin-bottom:6px;">Why This Program Fits:</div>
-      ${dpaContext.fitReasons.map(r => `<div style="font-size:12px;color:#166534;padding:3px 0;">✓ ${r}</div>`).join("")}
+      ${dpaContext.fitReasons.map(r => `<div style="font-size:12px;color:#166534;padding:3px 0;">âœ“ ${r}</div>`).join("")}
     </div>` : ""}
     ${dpaContext.warnings && dpaContext.warnings.length > 0 ? `
     <div style="margin-top:10px;padding:8px 12px;background:#fffbeb;border-radius:6px;">
-      ${dpaContext.warnings.map(w => `<div style="font-size:12px;color:#d97706;">⚠️ ${w}</div>`).join("")}
+      ${dpaContext.warnings.map(w => `<div style="font-size:12px;color:#d97706;">âš ï¸ ${w}</div>`).join("")}
     </div>` : ""}
   </div>` : "";
 
-  // Module Context Section (when sent from header button)
+  // â”€â”€ Module Context Section (when sent from header button) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const moduleSection = (!dpaContext && moduleContext) ? `
   <div class="section" style="background:#eff6ff;border-left:4px solid #2563eb;">
     <div class="section-title" style="color:#2563eb;">Sent from: ${fmt(moduleContext.moduleName)}</div>
-    <div style="font-size:13px;color:#1e40af;">Module ${fmt(moduleContext.moduleNumber)} — LO is requesting AE review from this analysis module.</div>
+    <div style="font-size:13px;color:#1e40af;">Module ${fmt(moduleContext.moduleNumber)} â€” LO is requesting AE review from this analysis module.</div>
   </div>` : "";
 
   return `
@@ -222,13 +215,13 @@ function buildEmailHtml(snap) {
 <div class="wrapper">
 
   <div class="header">
-    <h1>🏦 LoanBeacons™</h1>
-    <p>Loan Scenario from ${fmt(lo.name)}${lo.company ? ` · ${lo.company}` : ""}</p>
+    <h1>ðŸ¦ LoanBeaconsâ„¢</h1>
+    <p>Loan Scenario from ${fmt(lo.name)}${lo.company ? ` Â· ${lo.company}` : ""}</p>
     <span class="badge">${shareTypeLabel}</span>
   </div>
 
   <div style="background:#161b22;padding:14px 32px;text-align:center;border-bottom:2px solid #f5c842;">
-    <a href="${replyHref}" style="display:inline-flex;align-items:center;gap:8px;background:#f5c842;color:#1a1a2e;padding:11px 28px;border-radius:8px;text-decoration:none;font-weight:800;font-size:14px;">✉ Reply to ${fmt(lo.name)}</a>
+    <a href="${replyHref}" style="display:inline-flex;align-items:center;gap:8px;background:#f5c842;color:#1a1a2e;padding:11px 28px;border-radius:8px;text-decoration:none;font-weight:800;font-size:14px;">&#9993; Reply to ${fmt(lo.name)}</a>
     <p style="font-size:11px;color:#a0aec0;margin:6px 0 0;">${fmt(lo.email)} &middot; ${fmt(lo.phone)}</p>
   </div>
 
@@ -239,10 +232,10 @@ function buildEmailHtml(snap) {
     <div>
       <div style="font-size:10px;font-weight:700;color:#718096;text-transform:uppercase;letter-spacing:.08em;margin-bottom:2px;">Loan Officer</div>
       <div style="font-size:14px;font-weight:700;color:#f5c842;">${fmt(lo.name)}</div>
-      <div style="font-size:12px;color:#a0aec0;">${fmt(lo.company)} · NMLS# ${fmt(lo.nmls)}</div>
+      <div style="font-size:12px;color:#a0aec0;">${fmt(lo.company)} Â· NMLS# ${fmt(lo.nmls)}</div>
     </div>
-    <a href="${replyHref}" style="display:inline-block;background:#f5c842;color:#1a1a2e;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13px;white-space:nowrap;">
-      ✉️ Reply to LO
+    <a href="mailto:${lo.email}?subject=RE: \${borrower?.name || 'Loan Scenario'} â€” LoanBeaconsâ„¢" style="display:inline-block;background:#f5c842;color:#1a1a2e;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13px;white-space:nowrap;">
+      âœ‰ï¸ Reply to LO
     </a>
   </div>
 
@@ -261,7 +254,7 @@ function buildEmailHtml(snap) {
   </div>
 
   <div class="section">
-    <div class="section-title">Property &amp; Loan</div>
+    <div class="section-title">Property & Loan</div>
     <div class="grid">
       <div class="field full"><div class="label">Property Address</div><div class="value">${fmt(property.address)}</div></div>
       <div class="field"><div class="label">Property Value</div><div class="value">${fmtCurrency(property.value)}</div></div>
@@ -275,7 +268,7 @@ function buildEmailHtml(snap) {
   <div class="section">
     <div class="section-title">PITI Breakdown</div>
     <div class="grid">
-      <div class="field"><div class="label">Principal &amp; Interest</div><div class="value">${fmtCurrency(piti.principal)}</div></div>
+      <div class="field"><div class="label">Principal & Interest</div><div class="value">${fmtCurrency(piti.principal)}</div></div>
       <div class="field"><div class="label">Taxes</div><div class="value">${fmtCurrency(piti.taxes)}</div></div>
       <div class="field"><div class="label">Insurance</div><div class="value">${fmtCurrency(piti.insurance)}</div></div>
       <div class="field"><div class="label">HOA</div><div class="value">${fmtCurrency(piti.hoa)}</div></div>
@@ -308,12 +301,12 @@ function buildEmailHtml(snap) {
   </div>
 
   <div class="cta">
-    <a href="${viewUrl}">View Full Scenario Online →</a>
+    <a href="${viewUrl}">View Full Scenario Online â†’</a>
     <p style="font-size:11px;color:#a0aec0;margin-top:12px;">Scenario ID: ${scenarioId}</p>
   </div>
 
   <div class="footer">
-    Sent via LoanBeacons™ · ${new Date().toLocaleDateString()} · <a href="mailto:${lo.email}" style="color:#f5c842;">Reply to LO</a>
+    Sent via LoanBeaconsâ„¢ Â· ${new Date().toLocaleDateString()} Â· <a href="mailto:${lo.email}" style="color:#f5c842;">Reply to LO</a>
   </div>
 
 </div>
@@ -321,9 +314,9 @@ function buildEmailHtml(snap) {
 </html>`;
 }
 
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // FUNCTION 1: createScenarioShare (Firestore trigger)
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.createScenarioShare = onDocumentCreated(
   "scenarioShares/{shareId}",
   async (event) => {
@@ -346,16 +339,14 @@ exports.createScenarioShare = onDocumentCreated(
 
       const emailPromises = shareDoc.aeEmails.map((aeEmail) => {
         const programName = shareDoc.dpaContext?.programName;
-        const lbRef = snapshot.scenarioId
-          ? `[LB-${snapshot.scenarioId.substring(0, 8).toUpperCase()}]`
-          : "";
+        const lbRef = snapshot.scenarioId ? `[LB-${snapshot.scenarioId.substring(0,8).toUpperCase()}]` : "";
         const subject = programName
-          ? `${lbRef} DPA Review Request: ${programName} — ${snapshot.borrower.name} | ${snapshot.lender.name || snapshot.lo.company}`
-          : `${lbRef} Scenario Share: ${snapshot.borrower.name} | ${snapshot.property.loanType || "Loan"} — ${snapshot.lo.name} · ${snapshot.lo.company}`;
+          ? `${lbRef} DPA Review Request: ${programName} â€” ${snapshot.borrower.name} | ${snapshot.lender.name || snapshot.lo.company}`
+          : `${lbRef} Scenario Share: ${snapshot.borrower.name} | ${snapshot.property.loanType || "Loan"} â€” ${snapshot.lo.name} Â· ${snapshot.lo.company}`;
 
         return sgMail.send({
           to:      aeEmail,
-          from:    { email: process.env.SENDGRID_FROM || "noreply@loanbeacons.com", name: "LoanBeacons™" },
+          from:    { email: process.env.SENDGRID_FROM || "noreply@loanbeacons.com", name: "LoanBeaconsâ„¢" },
           replyTo: snapshot.lo.email || undefined,
           subject,
           html:    buildEmailHtml(snapshot),
@@ -382,9 +373,9 @@ exports.createScenarioShare = onDocumentCreated(
   }
 );
 
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // FUNCTION 2: getShareByToken (Public HTTP endpoint)
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.getShareByToken = onRequest(
   { cors: true },
   async (req, res) => {
@@ -401,17 +392,17 @@ exports.getShareByToken = onRequest(
 
       if (snap.empty) return res.status(404).json({ error: "Share not found or not yet sent" });
 
-      const docRef = snap.docs[0];
+      const doc = snap.docs[0];
 
-      await docRef.ref.update({
+      await doc.ref.update({
         viewedAt:  FieldValue.serverTimestamp(),
         viewCount: FieldValue.increment(1),
       });
 
       return res.status(200).json({
-        shareId: docRef.id,
-        ...docRef.data().snapshotPayload,
-        ae_response: docRef.data().ae_response || null,
+        shareId: doc.id,
+        ...doc.data().snapshotPayload,
+        ae_response: doc.data().ae_response || null,
       });
     } catch (err) {
       console.error("getShareByToken error:", err);
@@ -420,9 +411,9 @@ exports.getShareByToken = onRequest(
   }
 );
 
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // FUNCTION 3: retryScenarioShare (Callable)
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.retryScenarioShare = onCall(async (request) => {
   const { shareId } = request.data;
   if (!shareId) throw new Error("shareId is required");
@@ -442,12 +433,11 @@ exports.retryScenarioShare = onCall(async (request) => {
     const emailPromises = shareDoc.aeEmails.map((aeEmail) => {
       const programName = shareDoc.dpaContext?.programName;
       const subject = programName
-        ? `DPA Program Review: ${programName} — ${snapshot.borrower.name} | ${snapshot.lo.name}`
-        : `Loan Scenario from ${snapshot.lo.name} | ${snapshot.property.loanType || "Loan"} — ${snapshot.borrower.name}`;
-
+        ? `DPA Program Review: ${programName} â€” ${snapshot.borrower.name} | ${snapshot.lo.name}`
+        : `Loan Scenario from ${snapshot.lo.name} | ${snapshot.property.loanType || "Loan"} â€” ${snapshot.borrower.name}`;
       return sgMail.send({
         to:      aeEmail,
-        from:    { email: process.env.SENDGRID_FROM || "noreply@loanbeacons.com", name: "LoanBeacons™" },
+        from:    { email: process.env.SENDGRID_FROM || "noreply@loanbeacons.com", name: "LoanBeaconsâ„¢" },
         replyTo: snapshot.lo.email || undefined,
         subject,
         html:    buildEmailHtml(snapshot),
@@ -476,14 +466,14 @@ exports.retryScenarioShare = onCall(async (request) => {
   }
 });
 
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // FUNCTION 4: lockDecisionRecord
-// ---------------------------------------------------------------------------
-const { lockDecisionRecord } = require("./src/lockDecisionRecord.cjs");
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const { lockDecisionRecord } = require('./src/lockDecisionRecord.cjs');
 exports.lockDecisionRecord = lockDecisionRecord;
 
-// ---------------------------------------------------------------------------
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // FUNCTION 5: respondToScenarioShare
-// ---------------------------------------------------------------------------
-const { respondToScenarioShare } = require("./src/respondToScenarioShare.cjs");
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const { respondToScenarioShare } = require('./src/respondToScenarioShare.cjs');
 exports.respondToScenarioShare = respondToScenarioShare;
