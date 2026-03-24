@@ -3,7 +3,7 @@ import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 import Dashboard from './components/Dashboard'
 import ScenarioCreator from './pages/ScenarioCreator'
-import ScenarioList from './pages/ScenarioList'
+import ScenariosPage from './pages/ScenariosPage'
 import ScenarioDetail from './pages/ScenarioDetail'
 import RateBuydownCalculator from './pages/RateBuydownCalculator'
 import MIOptimizer from './pages/MIOptimizer'
@@ -50,7 +50,7 @@ function AppShell() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/scenario-creator" element={<ScenarioCreator />} />
         <Route path="/scenario-creator/:id" element={<ScenarioCreator />} />
-        <Route path="/scenarios" element={<ScenarioList />} />
+        <Route path="/scenarios" element={<ScenariosPage />} />
         <Route path="/scenario/:id" element={<ScenarioDetail />} />
         <Route path="/rate-buydown" element={<RateBuydownCalculator />} />
         <Route path="/mi-optimizer" element={<MIOptimizer />} />

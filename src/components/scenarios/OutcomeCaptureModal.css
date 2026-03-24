@@ -1,0 +1,218 @@
+/* ─── Overlay ─────────────────────────────────────────────────────────────── */
+.ocm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 20px;
+}
+
+/* ─── Modal container ─────────────────────────────────────────────────────── */
+.ocm-modal {
+  background: #ffffff;
+  border: 0.5px solid #d1d1d0;
+  border-radius: 14px;
+  width: 100%;
+  max-width: 460px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.14);
+}
+
+/* ─── Header ──────────────────────────────────────────────────────────────── */
+.ocm-head {
+  padding: 15px 18px;
+  border-bottom: 0.5px solid #e8e8e7;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ocm-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #27500A;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ocm-title::before {
+  content: '✓';
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #639922;
+  color: #EAF3DE;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.ocm-sub {
+  font-size: 12px;
+  color: #888780;
+  margin-top: 3px;
+}
+
+.ocm-x {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 0.5px solid #d1d1d0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  color: #888780;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+.ocm-x:hover { background: #f5f5f4; }
+
+/* ─── Body ────────────────────────────────────────────────────────────────── */
+.ocm-body {
+  padding: 16px 18px;
+}
+
+.ocm-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.ocm-field {
+  margin-bottom: 14px;
+}
+
+.ocm-label {
+  display: block;
+  font-size: 12px;
+  color: #5F5E5A;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.ocm-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  border: 0.5px solid #d1d1d0;
+  border-radius: 8px;
+  background: #fafaf9;
+  color: #2C2C2A;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+.ocm-input:focus { border-color: #1D9E75; }
+
+.ocm-textarea {
+  resize: none;
+  height: 72px;
+  line-height: 1.5;
+}
+
+/* ─── Pill toggles ────────────────────────────────────────────────────────── */
+.ocm-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ocm-pill {
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 0.5px solid #d1d1d0;
+  background: transparent;
+  cursor: pointer;
+  color: #5F5E5A;
+  transition: all 0.12s;
+  font-family: inherit;
+}
+.ocm-pill:hover:not(.on) { background: #f5f5f4; }
+.ocm-pill.on {
+  background: #EAF3DE;
+  border-color: #639922;
+  color: #27500A;
+  font-weight: 500;
+}
+
+/* ─── Star rating ─────────────────────────────────────────────────────────── */
+.ocm-stars {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.ocm-star {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 0.5px solid #d1d1d0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #5F5E5A;
+  transition: all 0.1s;
+  font-family: inherit;
+}
+.ocm-star:hover  { background: #f5f5f4; }
+.ocm-star.on     { background: #EAF3DE; border-color: #639922; color: #639922; }
+
+.ocm-star-label {
+  font-size: 12px;
+  color: #888780;
+  margin-left: 6px;
+}
+
+/* ─── Footer ──────────────────────────────────────────────────────────────── */
+.ocm-foot {
+  padding: 12px 18px;
+  border-top: 0.5px solid #e8e8e7;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ocm-cancel {
+  font-size: 13px;
+  padding: 8px 15px;
+  border-radius: 8px;
+  border: 0.5px solid #d1d1d0;
+  background: transparent;
+  cursor: pointer;
+  color: #5F5E5A;
+  font-family: inherit;
+  transition: background 0.1s;
+}
+.ocm-cancel:hover    { background: #f5f5f4; }
+.ocm-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ocm-confirm {
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 0.5px solid #3B6D11;
+  background: #EAF3DE;
+  color: #27500A;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s;
+}
+.ocm-confirm:hover    { background: #C0DD97; }
+.ocm-confirm:disabled { opacity: 0.6; cursor: not-allowed; }
