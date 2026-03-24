@@ -351,18 +351,23 @@ function ScenarioDetail() {
         <h2 className="text-lg font-bold text-gray-900 mb-1">🚀 What's Next?</h2>
         <p className="text-sm text-gray-500 mb-4">Continue the Canonical Sequence with this scenario pre-loaded.</p>
         <div className="flex flex-wrap gap-3">
-          <a href={`/lender-match?${params}`}       className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏦 Lender Match™</a>
-          <a href={`/aus-rescue?${params}`}          className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🚨 AUS Rescue™</a>
-          <a href={`/dpa-intelligence?${params}`}    className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏠 DPA Intelligence™</a>
-          <a href={`/fha-streamline?${params}`}      className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📋 FHA Streamline™</a>
-          <a href={`/va-irrrl?${params}`}            className="inline-flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🎖️ VA IRRRL™</a>
-          <a href={`/usda-intelligence?${params}`}   className="inline-flex items-center gap-2 bg-lime-600 hover:bg-lime-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🌾 USDA Intelligence™</a>
-          <a href={`/rate-buydown?${params}`}        className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💰 Rate Buydown™</a>
-          <a href={`/arm-structure?${params}`}       className="inline-flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📊 ARM Structure™</a>
-          <a href={`/mi-optimizer?${params}`}        className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🛡️ MI Optimizer™</a>
-          <a href={`/debt-consolidation?${params}`}  className="inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💼 Debt Consolidation™</a>
-          <a href={`/rehab-intelligence?${params}`}  className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🔨 Rehab Intelligence™</a>
-          <a href={savedRecordId ? `/decision-records/${savedRecordId}` : `/decision-records`} className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📋 Decision Record™</a>
+          <a href={`/qualifying-intel?scenarioId=${s.id}`}     className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🎯 Qualifying Intel™</a>
+          <a href={`/income-analyzer?scenarioId=${s.id}`}      className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💼 Income Analysis™</a>
+          <a href={`/asset-analyzer?scenarioId=${s.id}`}       className="inline-flex items-center gap-2 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏦 Asset Analyzer™</a>
+          <a href={`/credit-intel?scenarioId=${s.id}`}         className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📊 Credit Intel™</a>
+          <a href={`/bank-statement-intel?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏛 Bank Statement™</a>
+          <a href={`/lender-match?${params}`}                  className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏅 Lender Match™</a>
+          <a href={`/aus-rescue?${params}`}                    className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🚨 AUS Rescue™</a>
+          <a href={`/dpa-intelligence?${params}`}              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏠 DPA Intelligence™</a>
+          <a href={`/fha-streamline?${params}`}                className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📋 FHA Streamline™</a>
+          <a href={`/va-irrrl?${params}`}                      className="inline-flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🎖️ VA IRRRL™</a>
+          <a href={`/usda-intelligence?${params}`}             className="inline-flex items-center gap-2 bg-lime-600 hover:bg-lime-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🌾 USDA Intelligence™</a>
+          <a href={`/rate-buydown?${params}`}                  className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💰 Rate Buydown™</a>
+          <a href={`/arm-structure?${params}`}                 className="inline-flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📈 ARM Structure™</a>
+          <a href={`/mi-optimizer?${params}`}                  className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🛡️ MI Optimizer™</a>
+          <a href={`/debt-consolidation?${params}`}            className="inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💳 Debt Consolidation™</a>
+          <a href={`/rehab-intelligence?${params}`}            className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🔧 Rehab Intelligence™</a>
+          <a href={savedRecordId ? `/decision-records/${savedRecordId}` : `/decision-records`} className="inline-flex items-center gap-2 bg-slate-700 hover:bg-slate-800 text-white font-semibold px-4 py-2 rounded-lg text-sm">📋 Decision Record™</a>
         </div>
       </div>
     </main>

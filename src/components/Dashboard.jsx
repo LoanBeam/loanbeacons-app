@@ -34,7 +34,7 @@ const modules = {
     },
     {
       id: 'asset-documentation',
-      title: 'Asset Documentation™',
+      title: 'Asset Analyzer™',
       icon: '🏧',
       description: 'Verify and document assets for closing and reserves.',
       badge: null,
