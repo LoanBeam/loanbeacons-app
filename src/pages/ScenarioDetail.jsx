@@ -256,7 +256,8 @@ function ScenarioDetail() {
             <div className="grid grid-cols-1 gap-y-4 mb-4">
               <Field label="Full Address" value={fullAddress || '—'} />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4">
+              <Field label="County" value={s.county || '—'} />
               <Field label="Property Type" value={s.propertyType || '—'} />
               <Field label="Occupancy" value={s.occupancy || '—'} />
             </div>

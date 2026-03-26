@@ -282,6 +282,7 @@ function ScenarioCreator() {
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
   const [zipCode, setZipCode] = useState('');
+  const [county, setCounty] = useState('');
   const [unit, setUnit] = useState('');
   const [censusTract, setCensusTract] = useState(null);
   const [usdaEligibility, setUsdaEligibility] = useState(null);
@@ -466,6 +467,8 @@ function ScenarioCreator() {
     setState(addressData.state || '');
     setZipCode(addressData.zipCode || '');
     setUnit(addressData.unit || '');
+    // Strip " County" suffix — Google Places returns "Gwinnett County" but we store "Gwinnett"
+    setCounty((addressData.county || '').replace(/\s+County$/i, '').trim());
     if (addressData.streetAddress && addressData.city && addressData.state && addressData.zipCode) {
       const tractData = await lookupCensusTract(addressData);
       setCensusTract(tractData);
@@ -634,6 +637,7 @@ function ScenarioCreator() {
         setState(d.state || '');
         setZipCode(d.zipCode || '');
         setUnit(d.unit || '');
+        setCounty((d.county || '').replace(/\s+County$/i, '').trim());
         setCensusTract(d.censusTract || null);
         setPropertyType(d.propertyType || 'Single Family');
         setOccupancy(d.occupancy || 'Primary Residence');
@@ -740,7 +744,7 @@ function ScenarioCreator() {
       interestRate: parseFloat(interestRate),
       term: parseInt(term),
       // Property
-      streetAddress, city, state, zipCode, unit, censusTract,
+      streetAddress, city, state, zipCode, county, unit, censusTract,
       addressVerified: true,
       propertyType, occupancy,
       // PITI
@@ -1705,7 +1709,7 @@ function ScenarioCreator() {
                   <span className="text-xs bg-green-200 text-green-700 px-1.5 py-0.5 rounded-full font-semibold">From MISMO</span>
                 </div>
                 <button type="button"
-                  onClick={() => { setStreetAddress(''); setCity(''); setState(''); setZipCode(''); setUnit(''); setAddrValidation(null); setUsdaEligibility(null); markDirty(); }}
+                  onClick={() => { setStreetAddress(''); setCity(''); setState(''); setZipCode(''); setUnit(''); setCounty(''); setAddrValidation(null); setUsdaEligibility(null); markDirty(); }}
                   className="text-xs text-gray-400 hover:text-red-500 font-medium">Change</button>
               </div>
             )}
@@ -1728,6 +1732,33 @@ function ScenarioCreator() {
                 }
               }}
             />
+
+            {/* County — auto-populated from Google Places */}
+            {(city || county) && (
+              <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">City</label>
+                  <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-700 text-sm">{city || '—'}</div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">State</label>
+                  <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-700 text-sm">{state || '—'}</div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">
+                    County
+                    {county && <span className="ml-1 text-[10px] text-emerald-600 font-normal">auto-filled</span>}
+                  </label>
+                  <input
+                    type="text"
+                    value={county}
+                    onChange={e => { setCounty(e.target.value); markDirty(); }}
+                    placeholder="e.g. Gwinnett"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-300"
+                  />
+                </div>
+              </div>
+            )}
             {addrValidation && <div className="mt-3"><AddressValidationBadge validation={addrValidation} /></div>}
 
             {/* USDA result */}
