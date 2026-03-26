@@ -1,11 +1,21 @@
 /**
  * parseURLA.js
  * LoanBeacons - MISMO 3.4 URLA XML Parser (browser-compatible)
+ * v2 — namespace-safe, multi-borrower support
  */
 
+// Namespace-safe tag getter — handles both namespaced and non-namespaced XML
 function getTag(node, tagName) {
   var el = node.getElementsByTagName(tagName)[0];
+  if (!el) el = node.getElementsByTagNameNS('*', tagName)[0];
   return el ? (el.textContent || '').trim() : '';
+}
+
+// Namespace-safe getAll
+function getTags(node, tagName) {
+  var els = Array.from(node.getElementsByTagName(tagName));
+  if (els.length === 0) els = Array.from(node.getElementsByTagNameNS('*', tagName));
+  return els;
 }
 
 function parseDollar(val) {
@@ -41,10 +51,25 @@ function mapPropertyType(attachment, construction, units, isPUD) {
   return 'Single Family';
 }
 
+function mapCitizenship(mismo) {
+  var map = { USCitizen: 'US_CITIZEN', PermanentResidentAlien: 'PERMANENT_RESIDENT', NonPermanentResidentAlien: 'NON_PERMANENT_RESIDENT', ForeignNational: 'FOREIGN_NATIONAL' };
+  return map[mismo] || 'US_CITIZEN';
+}
+
 function formatPhone(raw) {
   if (!raw) return '';
   var d = raw.replace(/\D/g, '');
   return d.length === 10 ? '(' + d.slice(0,3) + ') ' + d.slice(3,6) + '-' + d.slice(6) : raw;
+}
+
+// Extract name from an INDIVIDUAL element — tries <n>, <NAME>, then direct children
+function extractName(individual) {
+  if (!individual) return { first: '', last: '' };
+  var nEl = getTags(individual, 'n')[0] || getTags(individual, 'NAME')[0];
+  return {
+    first: nEl ? getTag(nEl, 'FirstName') : getTag(individual, 'FirstName'),
+    last:  nEl ? getTag(nEl, 'LastName')  : getTag(individual, 'LastName'),
+  };
 }
 
 export function parseURLA(xmlString) {
@@ -73,19 +98,20 @@ export function parseURLA(xmlString) {
     gseInvestor: '',
     liabilities: [], assets: [], totalAssets: '',
     loFirstName: '', loLastName: '', loNMLS: '', companyName: '',
-    coBorrower: null,
+    coBorrower: null,   // backward-compat
+    coBorrowers: [],    // full array of ALL co-borrowers
   };
 
-  var origSystem = doc.getElementsByTagName('ORIGINATION_SYSTEM')[0];
+  var origSystem = getTags(doc, 'ORIGINATION_SYSTEM')[0];
   if (origSystem) result._importMeta.losName = getTag(origSystem, 'LoanOriginationSystemName');
-  var aboutVersion = doc.getElementsByTagName('ABOUT_VERSION')[0];
+  var aboutVersion = getTags(doc, 'ABOUT_VERSION')[0];
   if (aboutVersion) result._importMeta.fileCreated = getTag(aboutVersion, 'CreatedDatetime').split('T')[0];
-  var loanIdEl = doc.getElementsByTagName('LOAN_IDENTIFIER')[0];
+  var loanIdEl = getTags(doc, 'LOAN_IDENTIFIER')[0];
   if (loanIdEl) result._importMeta.loanNumber = getTag(loanIdEl, 'LoanIdentifier');
 
-  var subjectProp = doc.getElementsByTagName('SUBJECT_PROPERTY')[0];
+  var subjectProp = getTags(doc, 'SUBJECT_PROPERTY')[0];
   if (subjectProp) {
-    var addr = subjectProp.getElementsByTagName('ADDRESS')[0];
+    var addr = getTags(subjectProp, 'ADDRESS')[0];
     if (addr) {
       result.streetAddress = getTag(addr, 'AddressLineText');
       result.city = getTag(addr, 'CityName');
@@ -93,9 +119,9 @@ export function parseURLA(xmlString) {
       result.state = getTag(addr, 'StateCode');
       result.zipCode = getTag(addr, 'PostalCode');
     }
-    var fips = subjectProp.getElementsByTagName('FIPS_INFORMATION')[0];
+    var fips = getTags(subjectProp, 'FIPS_INFORMATION')[0];
     if (fips) { result.fipsState = getTag(fips, 'FIPSStateNumericCode'); result.fipsCounty = getTag(fips, 'FIPSCountyCode'); }
-    var propDetail = subjectProp.getElementsByTagName('PROPERTY_DETAIL')[0];
+    var propDetail = getTags(subjectProp, 'PROPERTY_DETAIL')[0];
     if (propDetail) {
       result.occupancy = mapOccupancy(getTag(propDetail, 'PropertyUsageType'));
       var units = parseInt(getTag(propDetail, 'FinancedUnitCount')) || 1;
@@ -105,12 +131,12 @@ export function parseURLA(xmlString) {
       result.propertyType = mapPropertyType(attachment, conMethod, units, isPUD);
       result.propertyValue = parseDollar(getTag(propDetail, 'PropertyEstimatedValueAmount'));
     }
-    var salesContract = subjectProp.getElementsByTagName('SALES_CONTRACT_DETAIL')[0];
+    var salesContract = getTags(subjectProp, 'SALES_CONTRACT_DETAIL')[0];
     if (salesContract) result.purchasePrice = parseDollar(getTag(salesContract, 'SalesContractAmount'));
     if (!result.purchasePrice && result.propertyValue) result.purchasePrice = result.propertyValue;
   }
 
-  var termsOfLoan = doc.getElementsByTagName('TERMS_OF_LOAN')[0];
+  var termsOfLoan = getTags(doc, 'TERMS_OF_LOAN')[0];
   if (termsOfLoan) {
     result.loanAmount = parseDollar(getTag(termsOfLoan, 'BaseLoanAmount'));
     result.loanPurpose = mapLoanPurpose(getTag(termsOfLoan, 'LoanPurposeType'));
@@ -118,7 +144,7 @@ export function parseURLA(xmlString) {
     result.interestRate = parseRate(getTag(termsOfLoan, 'NoteRatePercent'));
   }
 
-  var amortRule = doc.getElementsByTagName('AMORTIZATION_RULE')[0];
+  var amortRule = getTags(doc, 'AMORTIZATION_RULE')[0];
   if (amortRule) {
     var count = getTag(amortRule, 'LoanAmortizationPeriodCount');
     var ptype = getTag(amortRule, 'LoanAmortizationPeriodType');
@@ -126,17 +152,17 @@ export function parseURLA(xmlString) {
     else if (count && ptype === 'Year') result.term = String(parseInt(count) * 12);
   }
 
-  var urlaDetail = doc.getElementsByTagName('URLA_DETAIL')[0];
+  var urlaDetail = getTags(doc, 'URLA_DETAIL')[0];
   if (urlaDetail) {
     result.ufmipFinanced = parseDollar(getTag(urlaDetail, 'MIAndFundingFeeFinancedAmount'));
     result.ufmipTotal = parseDollar(getTag(urlaDetail, 'MIAndFundingFeeTotalAmount'));
     result.estimatedClosingCosts = parseDollar(getTag(urlaDetail, 'EstimatedClosingCostsAmount'));
   }
 
-  var closingDetail = doc.getElementsByTagName('CLOSING_INFORMATION_DETAIL')[0];
+  var closingDetail = getTags(doc, 'CLOSING_INFORMATION_DETAIL')[0];
   if (closingDetail) result.cashToClose = parseDollar(getTag(closingDetail, 'CashFromBorrowerAtClosingAmount'));
 
-  Array.from(doc.getElementsByTagName('HOUSING_EXPENSE')).forEach(function(exp) {
+  getTags(doc, 'HOUSING_EXPENSE').forEach(function(exp) {
     if (getTag(exp, 'HousingExpenseTimingType') !== 'Proposed') return;
     var amt = getTag(exp, 'HousingExpensePaymentAmount');
     var htype = getTag(exp, 'HousingExpenseType');
@@ -144,21 +170,19 @@ export function parseURLA(xmlString) {
     else if (htype === 'RealEstateTax') result.proposedTaxes = amt;
     else if (htype === 'HomeownersInsurance') result.proposedInsurance = amt;
     else if (htype === 'MIPremium') result.proposedMIP = amt;
-    else if (htype === 'HomeownersAssociationDues') result.proposedHOA = amt;
+    else if (htype === 'HomeownersAssociationDues' || htype === 'HomeownersAssociationDuesAndCondominiumFees') result.proposedHOA = amt;
     else if (htype === 'FloodInsurance') result.proposedFlood = amt;
     else if (htype === 'SecondMortgagePrincipalAndInterest') result.proposedSecond = amt;
   });
 
-  // GSE Investor — from AUS tracking (DU = Fannie, LP = Freddie)
-  var ausTracking = doc.getElementsByTagName('AUTOMATED_UNDERWRITING_SYSTEM')[0];
+  var ausTracking = getTags(doc, 'AUTOMATED_UNDERWRITING_SYSTEM')[0];
   if (ausTracking) {
     var ausType = getTag(ausTracking, 'AutomatedUnderwritingSystemType');
     if (ausType === 'DU' || ausType === 'DesktopUnderwriter') result.gseInvestor = 'FANNIE';
     else if (ausType === 'LP' || ausType === 'LoanProspector' || ausType === 'LoanProductAdvisor') result.gseInvestor = 'FREDDIE';
   }
-  // Fallback: check GSE loan type field
   if (!result.gseInvestor) {
-    var loanProductData = doc.getElementsByTagName('LOAN_PRODUCT_DATA')[0];
+    var loanProductData = getTags(doc, 'LOAN_PRODUCT_DATA')[0];
     if (loanProductData) {
       var gseLoanType = getTag(loanProductData, 'GseLoanType');
       if (gseLoanType === 'FannieMae') result.gseInvestor = 'FANNIE';
@@ -166,109 +190,172 @@ export function parseURLA(xmlString) {
     }
   }
 
-  // Down payment — from SalesContract or calculated
-  var salesContractDetail = doc.getElementsByTagName('SALES_CONTRACT_DETAIL')[0];
+  var salesContractDetail = getTags(doc, 'SALES_CONTRACT_DETAIL')[0];
   if (salesContractDetail) {
     var dpAmt = parseDollar(getTag(salesContractDetail, 'DownPaymentAmount'));
     if (dpAmt) result.downPayment = dpAmt;
     var scAmt = parseDollar(getTag(salesContractDetail, 'SalesContractAmount'));
     if (scAmt) result.purchasePrice = scAmt;
   }
-  // Seller concessions
-  var sellerConc = doc.getElementsByTagName('SELLER_CONCESSION')[0];
+  var sellerConc = getTags(doc, 'SELLER_CONCESSION')[0];
   if (sellerConc) {
     var concAmt = parseDollar(getTag(sellerConc, 'SalesContractSellerConcessionAmount'));
     if (concAmt) result.sellerConcessions = concAmt;
   }
 
-  var borrowerIndex = 0;
-  result.coBorrower = null;
+  // ── BORROWER EXTRACTION ─────────────────────────────────────────────────────
+  // Use PURCHASE_CREDITS as a sanity check — then find all BORROWER elements.
+  // Each <BORROWER> is the direct child of a Borrower <ROLE>.
+  // DOM path up: BORROWER.parentNode = ROLE, .parentNode = ROLES, .parentNode = PARTY
+  var allBorrowerEls = getTags(doc, 'BORROWER');
+  console.log('[parseURLA] Found', allBorrowerEls.length, 'BORROWER elements');
 
-  Array.from(doc.getElementsByTagName('PARTY')).forEach(function(party) {
-    Array.from(party.getElementsByTagName('ROLE')).forEach(function(role) {
-      var roleType = getTag(role, 'PartyRoleType');
-      if (roleType === 'Borrower') {
-        var isCoBorrower = borrowerIndex > 0;
-        borrowerIndex++;
-        var ind = party.getElementsByTagName('INDIVIDUAL')[0];
-        if (ind) {
-          // MISMO 3.4 uses 'NAME' (uppercase) — case-sensitive XML tag
-          var nameEl = ind.getElementsByTagName('NAME')[0];
-          var parsedFirst = nameEl ? getTag(nameEl, 'FirstName') : getTag(ind, 'FirstName');
-          var parsedLast  = nameEl ? getTag(nameEl, 'LastName')  : getTag(ind, 'LastName');
+  var coBorrowersList = [];
 
-          if (!isCoBorrower) {
-            result.firstName = parsedFirst;
-            result.lastName  = parsedLast;
-          } else if (!result.coBorrower) {
-            // Capture first co-borrower
-            result.coBorrower = { firstName: parsedFirst, lastName: parsedLast, monthlyIncome: '' };
-          }
+  allBorrowerEls.forEach(function(borrowerEl, idx) {
+    var isCoBorrower = idx > 0;
 
-          if (!isCoBorrower) {
-            Array.from(ind.getElementsByTagName('CONTACT_POINT')).forEach(function(cp) {
-              var tel = cp.getElementsByTagName('CONTACT_POINT_TELEPHONE')[0];
-              var email = cp.getElementsByTagName('CONTACT_POINT_EMAIL')[0];
-              if (tel) result.borrowerPhone = formatPhone(getTag(tel, 'ContactPointTelephoneValue'));
-              if (email) result.borrowerEmail = getTag(email, 'ContactPointEmailValue');
-            });
-          }
+    // Walk up DOM to find the containing PARTY
+    var roleEl  = borrowerEl.parentNode;
+    var rolesEl = roleEl  ? roleEl.parentNode  : null;
+    var partyEl = rolesEl ? rolesEl.parentNode : null;
+
+    var roleLabel = (roleEl && roleEl.getAttribute) ? (roleEl.getAttribute('xlink:label') || '') : '';
+    console.log('[parseURLA] Borrower', idx, '— roleLabel:', roleLabel, '— partyEl tag:', partyEl ? partyEl.localName : 'null');
+
+    // Get INDIVIDUAL from PARTY
+    var ind = partyEl ? getTags(partyEl, 'INDIVIDUAL')[0] : null;
+    var name = extractName(ind);
+    console.log('[parseURLA] Borrower', idx, '— name:', name.first, name.last);
+
+    // Contact
+    var parsedPhone = '', parsedEmail = '';
+    if (ind) {
+      getTags(ind, 'CONTACT_POINT').forEach(function(cp) {
+        var tel   = getTags(cp, 'CONTACT_POINT_TELEPHONE')[0];
+        var email = getTags(cp, 'CONTACT_POINT_EMAIL')[0];
+        if (tel && !parsedPhone)   parsedPhone = formatPhone(getTag(tel, 'ContactPointTelephoneValue'));
+        if (email && !parsedEmail) parsedEmail = getTag(email, 'ContactPointEmailValue');
+      });
+    }
+
+    // BORROWER_DETAIL
+    var bd  = getTags(borrowerEl, 'BORROWER_DETAIL')[0];
+    var dob = bd ? getTag(bd, 'BorrowerBirthDate') : '';
+
+    // Citizenship
+    var decl = getTags(borrowerEl, 'DECLARATION_DETAIL')[0];
+    var citizenship = mapCitizenship(decl ? getTag(decl, 'CitizenshipResidencyType') : 'USCitizen');
+
+    // Income
+    var totalIncome = 0;
+    getTags(borrowerEl, 'CURRENT_INCOME_ITEM').forEach(function(item) {
+      totalIncome += parseFloat(getTag(item, 'CurrentIncomeMonthlyTotalAmount')) || 0;
+    });
+    console.log('[parseURLA] Borrower', idx, '— income:', totalIncome);
+
+    // Employer
+    var employer = getTags(borrowerEl, 'EMPLOYER')[0];
+    var employerName = '';
+    if (employer) {
+      var leName = getTags(employer, 'LEGAL_ENTITY_DETAIL')[0];
+      if (leName) employerName = getTag(leName, 'FullName');
+    }
+
+    if (!isCoBorrower) {
+      result.firstName     = name.first;
+      result.lastName      = name.last;
+      result.borrowerPhone = parsedPhone;
+      result.borrowerEmail = parsedEmail;
+      result.maritalStatus  = bd ? getTag(bd, 'MaritalStatusType') : '';
+      result.dependentCount = bd ? getTag(bd, 'DependentCount')    : '';
+      result.employerName   = employerName;
+      if (employer) {
+        var empDetail = getTags(employer, 'EMPLOYMENT')[0];
+        if (empDetail) {
+          result.selfEmployed    = getTag(empDetail, 'EmploymentBorrowerSelfEmployedIndicator') === 'true';
+          result.employmentTitle = getTag(empDetail, 'EmploymentPositionDescription');
         }
-        var bd = role.getElementsByTagName('BORROWER_DETAIL')[0];
-        if (bd) { result.maritalStatus = getTag(bd, 'MaritalStatusType'); result.dependentCount = getTag(bd, 'DependentCount'); }
-        var totalIncome = 0;
-        Array.from(role.getElementsByTagName('CURRENT_INCOME_ITEM')).forEach(function(item) {
-          totalIncome += parseFloat(getTag(item, 'CurrentIncomeMonthlyTotalAmount')) || 0;
-        });
-        if (totalIncome > 0) {
-          if (!isCoBorrower) {
-            result.monthlyIncome = String(totalIncome.toFixed(2));
-          } else if (result.coBorrower) {
-            result.coBorrower.monthlyIncome = String(totalIncome.toFixed(2));
-          }
-        }
-        var employer = role.getElementsByTagName('EMPLOYER')[0];
-        if (employer && !isCoBorrower) {
-          var leName = employer.getElementsByTagName('LEGAL_ENTITY_DETAIL')[0];
-          if (leName) result.employerName = getTag(leName, 'FullName');
-          var empDetail = employer.getElementsByTagName('EMPLOYMENT')[0];
-          if (empDetail) {
-            result.selfEmployed = getTag(empDetail, 'EmploymentBorrowerSelfEmployedIndicator') === 'true';
-            result.employmentTitle = getTag(empDetail, 'EmploymentPositionDescription');
-          }
-        }
-        Array.from(party.getElementsByTagName('TAXPAYER_IDENTIFIER')).forEach(function(ti) {
-          if (!isCoBorrower && getTag(ti, 'TaxpayerIdentifierType') === 'SocialSecurityNumber') {
+      }
+      if (totalIncome > 0) result.monthlyIncome = String(totalIncome.toFixed(2));
+      if (partyEl) {
+        getTags(partyEl, 'TAXPAYER_IDENTIFIER').forEach(function(ti) {
+          if (getTag(ti, 'TaxpayerIdentifierType') === 'SocialSecurityNumber') {
             var ssn = getTag(ti, 'TaxpayerIdentifierValue');
             result.ssnPresent = !!(ssn && ssn.replace(/\D/g, '').length >= 9);
           }
         });
       }
+    } else {
+      var cbRecord = {
+        firstName:             name.first,
+        lastName:              name.last,
+        citizenship:           citizenship,
+        dateOfBirth:           dob,
+        monthlyIncome:         totalIncome > 0 ? String(totalIncome.toFixed(2)) : '',
+        employerName:          employerName,
+        phone:                 parsedPhone,
+        email:                 parsedEmail,
+        sharesJointCreditWith: null,
+        _roleLabel:            roleLabel,
+      };
+      coBorrowersList.push(cbRecord);
+      if (!result.coBorrower) {
+        result.coBorrower = { firstName: name.first, lastName: name.last, monthlyIncome: cbRecord.monthlyIncome };
+      }
+    }
+  });
+
+  // Joint credit relationships
+  getTags(doc, 'RELATIONSHIP').forEach(function(rel) {
+    var arc  = (rel.getAttribute && rel.getAttribute('xlink:arcrole')) || '';
+    var from = (rel.getAttribute && rel.getAttribute('xlink:from'))    || '';
+    var to   = (rel.getAttribute && rel.getAttribute('xlink:to'))      || '';
+    if (arc.indexOf('SharesJointCreditReportWith') !== -1) {
+      coBorrowersList.forEach(function(cb) {
+        if (cb._roleLabel === from) cb.sharesJointCreditWith = to;
+        if (cb._roleLabel === to)   cb.sharesJointCreditWith = from;
+      });
+    }
+  });
+
+  result.coBorrowers = coBorrowersList.map(function(cb) {
+    return {
+      firstName: cb.firstName, lastName: cb.lastName,
+      citizenship: cb.citizenship, dateOfBirth: cb.dateOfBirth,
+      monthlyIncome: cb.monthlyIncome, employerName: cb.employerName,
+      phone: cb.phone, email: cb.email,
+      sharesJointCreditWith: cb.sharesJointCreditWith,
+    };
+  });
+  console.log('[parseURLA] coBorrowers extracted:', result.coBorrowers.length, result.coBorrowers.map(function(cb){ return cb.firstName + ' ' + cb.lastName; }));
+
+  // LO and Company
+  getTags(doc, 'PARTY').forEach(function(party) {
+    getTags(party, 'ROLE').forEach(function(role) {
+      var rd = getTags(role, 'ROLE_DETAIL')[0];
+      var roleType = rd ? getTag(rd, 'PartyRoleType') : '';
       if (roleType === 'LoanOriginator') {
-        var ind2 = party.getElementsByTagName('INDIVIDUAL')[0];
-        if (ind2) {
-          var nameEl2 = ind2.getElementsByTagName('NAME')[0];
-          if (nameEl2) { result.loFirstName = getTag(nameEl2, 'FirstName'); result.loLastName = getTag(nameEl2, 'LastName'); }
-          if (!result.loFirstName) result.loFirstName = getTag(ind2, 'FirstName');
-          if (!result.loLastName)  result.loLastName  = getTag(ind2, 'LastName');
-        }
-        Array.from(role.getElementsByTagName('LICENSE')).forEach(function(lic) {
+        var loInd = getTags(party, 'INDIVIDUAL')[0];
+        if (loInd) { var n2 = extractName(loInd); result.loFirstName = n2.first; result.loLastName = n2.last; }
+        getTags(role, 'LICENSE').forEach(function(lic) {
           if (getTag(lic, 'LicenseAuthorityLevelType') === 'Private') result.loNMLS = getTag(lic, 'LicenseIdentifier');
         });
       }
       if (roleType === 'LoanOriginationCompany') {
-        var le = party.getElementsByTagName('LEGAL_ENTITY_DETAIL')[0];
+        var le = getTags(party, 'LEGAL_ENTITY_DETAIL')[0];
         if (le) result.companyName = getTag(le, 'FullName');
       }
     });
   });
 
+  // Liabilities
   var totalDebts = 0;
-  Array.from(doc.getElementsByTagName('LIABILITY')).forEach(function(liab) {
-    var detail = liab.getElementsByTagName('LIABILITY_DETAIL')[0];
+  getTags(doc, 'LIABILITY').forEach(function(liab) {
+    var detail = getTags(liab, 'LIABILITY_DETAIL')[0];
     if (!detail) return;
-    var holderEl = liab.getElementsByTagName('LIABILITY_HOLDER')[0];
-    var nEl = holderEl ? holderEl.getElementsByTagName('n')[0] : null;
+    var holderEl = getTags(liab, 'LIABILITY_HOLDER')[0];
+    var nEl = holderEl ? getTags(holderEl, 'n')[0] : null;
     var holderName = nEl ? getTag(nEl, 'FullName') : (holderEl ? getTag(holderEl, 'FullName') : '');
     var pmt = parseFloat(getTag(detail, 'LiabilityMonthlyPaymentAmount')) || 0;
     var bal = parseFloat(getTag(detail, 'LiabilityUnpaidBalanceAmount')) || 0;
@@ -279,13 +366,14 @@ export function parseURLA(xmlString) {
   });
   if (totalDebts > 0) result.monthlyDebts = String(totalDebts.toFixed(2));
 
+  // Assets
   var totalAssets = 0;
-  Array.from(doc.getElementsByTagName('ASSET')).forEach(function(asset) {
-    var detail = asset.getElementsByTagName('ASSET_DETAIL')[0];
+  getTags(doc, 'ASSET').forEach(function(asset) {
+    var detail = getTags(asset, 'ASSET_DETAIL')[0];
     if (!detail) return;
-    if (asset.getElementsByTagName('OWNED_PROPERTY').length > 0) return;
-    var holderEl = asset.getElementsByTagName('ASSET_HOLDER')[0];
-    var nEl = holderEl ? holderEl.getElementsByTagName('n')[0] : null;
+    if (getTags(asset, 'OWNED_PROPERTY').length > 0) return;
+    var holderEl = getTags(asset, 'ASSET_HOLDER')[0];
+    var nEl = holderEl ? getTags(holderEl, 'n')[0] : null;
     var holderName = nEl ? getTag(nEl, 'FullName') : (holderEl ? getTag(holderEl, 'FullName') : '');
     var value = parseFloat(getTag(detail, 'AssetCashOrMarketValueAmount')) || 0;
     totalAssets += value;
@@ -299,7 +387,10 @@ export function parseURLA(xmlString) {
 export function getImportSummary(parsed) {
   var fields = [];
   if (parsed.firstName || parsed.lastName) fields.push('Borrower name');
-  if (parsed.coBorrower?.firstName)        fields.push('Co-borrower name');
+  if (parsed.coBorrowers && parsed.coBorrowers.length > 0)
+    fields.push(parsed.coBorrowers.length + ' co-borrower' + (parsed.coBorrowers.length > 1 ? 's' : '') + ' (' + parsed.coBorrowers.map(function(cb){ return cb.firstName; }).filter(Boolean).join(', ') + ')');
+  else if (parsed.coBorrower && parsed.coBorrower.firstName)
+    fields.push('Co-borrower name');
   if (parsed.employerName)                 fields.push('Employer');
   if (parsed.monthlyIncome)                fields.push('Monthly income');
   if (parsed.loanAmount)                   fields.push('Loan amount');

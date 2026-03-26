@@ -12,9 +12,10 @@ import ProgramMigrationEngine from '../components/ProgramMigrationEngine';
 import { extractProfileFromScenario } from '../engines/programRuleEngine';
 import AUSRunCounter from '../components/AUSRunCounter';
 import WhatIfSimulator from '../components/WhatIfSimulator';
+import { runSonnetReasoning, mergeReasoningResults } from '../services/ausRescueReasoning';
 
 // ── DOWNLOAD COUNTER ──────────────────────────────────────────────────────────
-// AUSRescue.jsx download counter: 31
+// AUSRescue.jsx download counter: 32
 
 // ── PROGRAMS ──────────────────────────────────────────────────────────────────
 const PROGRAMS = {
@@ -63,6 +64,18 @@ const DUPLICATE_FLAGS = [
   { label:'Closed or paid account still in DTI',              detail:'Paid-off or recently closed accounts may still show a minimum payment in AUS.',                                            fix:'Pull payoff/closure letter. Zero out the payment in LOS. Rapid rescore if needed to update tradeline status.' },
   { label:'Business debt included in personal DTI (self-employed)', detail:'Business loans or lines of credit that appear on personal credit but are paid by the business should be excluded.', fix:'Provide 12 months of business bank statements showing the business making all payments on the account from business funds.' },
   { label:'Rental property debt without rental income offset', detail:'If a rental property PITIA is in DTI but the rental income is not being counted, the net obligation is artificially inflated.', fix:'Document rental income via current signed lease plus 2-year Schedule E. Use net rental income to offset the full PITIA obligation.' },
+];
+
+// Maps Haiku-detected keywords → DUPLICATE_FLAGS index
+const DUPLICATE_FLAG_MAPPING = [
+  { index: 0, keywords: ['authorized user', 'au account', 'au tradeline', 'authorized user account'] },
+  { index: 1, keywords: ['student loan', 'deferred', 'idr', 'income-driven', 'student debt'] },
+  { index: 2, keywords: ['vehicle lease', 'car lease', 'auto lease', 'lease appearing'] },
+  { index: 3, keywords: ['child support', 'alimony', 'child support judgment', 'support obligation'] },
+  { index: 4, keywords: ['co-signed', 'cosigned', 'co-borrower debt', 'co-signed debt'] },
+  { index: 5, keywords: ['closed account', 'paid account', 'closed tradeline', 'paid off account'] },
+  { index: 6, keywords: ['business debt', 'business loan', 'self-employed debt', 'business line of credit', 'schedule c'] },
+  { index: 7, keywords: ['rental property', 'rental income', 'investment property debt', 'schedule e', 'rental debt'] },
 ];
 
 const IMPACT_BADGE = { critical:'bg-red-100 text-red-700 border border-red-200', high:'bg-orange-100 text-orange-700 border border-orange-200', medium:'bg-yellow-100 text-yellow-700 border border-yellow-200', low:'bg-slate-100 text-slate-500 border border-slate-200' };
@@ -118,6 +131,11 @@ export default function AUSRescue() {
   const [submissionNumber, setSubmissionNumber] = useState(null);
   const [caseFileId, setCaseFileId]             = useState(null);
   const [ausEngineDetected, setAusEngineDetected] = useState(null);
+  const [sonnetResults, setSonnetResults]       = useState(null);
+  const [sonnetLoading, setSonnetLoading]       = useState(false);
+  const [sonnetError, setSonnetError]           = useState('');
+  const [aiDetectedFlags, setAiDetectedFlags]   = useState([]); // indices auto-flagged by Haiku
+  const [pushbackMessage, setPushbackMessage]   = useState('');
 
   const { reportFindings } = useDecisionRecord(selectedScenarioId);
   const [savedRecordId, setSavedRecordId]     = useState(null);
@@ -266,6 +284,48 @@ export default function AUSRescue() {
     finally { setRecordSaving(false); }
   };
 
+  const runAISonnetAnalysis = async () => {
+    if (!pmeProfile || !pmeProfile.fico) return;
+    setSonnetLoading(true);
+    setSonnetError('');
+    addLog('Sonnet AI: refining program probabilities…');
+    try {
+      const { rankPrograms, identifyPrimaryBlocker, assessFeasibility } = await import('../engines/programRuleEngine');
+      const ranked      = rankPrograms(pmeProfile);
+      const blocker     = identifyPrimaryBlocker(ranked);
+      const feasibility = assessFeasibility(ranked);
+      const ruleEngineResults = {
+        programs:       ranked,
+        primaryBlocker: blocker?.rule || 'Unknown',
+        feasibility,
+      };
+      // Map pmeProfile to the shape ausRescueReasoning expects
+      const borrowerProfile = {
+        fico:             pmeProfile.fico,
+        dti:              pmeProfile.dti,
+        ltv:              pmeProfile.ltv,
+        loanAmount:       pmeProfile.loanAmount,
+        propertyType:     pmeProfile.propertyType,
+        occupancy:        pmeProfile.occupancy,
+        reservesMonths:   pmeProfile.reserves,
+        employmentMonths: pmeProfile.employmentMonths,
+        isVeteran:        pmeProfile.vaEligible,
+        isSelfEmployed:   pmeProfile.selfEmployed,
+        bankruptcyMonths: pmeProfile.bankruptcyYearsAgo ? Math.round(pmeProfile.bankruptcyYearsAgo * 12) : null,
+        foreclosureMonths:pmeProfile.foreclosureYearsAgo ? Math.round(pmeProfile.foreclosureYearsAgo * 12) : null,
+        recentLates:      null,
+      };
+      const result = await runSonnetReasoning({ borrowerProfile, ruleEngineResults });
+      setSonnetResults(result);
+      addLog(`Sonnet AI: analysis complete — Feasibility ${result.feasibility}`);
+    } catch (err) {
+      setSonnetError(err.message || 'Sonnet analysis failed');
+      addLog(`Sonnet AI error: ${err.message}`);
+    } finally {
+      setSonnetLoading(false);
+    }
+  };
+
   const parsePDFWithClaude = async (file) => {
     setIsParsing(true); setParseError(''); setParseResult(null);
     addLog(`Parsing: ${file.name}`);
@@ -285,7 +345,7 @@ export default function AUSRescue() {
           model: 'claude-haiku-4-5-20251001', max_tokens: 1000,
           messages: [{ role:'user', content:[
             { type:'document', source:{ type:'base64', media_type:'application/pdf', data:base64Data } },
-            { type:'text', text:'You are parsing a DU or LPA AUS findings document. Return ONLY valid JSON, no markdown:\n{"ausEngine":"du"|"lpa"|"fha_total"|"gus","finding":"exact decision","program":"fha"|"conventional"|"homeready"|"homepossible"|"va"|"usda"|"nonqm","creditScore":number|null,"backEndDTI":number|null,"frontEndDTI":number|null,"reservesMonths":number|null,"downPaymentPct":number|null,"interestRate":number|null,"isVeteran":boolean,"isSelfEmployed":boolean,"submissionNumber":number|null,"caseFileId":string|null,"detectedIssues":[],"riskFactors":[]}' }
+            { type:'text', text:'You are parsing a DU or LPA AUS findings document. Carefully read ALL messages, conditions, cautions, and flags in the document. Return ONLY valid JSON, no markdown:\n{"ausEngine":"du"|"lpa"|"fha_total"|"gus","finding":"exact decision","program":"fha"|"conventional"|"homeready"|"homepossible"|"va"|"usda"|"nonqm","creditScore":number|null,"backEndDTI":number|null,"frontEndDTI":number|null,"reservesMonths":number|null,"downPaymentPct":number|null,"interestRate":number|null,"isVeteran":boolean,"isSelfEmployed":boolean,"submissionNumber":number|null,"caseFileId":string|null,"detectedIssues":[],"riskFactors":[],"duplicateDebtIndicators":["List every debt item that appears it could be double-counted or incorrectly included in DTI. Look for: authorized user accounts, deferred student loans with both a deferred entry and a payment, vehicle leases appearing twice, child support showing as both judgment and payment, co-signed debts, closed/paid accounts still showing a payment, business debts on personal report, rental property PITIA without rental income offset. Return plain English description of each suspected duplicate, e.g. \'Student loan appears both deferred and with IDR payment\' or \'Authorized user account $X/mo included in DTI\']}"}' }
           ] }],
         }),
       });
@@ -316,8 +376,25 @@ export default function AUSRescue() {
       if (parsed.submissionNumber != null) setSubmissionNumber(parsed.submissionNumber);
       if (parsed.caseFileId)               setCaseFileId(parsed.caseFileId);
       if (parsed.ausEngine)                setAusEngineDetected(parsed.ausEngine);
+
+      // ── AI Duplicate Debt Auto-Detection ────────────────────────────────
+      const indicators = parsed.duplicateDebtIndicators || [];
+      if (indicators.length > 0) {
+        const autoFlaggedIndices = new Set();
+        indicators.forEach(indicator => {
+          const lc = indicator.toLowerCase();
+          DUPLICATE_FLAG_MAPPING.forEach(({ index, keywords }) => {
+            if (keywords.some(kw => lc.includes(kw))) autoFlaggedIndices.add(index);
+          });
+        });
+        const flagArr = [...autoFlaggedIndices];
+        setAiDetectedFlags(flagArr);
+        setFlaggedDuplicates(prev => [...new Set([...prev, ...flagArr])]);
+        if (flagArr.length > 0) addLog(`🤖 AI detected ${flagArr.length} potential duplicate debt issue${flagArr.length > 1 ? 's' : ''}`);
+      }
+
       const fieldsFound = [normalizedFinding && 'Finding', parsed.creditScore && 'Credit Score', parsed.backEndDTI && 'DTI', parsed.frontEndDTI && 'Front-End DTI', parsed.downPaymentPct && 'Down Payment', parsed.interestRate && 'Interest Rate', parsed.reservesMonths && 'Reserves', parsed.submissionNumber && `Submission #${parsed.submissionNumber}`, parsed.detectedIssues?.length && `${parsed.detectedIssues.length} issue categories`].filter(Boolean);
-      setParseResult({ fileName: file.name, fieldsFound, riskFactors: parsed.riskFactors || [] });
+      setParseResult({ fileName: file.name, fieldsFound, riskFactors: parsed.riskFactors || [], duplicateDebtIndicators: indicators });
     } catch (err) {
       setParseError(err.message.includes('VITE_ANTHROPIC_API_KEY') ? 'Add VITE_ANTHROPIC_API_KEY to your .env file to enable PDF parsing' : `Parse failed: ${err.message}`);
       addLog(`Parse failed: ${err.message}`);
@@ -352,6 +429,37 @@ export default function AUSRescue() {
     navigator.clipboard.writeText(n).catch(() => {});
     addLog('Notes exported to clipboard');
     alert('LO Notes copied to clipboard!');
+  };
+
+  const generatePushbackMessage = () => {
+    if (flaggedDuplicates.length === 0) return;
+    const bDisplayName = bName || 'the borrower';
+    const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    let msg = `Subject: AUS Findings Review — Potential Duplicate Debt in DTI — ${bDisplayName}\n\n`;
+    msg += `Date: ${today}\n\n`;
+    msg += `Hi,\n\nAfter reviewing the AUS findings for ${bDisplayName}`;
+    if (profile.creditScore) msg += ` (FICO ${profile.creditScore}, DTI ${profile.dti}%)`;
+    msg += `, I've identified ${flaggedDuplicates.length} potential duplicate debt item${flaggedDuplicates.length > 1 ? 's' : ''} that may have caused the ${currentFinding || 'adverse'} finding. I'd like to request a review before resubmitting.\n\n`;
+    msg += `ITEMS FOR REVIEW:\n${'─'.repeat(40)}\n`;
+    flaggedDuplicates.forEach((idx, i) => {
+      const flag = DUPLICATE_FLAGS[idx];
+      const aiTag = aiDetectedFlags.includes(idx) ? ' [AI DETECTED IN FINDINGS]' : ' [LO FLAGGED]';
+      msg += `\n${i + 1}. ${flag.label}${aiTag}\n`;
+      msg += `   Issue: ${flag.detail}\n`;
+      msg += `   Recommended Fix: ${flag.fix}\n`;
+    });
+    msg += `\n${'─'.repeat(40)}\n`;
+    msg += `Correcting these items may materially reduce the qualifying DTI and change the AUS outcome. Please review and advise on next steps.\n\n`;
+    msg += `Thank you,\n[Loan Officer Name]\n[NMLS #]\n[Company]\n\n`;
+    msg += `— Generated by LoanBeacons™ AUS Rescue™ | Patent Pending`;
+    setPushbackMessage(msg);
+    addLog(`📋 Push-back message generated (${flaggedDuplicates.length} items)`);
+  };
+
+  const copyPushback = () => {
+    navigator.clipboard.writeText(pushbackMessage).catch(() => {});
+    addLog('Push-back message copied to clipboard');
+    alert('Push-back message copied to clipboard!');
   };
 
   // ── Borrower display ──────────────────────────────────────────────────────
@@ -722,11 +830,46 @@ export default function AUSRescue() {
 
             {/* ── MIGRATION ENGINE TAB — ProgramMigrationEngine component ─ */}
             {activeTab === 'migration' && (
-              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-                <ProgramMigrationEngine
-                  profile={pmeProfile}
-                  onSelectProgram={(prog) => addLog(`PME: Selected ${prog.programName} (${prog.approvalProbability}%)`)}
-                />
+              <div className="space-y-4">
+                {/* Sonnet AI Trigger Bar */}
+                <div className="bg-slate-900 rounded-xl border border-slate-700 p-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold text-white">✨ Sonnet AI Reasoning Layer</p>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {sonnetResults
+                        ? `Analysis complete — Feasibility: ${sonnetResults.feasibility} · ${sonnetResults.primaryBlocker}`
+                        : 'Refine rule engine seed probabilities with compensating factor reasoning and AUS behavioral analysis.'}
+                    </p>
+                    {sonnetError && <p className="text-xs text-red-400 mt-1">⚠ {sonnetError}</p>}
+                  </div>
+                  <button
+                    onClick={runAISonnetAnalysis}
+                    disabled={sonnetLoading || !pmeProfile?.fico}
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-sm"
+                  >
+                    {sonnetLoading
+                      ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Analyzing…</>
+                      : sonnetResults ? '🔁 Re-run Analysis' : '🧠 Run AI Analysis'}
+                  </button>
+                </div>
+                {/* Sonnet Recommendation Banner */}
+                {sonnetResults?.overallRecommendation && (
+                  <div className="bg-indigo-950 border border-indigo-700 rounded-xl p-4">
+                    <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1">AI Recommendation</p>
+                    <p className="text-sm text-indigo-100">{sonnetResults.overallRecommendation}</p>
+                    {sonnetResults.feasibilityRationale && (
+                      <p className="text-xs text-indigo-300 mt-2 italic">{sonnetResults.feasibilityRationale}</p>
+                    )}
+                  </div>
+                )}
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                  <ProgramMigrationEngine
+                    profile={pmeProfile}
+                    sonnetResults={sonnetResults}
+                    sonnetLoading={sonnetLoading}
+                    onSelectProgram={(prog) => addLog(`PME: Selected ${prog.programName} (${prog.approvalProbability}%)`)}
+                  />
+                </div>
               </div>
             )}
 
@@ -742,34 +885,93 @@ export default function AUSRescue() {
             {/* ── DUPLICATE DEBT DETECTOR TAB ─────────────────────────── */}
             {activeTab === 'duplicates' && (
               <div className="space-y-3">
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                  <p className="text-sm font-bold text-amber-800">🔍 Duplicate Debt Detector</p>
-                  <p className="text-xs text-amber-700 mt-1">Flag any debts that may be double-counted in DTI. Each flag includes the fix. Flagged items are included in LO Notes export.</p>
-                </div>
-                {DUPLICATE_FLAGS.map((flag, idx) => (
-                  <div key={idx} onClick={() => toggleDup(idx)} className={`bg-white rounded-xl border shadow-sm p-4 cursor-pointer transition-all hover:border-amber-300 ${flaggedDuplicates.includes(idx) ? 'border-amber-400 bg-amber-50/30' : 'border-gray-100'}`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3 flex-1">
-                        <span className={`mt-0.5 w-5 h-5 rounded flex-shrink-0 flex items-center justify-center border-2 ${flaggedDuplicates.includes(idx) ? 'bg-amber-500 border-amber-500 text-white' : 'border-gray-300'}`}>
-                          {flaggedDuplicates.includes(idx) && <span className="text-xs font-black">✔</span>}
-                        </span>
-                        <div>
-                          <p className="text-sm font-bold text-gray-800">{flag.label}</p>
-                          <p className="text-xs text-gray-500 mt-1">{flag.detail}</p>
-                          {flaggedDuplicates.includes(idx) && (
-                            <div className="mt-2 p-2 bg-amber-100 rounded-lg">
-                              <p className="text-xs font-semibold text-amber-800">Fix: <span className="font-normal">{flag.fix}</span></p>
-                            </div>
-                          )}
-                        </div>
+
+                {/* AI Alert Banner — shown when Haiku detected issues */}
+                {aiDetectedFlags.length > 0 && (
+                  <div className="bg-red-950 border border-red-700 rounded-xl p-4">
+                    <div className="flex items-start gap-3">
+                      <span className="text-xl flex-shrink-0">🤖</span>
+                      <div className="flex-1">
+                        <p className="text-sm font-bold text-red-200">AI Detected {aiDetectedFlags.length} Potential Duplicate Debt Issue{aiDetectedFlags.length > 1 ? 's' : ''}</p>
+                        <p className="text-xs text-red-300 mt-1">LoanBeacons found these in the AUS findings PDF. These may have caused the {currentFinding || 'adverse'} finding. Review each item below — they've been auto-flagged for the push-back message.</p>
+                        {parseResult?.duplicateDebtIndicators?.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {parseResult.duplicateDebtIndicators.map((item, i) => (
+                              <p key={i} className="text-xs text-red-300 flex gap-2"><span className="text-red-500 flex-shrink-0">⚠</span>{item}</p>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
-                ))}
+                )}
+
+                {/* Header */}
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                  <p className="text-sm font-bold text-amber-800">🔍 Duplicate Debt Detector</p>
+                  <p className="text-xs text-amber-700 mt-1">
+                    {aiDetectedFlags.length > 0
+                      ? `${aiDetectedFlags.length} item${aiDetectedFlags.length > 1 ? 's' : ''} auto-flagged by AI from your PDF · Review and add/remove flags below · Generate push-back message when ready`
+                      : 'Upload an AUS findings PDF to auto-detect issues, or manually flag items below. Flagged items generate a push-back message for the underwriter.'}
+                  </p>
+                </div>
+
+                {/* Flag Cards */}
+                {DUPLICATE_FLAGS.map((flag, idx) => {
+                  const isChecked = flaggedDuplicates.includes(idx);
+                  const isAiDetected = aiDetectedFlags.includes(idx);
+                  return (
+                    <div key={idx} onClick={() => toggleDup(idx)} className={`bg-white rounded-xl border shadow-sm p-4 cursor-pointer transition-all hover:border-amber-300 ${isChecked ? 'border-amber-400 bg-amber-50/30' : 'border-gray-100'} ${isAiDetected ? 'ring-2 ring-red-200' : ''}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 flex-1">
+                          <span className={`mt-0.5 w-5 h-5 rounded flex-shrink-0 flex items-center justify-center border-2 ${isChecked ? 'bg-amber-500 border-amber-500 text-white' : 'border-gray-300'}`}>
+                            {isChecked && <span className="text-xs font-black">✔</span>}
+                          </span>
+                          <div className="flex-1">
+                            <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                              <p className="text-sm font-bold text-gray-800">{flag.label}</p>
+                              {isAiDetected && (
+                                <span className="text-[10px] font-bold bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded-full">🤖 AI Detected</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-500">{flag.detail}</p>
+                            {isChecked && (
+                              <div className="mt-2 p-2 bg-amber-100 rounded-lg">
+                                <p className="text-xs font-semibold text-amber-800">Fix: <span className="font-normal">{flag.fix}</span></p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Push-Back Message Generator */}
                 {flaggedDuplicates.length > 0 && (
-                  <div className="bg-white rounded-xl border border-amber-200 p-4">
-                    <p className="text-sm font-bold text-amber-800">{flaggedDuplicates.length} flag{flaggedDuplicates.length > 1 ? 's' : ''} identified</p>
-                    <p className="text-xs text-gray-500 mt-1">These are included in your LO Notes export on the Strategies tab.</p>
+                  <div className="bg-white rounded-xl border border-amber-200 p-4 space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div>
+                        <p className="text-sm font-bold text-amber-800">{flaggedDuplicates.length} item{flaggedDuplicates.length > 1 ? 's' : ''} flagged</p>
+                        <p className="text-xs text-gray-500 mt-0.5">Generate a professional push-back message to send to the underwriter.</p>
+                      </div>
+                      <button onClick={generatePushbackMessage} className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-sm">
+                        📋 Generate Push-Back Message
+                      </button>
+                    </div>
+                    {pushbackMessage && (
+                      <div className="space-y-2">
+                        <textarea
+                          readOnly
+                          value={pushbackMessage}
+                          rows={14}
+                          className="w-full text-xs font-mono text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3 resize-none focus:outline-none"
+                        />
+                        <button onClick={copyPushback} className="w-full py-2 text-xs font-bold text-amber-700 border border-amber-300 rounded-lg hover:bg-amber-50 transition-colors">
+                          📋 Copy to Clipboard
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

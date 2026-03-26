@@ -22,14 +22,12 @@ function MyLOProfile() {
   useEffect(() => {
     const load = async () => {
       try {
-        // Load LO profile
         const snap = await getDoc(doc(db, "loProfiles", LO_DOC));
         if (snap.exists()) {
           const d = snap.data();
           setProfile(d.profile || EMPTY_LO);
           setAeOverrides(d.aeOverrides || {});
         }
-        // Load branch lenders dynamically
         const { getDocs, collection: col } = await import("firebase/firestore");
         const lenderSnap = await getDocs(col(db, "lenderProfiles"));
         setBranchLenders(lenderSnap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -39,37 +37,32 @@ function MyLOProfile() {
     load();
   }, []);
 
- const save = async () => {
-  try {
-    // Save to loProfiles (existing)
-    await setDoc(doc(db, "loProfiles", LO_DOC), {
-      profile, aeOverrides, updatedAt: serverTimestamp()
-    });
+  const save = async () => {
+    try {
+      await setDoc(doc(db, "loProfiles", LO_DOC), {
+        profile, aeOverrides, updatedAt: serverTimestamp()
+      });
+      await setDoc(doc(db, "userProfiles", "default"), {
+        name: `${profile.firstName} ${profile.lastName}`.trim(),
+        displayName: `${profile.firstName} ${profile.lastName}`.trim(),
+        email: profile.email,
+        phone: profile.phone,
+        nmlsId: profile.nmls,
+        company: profile.company,
+        companyNmls: profile.companyNmls,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e) { console.error(e); }
+  };
 
-    // Mirror to userProfiles/{userId} for AE Share Service
-    await setDoc(doc(db, "userProfiles", "default"), {
-  name: `${profile.firstName} ${profile.lastName}`.trim(),
-  displayName: `${profile.firstName} ${profile.lastName}`.trim(),
-  email: profile.email,
-  phone: profile.phone,
-  nmlsId: profile.nmls,
-  company: profile.company,
-  companyNmls: profile.companyNmls,
-  updatedAt: serverTimestamp(),
-}, { merge: true });
-
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
-  } catch (e) { console.error(e); }
-};
-    
   const f = (field, val) => setProfile(p => ({ ...p, [field]: val }));
 
   if (loading) return <div className="text-center py-12 text-slate-400">Loading...</div>;
 
   return (
     <div className="space-y-6">
-      {/* Personal Info */}
       <div className="bg-slate-800/60 border border-slate-700 rounded-2xl p-6">
         <h3 className="text-sm font-bold text-slate-300 mb-4">👤 LO Identity</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -95,10 +88,9 @@ function MyLOProfile() {
         </div>
       </div>
 
-      {/* AE Overrides */}
       <div className="bg-slate-800/60 border border-slate-700 rounded-2xl p-6">
         <h3 className="text-sm font-bold text-slate-300 mb-1">📞 My AE Contacts</h3>
-        <p className="text-xs text-slate-500 mb-4">Your personal Account Executive contacts per lender. These override the branch default when you run Lender Match.</p>
+        <p className="text-xs text-slate-500 mb-4">Your personal AE contacts per lender. These override the branch default in Lender Match.</p>
         {branchLenders.length === 0 && (
           <div className="text-center py-8 bg-slate-900/40 border border-slate-700 rounded-xl">
             <p className="text-slate-400 text-sm">No branch lenders added yet.</p>
@@ -110,7 +102,14 @@ function MyLOProfile() {
             const key = lender.id;
             return (
               <div key={key} className="bg-slate-900/40 border border-slate-700 rounded-xl p-4">
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-3 mb-3">
+                  {lender.logoDataUrl ? (
+                    <div className="w-8 h-8 rounded-lg border border-slate-600 overflow-hidden bg-white flex-shrink-0">
+                      <img src={lender.logoDataUrl} alt={lender.name} className="w-full h-full object-contain p-0.5" />
+                    </div>
+                  ) : (
+                    <div className="w-8 h-8 rounded-lg bg-slate-700 border border-slate-600 flex items-center justify-center text-base flex-shrink-0">🏦</div>
+                  )}
                   <p className="text-xs font-bold text-slate-300">{lender.name}</p>
                   <span className="text-xs text-slate-500">NMLS# {lender.nmls}</span>
                   {(lender.agencies || []).map(a => (
@@ -133,15 +132,13 @@ function MyLOProfile() {
                             ? <span className="text-xs text-slate-600">Branch default</span>
                             : null}
                         </div>
-                        <input
-                          value={displayValue}
+                        <input value={displayValue}
                           onChange={e => setAeOverrides(prev => ({ ...prev, [key]: { ...prev[key], [field]: e.target.value }}))}
                           className={"w-full px-3 py-1.5 border rounded-lg text-white text-sm " +
                             (hasOverride ? "bg-purple-900/30 border-purple-600" : "bg-slate-800 border-slate-600")}
                           placeholder={label} />
                         {hasOverride && (
-                          <button
-                            onClick={() => setAeOverrides(prev => { const u = {...prev}; if(u[key]) { delete u[key][field]; } return u; })}
+                          <button onClick={() => setAeOverrides(prev => { const u={...prev}; if(u[key]){delete u[key][field];} return u; })}
                             className="text-xs text-slate-500 hover:text-slate-300 mt-0.5">
                             ↩ Revert to branch default
                           </button>
@@ -156,8 +153,7 @@ function MyLOProfile() {
         </div>
       </div>
 
-      <button onClick={save}
-        className="bg-green-700 hover:bg-green-600 text-white font-bold px-6 py-3 rounded-xl transition-all">
+      <button onClick={save} className="bg-green-700 hover:bg-green-600 text-white font-bold px-6 py-3 rounded-xl transition-all">
         {saved ? "✅ Profile Saved" : "💾 Save My Profile"}
       </button>
     </div>
@@ -170,10 +166,8 @@ export default function Admin() {
     { id: "lenders", label: "🏦 Branch Lenders" },
     { id: "profile", label: "👤 My LO Profile" },
   ];
-
   return (
     <div className="min-h-screen bg-slate-900 text-white">
-      {/* Header */}
       <div className="bg-slate-800/80 border-b border-slate-700 px-6 py-5">
         <div className="max-w-5xl mx-auto">
           <p className="text-xs text-slate-400 uppercase tracking-widest mb-1">LoanBeacons™ — Admin</p>
@@ -190,8 +184,6 @@ export default function Admin() {
           </div>
         </div>
       </div>
-
-      {/* Content */}
       <div className="max-w-5xl mx-auto px-6 py-8">
         {tab === "lenders" && <LenderProfileBuilder />}
         {tab === "profile" && <MyLOProfile />}
