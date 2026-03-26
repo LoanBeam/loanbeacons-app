@@ -5,9 +5,9 @@
 // Medium Impact: Score gap cross-ref, Auto-check derogatory from AI, "Just missed" eligibility
 // Polish: Smart strategy pre-selection, Enhanced Decision Record log
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
@@ -78,11 +78,26 @@ function monthsElapsed(dateStr) {
   return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24 * 30.44));
 }
 
+const REASON_CODE_MAP = {
+  '10': { text: 'Revolving utilization too high',           actionable: true,  estPts: '20–40', action: 'Pay revolving cards to <10% utilization. Rapid rescore available.' },
+  '39': { text: 'Serious delinquency on record',            actionable: false, estPts: '0',     action: 'Time-only. Delinquency ages off after 7 years. Dispute if inaccurate.' },
+  '13': { text: 'Delinquency too recent or unknown',        actionable: false, estPts: '0',     action: 'Time-only. Score improves as delinquency ages. Nothing actionable now.' },
+  '18': { text: 'Number of accounts with delinquency',      actionable: false, estPts: '5–15',  action: 'Dispute any inaccurate late payments. Otherwise time-only.' },
+  '14': { text: 'Length of time accounts established',      actionable: false, estPts: '0',     action: 'Time-only. Keep oldest accounts open. Do not close seasoned tradelines.' },
+  '5':  { text: 'Too many accounts with balances',          actionable: true,  estPts: '10–20', action: 'Pay off or pay down smallest balance accounts first.' },
+  '8':  { text: 'Too many inquiries last 12 months',        actionable: false, estPts: '3–8',   action: 'Stop new applications. Inquiries age off in 12 months. Minor impact.' },
+  '6':  { text: 'Too many consumer finance company accounts', actionable: false, estPts: '5–10', action: 'Time-only. Avoid opening new consumer finance accounts.' },
+  '4':  { text: 'Lack of recent installment loan information', actionable: true, estPts: '10–20', action: 'Consider a small credit-builder loan or secured installment account.' },
+  '15': { text: 'Lack of recent revolving account information', actionable: true, estPts: '10–20', action: 'Open a secured credit card. Use lightly and pay in full each month.' },
+};
+
+// Normalize code strings — strip leading zeros
+const normalizeCode = code => String(code).replace(/^0+/, '') || '0';
+
 export default function CreditIntel() {
   const [searchParams] = useSearchParams();
   const navigate       = useNavigate();
   const scenarioId     = searchParams.get('scenarioId');
-  const fileRef        = useRef(null);
 
   const { reportFindings }                = useDecisionRecord(scenarioId);
   const [savedRecordId, setSavedRecordId] = useState(null);
@@ -92,14 +107,22 @@ export default function CreditIntel() {
   const [loading,   setLoading]   = useState(!!scenarioId);
   const [scenarios, setScenarios] = useState([]);
 
+  // ── Multi-report / multi-borrower credit score state ─────────────────────
+  const [allBorrowers, setAllBorrowers] = useState([]);
+  // allBorrowers: [{ name, experian, transunion, equifax, computedMiddle, reportSlot }]
+  const [reports, setReports] = useState([
+    { id: 1, label: 'Report 1 — Primary Borrower(s)',    file: null, loading: false, result: null, error: '' },
+    { id: 2, label: 'Report 2 — Co-Borrower(s)',         file: null, loading: false, result: null, error: '' },
+    { id: 3, label: 'Report 3 — Additional Borrower(s)', file: null, loading: false, result: null, error: '' },
+  ]);
+  const [scoreWriteBackDone, setScoreWriteBackDone] = useState(false);
   const [borrowerScore, setBorrowerScore] = useState('');
-  const [coScore,       setCoScore]       = useState('');
-  const [bureau1, setBureau1] = useState('');
-  const [bureau2, setBureau2] = useState('');
-  const [bureau3, setBureau3] = useState('');
-  const [coBureau1, setCoBureau1] = useState('');
-  const [coBureau2, setCoBureau2] = useState('');
-  const [coBureau3, setCoBureau3] = useState('');
+
+  // ── Feature state ─────────────────────────────────────────────────────────
+  const [auAccounts, setAuAccounts]       = useState([]);
+  const [focusBorrower, setFocusBorrower] = useState(null);
+  const [rescoreLetterVisible, setRescoreLetterVisible] = useState(false);
+  const [rescoreLetterText, setRescoreLetterText]       = useState('');
 
   const [tradelines,          setTradelines]          = useState({ revolving: '', installment: '', mortgage: '', totalAccounts: '' });
   const [utilization,         setUtilization]         = useState('');
@@ -108,13 +131,6 @@ export default function CreditIntel() {
   const [collections,         setCollections]         = useState([]);
   const [selectedStrategies,  setSelectedStrategies]  = useState({});
   const [notes,               setNotes]               = useState('');
-
-  // Upload — open by default
-  const [uploadFile,    setUploadFile]    = useState(null);
-  const [uploadLoading, setUploadLoading] = useState(false);
-  const [uploadResult,  setUploadResult]  = useState(null);
-  const [uploadError,   setUploadError]   = useState('');
-  const [showUpload,    setShowUpload]    = useState(true);
 
   const [simCards,       setSimCards]       = useState([{ id: 1, name: '', balance: '', limit: '' }]);
   const [showRescore,    setShowRescore]    = useState(false);
@@ -136,7 +152,11 @@ export default function CreditIntel() {
       if (snap.exists()) {
         const d = { id: snap.id, ...snap.data() };
         setScenario(d);
-        if (d.creditScore) setBorrowerScore(String(d.creditScore));
+        if (d.creditScore) {
+          setBorrowerScore(String(d.creditScore));
+          // Pre-seed allBorrowers from scenario if no reports uploaded yet
+          setAllBorrowers([{ name: `${d.firstName||''} ${d.lastName||''}`.trim() || 'Primary Borrower', experian: null, transunion: null, equifax: null, computedMiddle: d.creditScore, reportSlot: 0 }]);
+        }
       }
     }).catch(console.error).finally(() => setLoading(false));
   }, [scenarioId]);
@@ -159,10 +179,13 @@ export default function CreditIntel() {
     });
   }, [utilization, tradelines.totalAccounts, tradelines.revolving, derogatory, collections]);
 
-  // Derived
-  const midScore        = parseInt(borrowerScore) || 0;
-  const coMidScore      = parseInt(coScore) || 0;
-  const qualifyingScore = coMidScore > 0 ? Math.min(midScore, coMidScore) : midScore;
+  // Derived — qualifying score from all borrowers (lowest middle)
+  const qualifyingScore = allBorrowers.length > 0
+    ? Math.min(...allBorrowers.map(b => b.computedMiddle).filter(s => s > 0))
+    : (parseInt(borrowerScore) || 0);
+  const qualifyingBorrower = allBorrowers.find(b => b.computedMiddle === qualifyingScore) || null;
+  const midScore  = qualifyingScore; // alias for Decision Record compat
+  const coMidScore = 0;              // deprecated — allBorrowers handles this now
   const tier            = qualifyingScore > 0 ? getScoreTier(qualifyingScore) : null;
   const util            = parseFloat(utilization) || 0;
   const eligiblePrograms = Object.entries(PROGRAM_MIN_SCORES).filter(([, v]) => qualifyingScore >= v.score);
@@ -227,49 +250,71 @@ export default function CreditIntel() {
     return lines.join('\n');
   };
 
-  const calcMid = (v1, v2, v3, newVal, setter, scoreSetter) => {
-    const scores = [parseInt(v1)||0, parseInt(v2)||0, parseInt(v3)||0, parseInt(newVal)||0].filter(n => n > 0).sort((a, b) => a - b);
-    setter(newVal);
-    scoreSetter(String(scores[Math.floor(scores.length / 2)] || ''));
-  };
 
   const addCollection    = ()         => setCollections(p => [...p, { id: Date.now(), creditor: '', amount: '', type: 'medical', status: 'open', loe: false }]);
   const updateCollection = (id, f, v) => setCollections(p => p.map(c => c.id === id ? { ...c, [f]: v } : c));
   const removeCollection = (id)       => setCollections(p => p.filter(c => c.id !== id));
 
-  const handleAIReview = async () => {
-    if (!uploadFile) return;
-    setUploadLoading(true); setUploadError(''); setUploadResult(null);
+  // ── Multi-report AI extraction ────────────────────────────────────────────
+  const computeMiddle = (exp, tu, eq) => {
+    const scores = [exp, tu, eq].map(Number).filter(n => n > 0).sort((a, b) => a - b);
+    if (scores.length === 0) return 0;
+    return scores[Math.floor(scores.length / 2)];
+  };
+
+  const handleReportUpload = (slotId, file) => {
+    if (!file) return;
+    setReports(p => p.map(r => r.id === slotId ? { ...r, file, result: null, error: '' } : r));
+  };
+
+  const runReportAI = async (slotId) => {
+    const slot = reports.find(r => r.id === slotId);
+    if (!slot?.file) return;
+    setReports(p => p.map(r => r.id === slotId ? { ...r, loading: true, error: '' } : r));
     try {
       const base64Data = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload  = () => res(r.result.split(',')[1]);
-        r.onerror = () => rej(new Error('Read failed'));
-        r.readAsDataURL(uploadFile);
+        const reader = new FileReader();
+        reader.onload  = () => res(reader.result.split(',')[1]);
+        reader.onerror = () => rej(new Error('Read failed'));
+        reader.readAsDataURL(slot.file);
       });
-      const isImage   = uploadFile.type.startsWith('image/');
-      const mediaType = isImage ? uploadFile.type : 'application/pdf';
-      const prompt = `You are a senior mortgage processor reviewing a tri-merge credit report.
-Extract the following and return ONLY valid JSON, no markdown, no backticks:
+      const isImage   = slot.file.type.startsWith('image/');
+      const mediaType = isImage ? slot.file.type : 'application/pdf';
+
+      const prompt = `You are a senior mortgage processor reviewing a tri-merge credit report that may contain ONE or MULTIPLE borrowers.
+Extract ALL borrowers found in this report. Return ONLY valid JSON, no markdown, no backticks:
 {
-  "borrowerName": "string or null",
-  "experian": number or null,
-  "transunion": number or null,
-  "equifax": number or null,
-  "midScore": number or null,
+  "borrowers": [
+    {
+      "name": "FULL NAME as shown",
+      "experian": number or null,
+      "transunion": number or null,
+      "equifax": number or null,
+      "reasonCodes": {
+        "experian": ["10","18","13"],
+        "transunion": ["039","010","018"],
+        "equifax": ["00039","00010"]
+      }
+    }
+  ],
+  "authorizedUserAccounts": [
+    {"creditor": "string", "balance": number, "payment": number, "borrower": "name of borrower listed as AU"}
+  ],
   "revolvingAccounts": number,
   "installmentAccounts": number,
   "mortgageAccounts": number,
   "totalAccounts": number,
-  "overallUtilization": number,
-  "revolvingAccountDetails": [{"creditor": "string", "balance": number, "limit": number}],
-  "derogatoryItems": [{"type": "string", "date": "YYYY-MM-DD or null", "description": "string"}],
-  "collections": [{"creditor": "string", "amount": number, "type": "medical|non_medical", "status": "open|paid"}],
+  "overallUtilization": number or null,
+  "revolvingAccountDetails": [{"creditor":"string","balance":number,"limit":number}],
+  "derogatoryItems": [{"type":"string","date":"YYYY-MM-DD or null","description":"string"}],
+  "collections": [{"creditor":"string","amount":number,"type":"medical|non_medical","status":"open|paid"}],
   "flags": ["array of underwriting concern strings"],
   "summary": "one sentence summary"
 }
-For revolvingAccountDetails include every open revolving tradeline with current balance and credit limit.
-For derogatoryItems, type should match one of: bankruptcy_7, bankruptcy_13, foreclosure, short_sale, late_mortgage, collections, judgments.`;
+CRITICAL: If you see scores for multiple people, include ALL in the borrowers array with their individual bureau scores and reason codes.
+For authorizedUserAccounts: look for ECOA code "A" = Authorized User. Extract those accounts separately — they may inflate DTI incorrectly.
+For reasonCodes: extract the actual numeric codes shown next to each bureau score (e.g. 00039, 010, 13). Include ALL codes shown, as arrays of strings.
+For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure, short_sale, late_mortgage, collections, judgments.`;
 
       const msgContent = isImage
         ? [{ type: 'image',    source: { type: 'base64', media_type: mediaType,         data: base64Data } }, { type: 'text', text: prompt }]
@@ -283,64 +328,168 @@ For derogatoryItems, type should match one of: bankruptcy_7, bankruptcy_13, fore
           'anthropic-version': '2023-06-01',
           'anthropic-dangerous-direct-browser-access': 'true',
         },
-        body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 2000, messages: [{ role: 'user', content: msgContent }] }),
+        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 2000, messages: [{ role: 'user', content: msgContent }] }),
       });
       if (!resp.ok) throw new Error(`API ${resp.status}`);
-      const data   = await resp.json();
-      const text   = data.content?.find(b => b.type === 'text')?.text || '';
-      const clean  = text.replace(/```json|```/g, '').trim();
-      setUploadResult(JSON.parse(clean));
+      const data  = await resp.json();
+      const text  = data.content?.find(b => b.type === 'text')?.text || '';
+      const clean = text.replace(/```json|```/g, '').trim();
+      const result = JSON.parse(clean);
+      setReports(p => p.map(r => r.id === slotId ? { ...r, loading: false, result } : r));
     } catch (e) {
-      setUploadError('Could not extract credit data. Check the file and try again.');
+      setReports(p => p.map(r => r.id === slotId ? { ...r, loading: false, error: 'Could not extract credit data. Check the file and try again.' } : r));
       console.error(e);
-    } finally { setUploadLoading(false); }
+    }
   };
 
-  const applyExtractedCredit = () => {
-    if (!uploadResult) return;
-    if (uploadResult.experian)           setBureau1(String(uploadResult.experian));
-    if (uploadResult.transunion)         setBureau2(String(uploadResult.transunion));
-    if (uploadResult.equifax)            setBureau3(String(uploadResult.equifax));
-    if (uploadResult.midScore)           setBorrowerScore(String(uploadResult.midScore));
-    if (uploadResult.overallUtilization) setUtilization(String(uploadResult.overallUtilization));
-    if (uploadResult.revolvingAccounts !== undefined)
-      setTradelines(p => ({
-        ...p,
-        revolving:     String(uploadResult.revolvingAccounts    || ''),
-        installment:   String(uploadResult.installmentAccounts  || ''),
-        mortgage:      String(uploadResult.mortgageAccounts     || ''),
-        totalAccounts: String(uploadResult.totalAccounts        || ''),
-      }));
-    if (uploadResult.collections?.length > 0)
-      setCollections(uploadResult.collections.map((c, i) => ({
+  const applyReportResult = (slotId) => {
+    const slot = reports.find(r => r.id === slotId);
+    if (!slot?.result) return;
+    const result = slot.result;
+
+    // Merge borrowers from this report into allBorrowers (replace any from same slot)
+    // Also clear slot-0 scenario seed when report 1 is applied — avoids duplicates
+    if (result.borrowers?.length > 0) {
+      const newBorrowers = result.borrowers.map(b => ({
+        name: b.name || `Borrower (Report ${slotId})`,
+        experian: b.experian || null,
+        transunion: b.transunion || null,
+        equifax: b.equifax || null,
+        computedMiddle: computeMiddle(b.experian, b.transunion, b.equifax),
+        reportSlot: slotId,
+        reasonCodes: b.reasonCodes || {},
+      })).filter(b => b.computedMiddle > 0);
+
+      setAllBorrowers(prev => {
+        // Always clear slot-0 scenario seed when any real report is applied
+        const filtered = prev.filter(b => b.reportSlot !== slotId && b.reportSlot !== 0);
+        return [...filtered, ...newBorrowers];
+      });
+      setScoreWriteBackDone(false);
+
+      // Set borrowerScore to qualifying for tradelines compat
+      const allMiddles = [...allBorrowers.filter(b => b.reportSlot !== slotId), ...newBorrowers].map(b => b.computedMiddle).filter(s => s > 0);
+      if (allMiddles.length > 0) setBorrowerScore(String(Math.min(...allMiddles)));
+    }
+
+    // Detect Authorized User accounts
+    if (result.authorizedUserAccounts?.length > 0) {
+      setAuAccounts(prev => {
+        const withoutSlot = prev.filter(a => a.reportSlot !== slotId);
+        return [...withoutSlot, ...result.authorizedUserAccounts.map(a => ({ ...a, reportSlot: slotId }))];
+      });
+    }
+
+    // Apply tradelines from first report only (usually the primary borrower report)
+    if (slotId === 1) {
+      if (result.overallUtilization != null) setUtilization(String(result.overallUtilization));
+      if (result.revolvingAccounts !== undefined)
+        setTradelines(p => ({
+          ...p,
+          revolving:     String(result.revolvingAccounts    || ''),
+          installment:   String(result.installmentAccounts  || ''),
+          mortgage:      String(result.mortgageAccounts     || ''),
+          totalAccounts: String(result.totalAccounts        || ''),
+        }));
+      if (result.revolvingAccountDetails?.length > 0)
+        setSimCards(result.revolvingAccountDetails.map((c, i) => ({
+          id: Date.now() + i, name: c.creditor || `Card ${i + 1}`,
+          balance: String(c.balance || ''), limit: String(c.limit || ''),
+        })));
+    }
+    // Merge collections and derogatory from all reports
+    if (result.collections?.length > 0)
+      setCollections(p => [...p, ...result.collections.map((c, i) => ({
         id: Date.now() + i, creditor: c.creditor, amount: String(c.amount),
         type: c.type || 'non_medical', status: c.status || 'open', loe: false,
-      })));
-    // Pre-populate rescore simulator from revolving account details
-    if (uploadResult.revolvingAccountDetails?.length > 0)
-      setSimCards(uploadResult.revolvingAccountDetails.map((c, i) => ({
-        id: Date.now() + i, name: c.creditor || `Card ${i + 1}`,
-        balance: String(c.balance || ''), limit: String(c.limit || ''),
-      })));
-    // Auto-check derogatory events from AI extraction
-    if (uploadResult.derogatoryItems?.length > 0) {
+      }))]);
+    if (result.derogatoryItems?.length > 0) {
       const newDerog = {}, newDates = {};
-      uploadResult.derogatoryItems.forEach(item => {
+      result.derogatoryItems.forEach(item => {
         const matched = DEROGATORY_TYPES.find(d =>
-          d.id === item.type ||
-          d.aiKeywords?.some(kw => item.type?.toLowerCase().includes(kw) || item.description?.toLowerCase().includes(kw))
+          d.id === item.type || d.aiKeywords?.some(kw => item.type?.toLowerCase().includes(kw) || item.description?.toLowerCase().includes(kw))
         );
-        if (matched) {
-          newDerog[matched.id] = true;
-          if (item.date) newDates[matched.id] = item.date;
-        }
+        if (matched) { newDerog[matched.id] = true; if (item.date) newDates[matched.id] = item.date; }
       });
       if (Object.keys(newDerog).length > 0) {
         setDerogatory(p => ({ ...p, ...newDerog }));
         setDerogatoryDates(p => ({ ...p, ...newDates }));
       }
     }
-    setUploadResult(null); setUploadFile(null); setShowUpload(false);
+    setReports(p => p.map(r => r.id === slotId ? { ...r, result: null } : r));
+  };
+
+  const handleScoreWriteBack = async () => {
+    if (!scenarioId || qualifyingScore === 0) return;
+    try {
+      await updateDoc(doc(db, 'scenarios', scenarioId), { creditScore: qualifyingScore, updated_at: serverTimestamp() });
+      setScoreWriteBackDone(true);
+    } catch (e) { console.error('Score write-back failed:', e); }
+  };
+
+  // ── Fastest Path to Next Milestone ────────────────────────────────────────
+  const fastestPathCards = useMemo(() => {
+    return simCardsWithPaydown
+      .filter(c => c.paydownNeeded > 0)
+      .map(c => {
+        const util = parseFloat(c.currentUtil) || 0;
+        const estPts = util > 80 ? 20 : util > 50 ? 15 : util > 30 ? 10 : 5;
+        return { ...c, estPts };
+      });
+  }, [simCardsWithPaydown]);
+
+  const cheapestPath = useMemo(() => {
+    if (!nextMilestone || fastestPathCards.length === 0 || pointsToNext === 0) return null;
+    const n = fastestPathCards.length;
+    let best = null;
+    // Enumerate all non-empty combinations (max 16 with 4 cards)
+    for (let mask = 1; mask < (1 << n); mask++) {
+      const combo = fastestPathCards.filter((_, i) => mask & (1 << i));
+      const pts  = combo.reduce((s, c) => s + c.estPts, 0);
+      const cost = combo.reduce((s, c) => s + c.paydownNeeded, 0);
+      if (pts >= pointsToNext && (!best || cost < best.totalCost || (cost === best.totalCost && combo.length < best.steps.length))) {
+        best = { steps: combo, totalCost: cost, totalPts: pts };
+      }
+    }
+    return best;
+  }, [fastestPathCards, nextMilestone, pointsToNext]);
+
+  // ── Rapid Rescore Letter Generator ────────────────────────────────────────
+  const generateRescoreLetter = () => {
+    const b = qualifyingBorrower || allBorrowers[0];
+    const name = b?.name || borrowerName || '[Borrower Name]';
+    const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const vendorName = 'Advantage Credit, Inc.';
+    const paydowns = simCardsWithPaydown.filter(c => c.paydownNeeded > 0);
+    const auList = auAccounts.filter(a => !a.borrower || a.borrower === b?.name);
+
+    let letter = `Date: ${today}\n\nTo: ${vendorName}\nRE: Rapid Rescore Request — ${name}\n\n`;
+    letter += `Please process the following rapid rescore actions for the above-named borrower:\n\n`;
+
+    if (paydowns.length > 0) {
+      letter += `CREDIT CARD PAYDOWNS (target <10% utilization):\n`;
+      paydowns.forEach((c, i) => {
+        letter += `${i + 1}. ${c.name || 'Account'}\n`;
+        letter += `   Current Balance: $${parseFloat(c.balance || 0).toLocaleString()}\n`;
+        letter += `   New Balance After Paydown: $${c.targetBal.toLocaleString()}\n`;
+        letter += `   Credit Limit: $${parseFloat(c.limit || 0).toLocaleString()}\n`;
+        letter += `   Supporting documentation: payment confirmation attached\n\n`;
+      });
+    }
+
+    if (auList.length > 0) {
+      letter += `AUTHORIZED USER REMOVALS:\n`;
+      auList.forEach((a, i) => {
+        letter += `${i + 1}. ${a.creditor} — Balance: $${(a.balance || 0).toLocaleString()} — Borrower listed as Authorized User only\n`;
+        letter += `   Please remove this account from DTI calculation — borrower has no legal liability\n\n`;
+      });
+    }
+
+    letter += `Please process and return updated scores at your earliest convenience.\n\n`;
+    letter += `Requested by: [Loan Officer Name]\nNMLS #: [Your NMLS #]\nCompany: [Your Company Name]\n\n`;
+    letter += `— Generated by LoanBeacons™ Credit Intelligence™ | Patent Pending`;
+    setRescoreLetterText(letter);
+    setRescoreLetterVisible(true);
   };
 
   const generateLOE = (eventId) => {
@@ -467,168 +616,356 @@ For derogatoryItems, type should match one of: bankruptcy_7, bankruptcy_13, fore
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
           <div className="xl:col-span-2 space-y-5">
 
-            {/* AI Upload — open by default, hero treatment */}
+            {/* ── MULTI-REPORT AI UPLOAD ─────────────────────────────────── */}
             <div className="bg-white rounded-xl border border-indigo-200 shadow-sm p-5">
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">🤖 AI Credit Report Review</h2>
-                  <p className="text-xs text-slate-400 mt-0.5">Upload once — AI fills scores, tradelines, collections, derogatory events, and rescore simulator automatically.</p>
-                </div>
-                <button onClick={() => setShowUpload(v => !v)} className="text-xs text-slate-400 hover:text-slate-600 font-semibold shrink-0 ml-4">
-                  {showUpload ? 'Hide' : 'Show'}
-                </button>
+              <div className="mb-4">
+                <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">🤖 AI Credit Report Review</h2>
+                <p className="text-xs text-slate-400 mt-0.5">Upload up to 3 separate credit reports — AI extracts all borrowers from each. Handles primary borrower report + co-borrower prequal report automatically.</p>
               </div>
+              <div className="space-y-3">
+                {reports.map(slot => (
+                  <div key={slot.id} className={`border rounded-xl p-4 ${slot.result ? 'border-emerald-300 bg-emerald-50/40' : slot.file ? 'border-indigo-300 bg-indigo-50/30' : 'border-dashed border-slate-200 bg-slate-50'}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-bold text-slate-600">{slot.label}</p>
+                      {slot.file && !slot.result && (
+                        <button onClick={() => setReports(p => p.map(r => r.id === slot.id ? { ...r, file: null, error: '' } : r))}
+                          className="text-xs text-slate-400 hover:text-red-400">✕ Remove</button>
+                      )}
+                    </div>
 
-              {showUpload && (
-                <div className="space-y-3">
-                  <div
-                    className="border-2 border-dashed border-indigo-300 rounded-xl p-6 text-center bg-indigo-50/60 cursor-pointer hover:bg-indigo-50 transition-all"
-                    onClick={() => !uploadFile && fileRef.current?.click()}
-                  >
-                    <input ref={fileRef} type="file" accept=".pdf,image/*"
-                      onChange={e => { setUploadFile(e.target.files?.[0] || null); setUploadResult(null); setUploadError(''); }}
-                      className="hidden" />
-                    {uploadFile ? (
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-700 font-semibold">📄 {uploadFile.name}</span>
-                        <button onClick={e => { e.stopPropagation(); setUploadFile(null); }} className="text-xs text-slate-400 hover:text-red-400">✕ Remove</button>
+                    {!slot.file ? (
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input type="file" accept=".pdf,image/*" className="hidden"
+                          onChange={e => handleReportUpload(slot.id, e.target.files?.[0] || null)} />
+                        <span className="text-xs text-indigo-600 font-semibold border border-indigo-300 rounded-lg px-3 py-1.5 hover:bg-indigo-50">📄 Upload PDF</span>
+                        <span className="text-xs text-slate-400">or drag a file here</span>
+                      </label>
+                    ) : slot.result ? (
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-emerald-700">✅ {slot.result.borrowers?.length || 0} borrower{(slot.result.borrowers?.length||0) !== 1 ? 's' : ''} extracted</p>
+                        <div className="space-y-1">
+                          {slot.result.borrowers?.map((b, i) => {
+                            const mid = computeMiddle(b.experian, b.transunion, b.equifax);
+                            return (
+                              <div key={i} className="flex items-center justify-between text-xs bg-white border border-emerald-100 rounded-lg px-3 py-1.5">
+                                <span className="font-semibold text-slate-700 truncate">{b.name}</span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-slate-400">{[b.experian, b.transunion, b.equifax].filter(Boolean).join(' / ')}</span>
+                                  <span className="font-black text-emerald-700">Mid: {mid}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {slot.result.flags?.length > 0 && (
+                          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                            {slot.result.flags.map((f, i) => <p key={i}>⚠ {f}</p>)}
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          <button onClick={() => applyReportResult(slot.id)}
+                            className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold">
+                            ✓ Apply to Module
+                          </button>
+                          <button onClick={() => setReports(p => p.map(r => r.id === slot.id ? { ...r, result: null } : r))}
+                            className="px-3 py-2 border border-slate-200 rounded-lg text-xs text-slate-500 hover:bg-slate-50">Discard</button>
+                        </div>
                       </div>
                     ) : (
-                      <div>
-                        <div className="text-3xl mb-2">📋</div>
-                        <p className="text-sm font-bold text-indigo-700">Click to upload tri-merge credit report</p>
-                        <p className="text-xs text-slate-400 mt-1">PDF or image — Haiku AI extracts everything automatically</p>
+                      <div className="space-y-2">
+                        <p className="text-xs text-slate-600 font-semibold truncate">📄 {slot.file.name}</p>
+                        <button onClick={() => runReportAI(slot.id)} disabled={slot.loading}
+                          className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all">
+                          {slot.loading ? '⏳ Analyzing…' : '🔍 Run AI Review'}
+                        </button>
+                        {slot.error && <p className="text-xs text-red-500">{slot.error}</p>}
                       </div>
                     )}
                   </div>
-
-                  {uploadFile && !uploadResult && (
-                    <button onClick={handleAIReview} disabled={uploadLoading}
-                      className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-sm font-bold transition-all">
-                      {uploadLoading ? '⏳ Analyzing credit report...' : '🔍 Run AI Review — Extract All Data'}
-                    </button>
-                  )}
-                  {uploadError && <p className="text-xs text-red-500 font-semibold">{uploadError}</p>}
-
-                  {uploadResult && (
-                    <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-3">
-                      <p className="text-xs font-bold text-indigo-700 uppercase tracking-wide">Extraction Complete</p>
-                      <div className="grid grid-cols-3 gap-2 text-xs text-center">
-                        {[['Experian', uploadResult.experian], ['TransUnion', uploadResult.transunion], ['Equifax', uploadResult.equifax]].map(([b, s]) => (
-                          <div key={b} className="bg-white rounded-lg p-2 border border-indigo-100">
-                            <div className="text-slate-400">{b}</div>
-                            <div className="font-black text-lg text-indigo-700">{s || '—'}</div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="text-center">
-                        <span className="text-xs text-slate-400">Mid Score: </span>
-                        <span className="text-xl font-black text-indigo-700">{uploadResult.midScore || '—'}</span>
-                      </div>
-                      <div className="flex gap-2 text-xs text-center">
-                        {uploadResult.revolvingAccountDetails?.length > 0 && (
-                          <div className="flex-1 bg-emerald-50 border border-emerald-200 rounded-lg p-2">
-                            <div className="font-bold text-emerald-700 text-base">{uploadResult.revolvingAccountDetails.length}</div>
-                            <div className="text-slate-400">Cards → Sim</div>
-                          </div>
-                        )}
-                        {uploadResult.derogatoryItems?.length > 0 && (
-                          <div className="flex-1 bg-red-50 border border-red-200 rounded-lg p-2">
-                            <div className="font-bold text-red-600 text-base">{uploadResult.derogatoryItems.length}</div>
-                            <div className="text-slate-400">Derogatory → Auto-checked</div>
-                          </div>
-                        )}
-                        {uploadResult.collections?.length > 0 && (
-                          <div className="flex-1 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                            <div className="font-bold text-amber-600 text-base">{uploadResult.collections.length}</div>
-                            <div className="text-slate-400">Collections</div>
-                          </div>
-                        )}
-                      </div>
-                      {uploadResult.flags?.length > 0 && (
-                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                          <p className="text-xs font-bold text-amber-700 mb-1">⚠ Underwriting Flags</p>
-                          {uploadResult.flags.map((f, i) => <p key={i} className="text-xs text-amber-700">• {f}</p>)}
-                        </div>
-                      )}
-                      {uploadResult.summary && <p className="text-xs text-slate-500 italic">{uploadResult.summary}</p>}
-                      <div className="flex gap-2">
-                        <button onClick={applyExtractedCredit} className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold">
-                          ✓ Apply Everything to Module
-                        </button>
-                        <button onClick={() => setUploadResult(null)} className="px-4 py-2 border border-slate-200 rounded-lg text-xs text-slate-500 hover:bg-slate-50">Discard</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                ))}
+              </div>
             </div>
 
-            {/* Credit Scores */}
+            {/* ── UNIFIED BORROWER SCORE TABLE ──────────────────────────── */}
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-              <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wide mb-4">📊 Credit Scores</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <div>
-                  <p className="text-xs font-bold text-slate-600 mb-3">Borrower — Enter all 3 bureau scores</p>
-                  <div className="grid grid-cols-3 gap-2 mb-2">
-                    {[['Experian', bureau1, v => calcMid(v, bureau2, bureau3, v, setBureau1, setBorrowerScore)],
-                      ['TransUnion', bureau2, v => calcMid(bureau1, v, bureau3, v, setBureau2, setBorrowerScore)],
-                      ['Equifax', bureau3, v => calcMid(bureau1, bureau2, v, v, setBureau3, setBorrowerScore)]].map(([l, v, fn]) => (
-                      <div key={l}>
-                        <label className="block text-xs text-slate-400 mb-1">{l}</label>
-                        <input type="number" value={v} placeholder="---" onChange={e => fn(e.target.value)}
-                          className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm text-center focus:ring-2 focus:ring-indigo-300" />
+              <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wide mb-4">📊 Credit Scores — All Borrowers</h2>
+
+              {allBorrowers.length === 0 ? (
+                <div className="text-center py-6 text-slate-400 text-sm">
+                  <p>Upload credit reports above — AI will extract all borrowers automatically.</p>
+                  <p className="text-xs mt-1 text-slate-300">Or enter scores manually below ↓</p>
+                </div>
+              ) : (
+                <div className="space-y-2 mb-4">
+                  {allBorrowers.map((b, i) => {
+                    const isQualifying = b.computedMiddle === qualifyingScore;
+                    const ci = (b.name || '').indexOf(',');
+                    const niceName = ci > -1
+                      ? (b.name.slice(ci+1).trim() + ' ' + b.name.slice(0,ci).trim())
+                      : b.name;
+                    const displayName = niceName.toLowerCase().split(' ').filter(Boolean)
+                      .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                    return (
+                      <div key={i} className={`flex items-center justify-between rounded-xl px-4 py-3 border ${isQualifying ? 'bg-amber-50 border-amber-300' : 'bg-gray-50 border-gray-100'}`}>
+                        <div>
+                          <p className={`text-sm font-bold ${isQualifying ? 'text-amber-800' : 'text-slate-700'}`}>
+                            {isQualifying ? '⭐ ' : ''}{displayName}
+                          </p>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {[b.experian && `EXP ${b.experian}`, b.transunion && `TU ${b.transunion}`, b.equifax && `EQ ${b.equifax}`].filter(Boolean).join(' · ') || (b.reportSlot === 0 ? 'From scenario — upload report to get bureau scores' : 'Scores from AI')}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <div className={`text-2xl font-black ${isQualifying ? 'text-amber-700' : 'text-slate-600'}`}>{b.computedMiddle}</div>
+                          <div className="text-[10px] text-slate-400">middle score</div>
+                        </div>
                       </div>
-                    ))}
+                    );
+                  })}
+                </div>
+              )}
+
+              {allBorrowers.length > 0 && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-black text-indigo-800">Qualifying Score: {qualifyingScore}</p>
+                    <p className="text-xs text-indigo-600 mt-0.5">
+                      {qualifyingBorrower ? (() => {
+                        const ci = (qualifyingBorrower.name || '').indexOf(',');
+                        const nice = ci > -1
+                          ? (qualifyingBorrower.name.slice(ci+1).trim() + ' ' + qualifyingBorrower.name.slice(0,ci).trim())
+                          : qualifyingBorrower.name;
+                        return nice.toLowerCase().split(' ').filter(Boolean).map(w => w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+                      })() + ' — lowest middle' : 'lowest middle across all borrowers'}
+                      {allBorrowers.length > 1 && <span className="ml-2 text-amber-600 font-semibold">⚠ {allBorrowers.length}-borrower file</span>}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2 mt-3">
-                    <span className="text-xs text-slate-400">Mid Score:</span>
-                    <input type="number" value={borrowerScore} onChange={e => setBorrowerScore(e.target.value)} placeholder="or enter directly"
-                      className="w-32 border border-indigo-200 rounded-lg px-3 py-1.5 text-sm font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-300" />
+                  <div className="flex items-center gap-2">
+                    {scenarioId && !scoreWriteBackDone && (
+                      <button onClick={handleScoreWriteBack}
+                        className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg">
+                        Update Scenario
+                      </button>
+                    )}
+                    {scoreWriteBackDone && <span className="text-xs font-bold text-emerald-600">✅ Scenario Updated</span>}
                   </div>
                 </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-600 mb-3">Co-Borrower (if applicable)</p>
-                  <div className="grid grid-cols-3 gap-2 mb-2">
-                    {[['Experian', coBureau1, v => calcMid(v, coBureau2, coBureau3, v, setCoBureau1, setCoScore)],
-                      ['TransUnion', coBureau2, v => calcMid(coBureau1, v, coBureau3, v, setCoBureau2, setCoScore)],
-                      ['Equifax', coBureau3, v => calcMid(coBureau1, coBureau2, v, v, setCoBureau3, setCoScore)]].map(([l, v, fn]) => (
-                      <div key={l}>
-                        <label className="block text-xs text-slate-400 mb-1">{l}</label>
-                        <input type="number" value={v} placeholder="---" onChange={e => fn(e.target.value)}
-                          className="w-full border border-slate-200 rounded-lg px-2 py-2 text-sm text-center focus:ring-2 focus:ring-indigo-300" />
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-2 mt-3">
-                    <span className="text-xs text-slate-400">Mid Score:</span>
-                    <input type="number" value={coScore} onChange={e => setCoScore(e.target.value)} placeholder="or enter directly"
-                      className="w-32 border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-600 focus:ring-2 focus:ring-indigo-300" />
-                  </div>
+              )}
+
+              {/* Manual entry fallback */}
+              <div className="mt-4 border-t border-slate-100 pt-4">
+                <p className="text-xs text-slate-400 mb-2">Manual entry (optional — use if not uploading PDFs)</p>
+                <div className="flex items-center gap-3">
+                  <label className="text-xs text-slate-500">Qualifying mid score:</label>
+                  <input type="number" value={borrowerScore} onChange={e => { setBorrowerScore(e.target.value); if (allBorrowers.length === 0 && e.target.value) setAllBorrowers([{ name: 'Borrower', experian: null, transunion: null, equifax: null, computedMiddle: parseInt(e.target.value)||0, reportSlot: 0 }]); }}
+                    placeholder="e.g. 680"
+                    className="w-28 border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-300" />
                 </div>
               </div>
-
-              {coMidScore > 0 && midScore > 0 && (
-                <div className={`mt-4 rounded-xl px-4 py-3 border ${coMidScore < midScore ? 'bg-amber-50 border-amber-200' : 'bg-indigo-50 border-indigo-200'}`}>
-                  <p className="text-xs font-bold text-slate-700 mb-2">
-                    Qualifying Score: {qualifyingScore} — lower of the two mid scores
-                    {coMidScore < midScore && <span className="ml-2 text-amber-700">⚠ Co-borrower is the limiting factor</span>}
-                  </p>
-                  {coMidScore < midScore && (
-                    <div className="space-y-1 mt-2">
-                      <p className="text-xs font-bold text-amber-700">Co-Borrower Impact Analysis</p>
-                      {SCORE_MILESTONES.filter(m => m > coMidScore && m <= midScore).slice(0, 3).map(m => {
-                        const unlocked = Object.entries(PROGRAM_MIN_SCORES).filter(([, v]) => v.score <= m && v.score > coMidScore);
+            </div>
+            {/* ── SCORE FACTOR INTELLIGENCE ─────────────────────────── */}
+            {allBorrowers.some(b => b.reasonCodes && (Object.values(b.reasonCodes).flat().length > 0)) && (
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">🧠 Score Factor Intelligence</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">Reason codes extracted from credit report — ranked by actionability</p>
+                  </div>
+                  {allBorrowers.length > 1 && (
+                    <div className="flex gap-1 flex-wrap">
+                      <button onClick={() => setFocusBorrower(null)}
+                        className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-colors ${!focusBorrower ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-200 text-slate-500 hover:border-indigo-300'}`}>
+                        Qualifying
+                      </button>
+                      {allBorrowers.map((b, i) => {
+                        // Handle "LASTNAME, FIRSTNAME" → "Firstname Lastname" and normalize to Title Case
+                        const raw = b.name || '';
+                        const commaIdx = raw.indexOf(',');
+                        const reordered = commaIdx > -1
+                          ? (raw.slice(commaIdx + 1).trim() + ' ' + raw.slice(0, commaIdx).trim())
+                          : raw;
+                        const displayName = reordered
+                          .toLowerCase()
+                          .split(' ')
+                          .filter(Boolean)
+                          .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+                          .join(' ');
                         return (
-                          <div key={m} className="text-xs text-amber-700">
-                            • Co-borrower needs <strong>{m - coMidScore} pts</strong> to reach {m}
-                            {unlocked.length > 0 && ` — unlocks ${unlocked.map(([p]) => p).join(', ')}`}
-                          </div>
+                          <button key={i} onClick={() => setFocusBorrower(b.name)}
+                            className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-colors ${focusBorrower === b.name ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-200 text-slate-500 hover:border-indigo-300'}`}>
+                            {displayName}
+                          </button>
                         );
                       })}
-                      <p className="text-xs text-slate-500 mt-2 italic">Consider removing co-borrower if their income is not needed for qualification.</p>
                     </div>
                   )}
+                </div>
+                {(() => {
+                  // Find target borrower directly from allBorrowers — no name-match needed
+                  const targetBorrower = focusBorrower
+                    ? allBorrowers.find(b => b.name === focusBorrower)
+                    : (qualifyingBorrower || allBorrowers[0]);
+                  if (!targetBorrower) return <p className="text-xs text-slate-400">Upload a credit report to see score factors.</p>;
+
+                  const rc = targetBorrower.reasonCodes || {};
+                  const allCodes = [...new Set([
+                    ...(rc.experian   || []),
+                    ...(rc.transunion || []),
+                    ...(rc.equifax    || []),
+                  ].map(normalizeCode))].filter(c => c && c !== '0' && /^\d+$/.test(c));
+
+                  const codes = allCodes.map(code => ({
+                    code,
+                    ...(REASON_CODE_MAP[code] || { text: `Score factor code ${code}`, actionable: false, estPts: '?', action: 'Review with credit analyst.' }),
+                  }));
+
+                  const actionable = codes.filter(c => c.actionable);
+                  const timeOnly   = codes.filter(c => !c.actionable);
+
+                  // Display name: handle LASTNAME, FIRSTNAME format
+                  const raw = targetBorrower.name || '';
+                  const commaIdx = raw.indexOf(',');
+                  const reordered = commaIdx > -1
+                    ? (raw.slice(commaIdx + 1).trim() + ' ' + raw.slice(0, commaIdx).trim())
+                    : raw;
+                  const displayLabel = reordered.toLowerCase().split(' ').filter(Boolean)
+                    .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+                  return (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Showing codes for:</span>
+                        <span className="text-xs font-bold text-slate-700">{displayLabel}</span>
+                        {!focusBorrower && qualifyingBorrower && <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-2 py-0.5 rounded-full">Qualifying</span>}
+                      </div>
+                      {actionable.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-xs font-bold text-emerald-700">✅ Actionable — do these now</p>
+                          {actionable.map((c, i) => (
+                            <div key={i} className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-bold text-emerald-800">{c.text}</span>
+                                <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-0.5 rounded-full">+{c.estPts} pts est.</span>
+                              </div>
+                              <p className="text-xs text-emerald-700">{c.action}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {timeOnly.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-xs font-bold text-slate-400">⏳ Time-only — nothing to do</p>
+                          {timeOnly.map((c, i) => (
+                            <div key={i} className="bg-slate-50 border border-slate-100 rounded-lg p-3 opacity-70">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs font-semibold text-slate-600">{c.text}</span>
+                                <span className="text-[10px] bg-slate-100 text-slate-400 font-bold px-2 py-0.5 rounded-full">Time only</span>
+                              </div>
+                              <p className="text-xs text-slate-500">{c.action}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {codes.length === 0 && <p className="text-xs text-slate-400">No reason codes extracted from this borrower's report.</p>}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* ── AU ACCOUNT DETECTION ──────────────────────────────────── */}
+            {auAccounts.length > 0 && (
+              <div className="bg-amber-50 border border-amber-300 rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-lg">⚡</span>
+                  <div>
+                    <p className="text-sm font-bold text-amber-800">Free Action Detected — Authorized User Accounts</p>
+                    <p className="text-xs text-amber-700 mt-0.5">These accounts appear in DTI but borrower has no legal liability. Removing may reduce DTI at zero cost.</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {auAccounts.map((a, i) => (
+                    <div key={i} className="bg-white border border-amber-200 rounded-lg px-4 py-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">{a.creditor}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Balance: ${(a.balance || 0).toLocaleString()} · Payment: ${(a.payment || 0).toLocaleString()}/mo
+                            {a.borrower && (() => {
+                              const raw = a.borrower;
+                              const ci = raw.indexOf(',');
+                              const nice = ci > -1
+                                ? (raw.slice(ci+1).trim() + ' ' + raw.slice(0,ci).trim())
+                                : raw;
+                              const titled = nice.toLowerCase().split(' ').filter(Boolean).map(w => w.charAt(0).toUpperCase()+w.slice(1)).join(' ');
+                              return <span className="ml-2 text-amber-600">AU on {titled}'s report</span>;
+                            })()}
+                          </p>
+                        </div>
+                        <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-1 rounded-full">ECOA: A</span>
+                      </div>
+                      <p className="text-xs text-amber-700 mt-2">⚠ Verify borrower has independent tradelines before removing. If yes — remove as AU to eliminate ${(a.payment||0).toLocaleString()}/mo from DTI instantly.</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── FASTEST PATH TO MILESTONE ─────────────────────────────── */}
+            {cheapestPath && nextMilestone && (
+              <div className="bg-white border border-indigo-200 rounded-xl p-5 shadow-sm">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-lg">🎯</span>
+                  <div>
+                    <p className="text-sm font-bold text-indigo-800">Fastest Path to {nextMilestone} — Minimum Spend</p>
+                    <p className="text-xs text-indigo-600 mt-0.5">You need {pointsToNext} pts. Here's the cheapest way to get there — stop after this, don't overspend.</p>
+                  </div>
+                </div>
+                <div className="space-y-2 mb-3">
+                  {cheapestPath.steps.map((c, i) => (
+                    <div key={i} className="flex items-center justify-between bg-indigo-50 border border-indigo-100 rounded-lg px-4 py-2.5">
+                      <div>
+                        <p className="text-sm font-bold text-indigo-900">{c.name || `Card ${i+1}`}</p>
+                        <p className="text-xs text-indigo-600">Pay {fmt$(c.paydownNeeded)} → reduce ${parseFloat(c.balance||0).toLocaleString()} to ${c.targetBal.toLocaleString()} ({c.currentUtil}% → 9%)</p>
+                      </div>
+                      <span className="text-sm font-black text-emerald-600">+{c.estPts} pts est.</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between bg-indigo-600 text-white rounded-lg px-4 py-3">
+                  <span className="text-sm font-bold">Total spend to cross {nextMilestone}</span>
+                  <span className="text-lg font-black">{fmt$(cheapestPath.totalCost)}</span>
+                </div>
+                <p className="text-xs text-slate-400 mt-2 italic">Estimates based on utilization reduction. Actual results vary. Request rapid rescore after paydowns.</p>
+              </div>
+            )}
+
+            {/* ── RAPID RESCORE REQUEST LETTER ─────────────────────────── */}
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">📨 Rapid Rescore Request</h2>
+                  <p className="text-xs text-slate-400 mt-0.5">Pre-filled letter for your credit vendor — ready to send after paydowns are made.</p>
+                </div>
+                <button onClick={generateRescoreLetter}
+                  className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg">
+                  Generate Letter
+                </button>
+              </div>
+              {rescoreLetterVisible && (
+                <div className="space-y-2">
+                  <textarea readOnly value={rescoreLetterText} rows={14}
+                    className="w-full text-xs font-mono text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3 resize-none focus:outline-none" />
+                  <div className="flex gap-2">
+                    <button onClick={() => { navigator.clipboard.writeText(rescoreLetterText); }}
+                      className="flex-1 py-2 text-xs font-bold text-indigo-700 border border-indigo-300 rounded-lg hover:bg-indigo-50">
+                      📋 Copy to Clipboard
+                    </button>
+                    <button onClick={() => setRescoreLetterVisible(false)}
+                      className="px-4 py-2 text-xs text-slate-400 border border-slate-200 rounded-lg hover:bg-slate-50">
+                      Hide
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
