@@ -2,6 +2,7 @@
 // LoanBeacons™ — Module 2 | Stage 1: Pre-Structure & Initial Analysis
 // Qualifying Intelligence™ — DTI analysis, income qualification, program fit
 // Enhanced: Student Loan Payment Factor (Option C) — program-aware qualifying payment wired into DTI
+// Fix: verticalAlign: 'middle' on all ProgramFitRow <td> elements (Tailwind preflight override)
 
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -188,6 +189,8 @@ function Section({ title, subtitle, icon, children }) {
 }
 
 // ─── Program Fit Row ───────────────────────────────────────────────────────────
+// Fix: valign="middle" HTML attribute on every <td> — bypasses Tailwind preflight
+// CSS resets entirely. style/className vertical-align is overridden by Tailwind base.
 function ProgramFitRow({ prog, progKey, frontDTI, backDTI, creditScore, totalIncome }) {
   const frontPass  = !prog.frontMax || frontDTI <= prog.frontMax;
   const backPass   = progKey === 'VA' ? true : backDTI <= prog.backMax;
@@ -199,13 +202,13 @@ function ProgramFitRow({ prog, progKey, frontDTI, backDTI, creditScore, totalInc
 
   return (
     <tr className={`border-b border-slate-50 ${eligible ? 'hover:bg-emerald-50/30' : 'hover:bg-red-50/20'}`}>
-      <td className="px-4 py-3">
+      <td valign="middle" className="px-4 py-3">
         <div className="flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${eligible || isVA ? 'bg-emerald-500' : 'bg-red-400'}`} />
           <span className="text-sm font-bold text-slate-800">{prog.label}</span>
         </div>
       </td>
-      <td className="px-4 py-3 text-center">
+      <td valign="middle" className="px-4 py-3 text-center">
         {prog.frontMax
           ? <div>
               <span className={`text-sm font-bold ${frontPass ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -215,22 +218,24 @@ function ProgramFitRow({ prog, progKey, frontDTI, backDTI, creditScore, totalInc
             </div>
           : <span className="text-xs text-slate-400">No limit</span>}
       </td>
-      <td className="px-4 py-3 text-center">
+      <td valign="middle" className="px-4 py-3 text-center">
         <span className={`text-sm font-bold ${isVA && vaOverDTI ? 'text-amber-600' : backPass ? 'text-emerald-600' : 'text-red-600'}`}>
           {fmtPct(backDTI)} <span className="text-xs font-normal text-slate-400">/ {prog.backMax}%</span>
         </span>
         {isVA && vaOverDTI && <p className="text-xs text-amber-600 mt-0.5">Review residual income</p>}
       </td>
       <td className="px-4 py-3 text-center">
-        {isVA
-          ? <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${vaOverDTI ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
-              {vaOverDTI ? '⚠ Check Residual' : '✓ Qualifies'}
-            </span>
-          : <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${eligible ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
-              {eligible ? '✓ Qualifies' : '✗ Fails'}
-            </span>}
+        <div className="flex items-center justify-center h-full min-h-[44px]">
+          {isVA
+            ? <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${vaOverDTI ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+                {vaOverDTI ? '⚠ Check Residual' : '✓ Qualifies'}
+              </span>
+            : <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${eligible ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                {eligible ? '✓ Qualifies' : '✗ Fails'}
+              </span>}
+        </div>
       </td>
-      <td className="px-4 py-3 text-xs text-slate-400 max-w-xs">{prog.notes}</td>
+      <td valign="middle" className="px-4 py-3 text-xs text-slate-400 max-w-xs">{prog.notes}</td>
     </tr>
   );
 }
@@ -417,7 +422,7 @@ export default function QualifyingIntel() {
     </div>
   );
 
-  const borrower       = scenario ? `${scenario.firstName || ''} ${scenario.lastName || ''}`.trim() || scenario.borrowerName : null;
+  const borrower        = scenario ? `${scenario.firstName || ''} ${scenario.lastName || ''}`.trim() || scenario.borrowerName : null;
   const coBorrowerNames = scenario?.coBorrowers?.filter(cb => cb.firstName || cb.lastName).map(cb => `${cb.firstName || ''} ${cb.lastName || ''}`.trim()) || [];
   const propertyAddress = scenario ? [scenario.streetAddress, scenario.city, scenario.state, scenario.zipCode].filter(Boolean).join(', ') : '';
 
@@ -512,9 +517,9 @@ export default function QualifyingIntel() {
               </div>
               <div className="space-y-3">
                 {incomes.map((inc, idx) => {
-                  const incType     = INCOME_TYPES.find(t => t.id === inc.type);
-                  const rawAmt      = parseFloat(inc.gross) || 0;
-                  const grossedUp   = incType?.grossUp && inc.nonTaxableConfirmed && rawAmt > 0;
+                  const incType       = INCOME_TYPES.find(t => t.id === inc.type);
+                  const rawAmt        = parseFloat(inc.gross) || 0;
+                  const grossedUp     = incType?.grossUp && inc.nonTaxableConfirmed && rawAmt > 0;
                   const qualifyingAmt = grossedUp ? rawAmt / 0.75 : rawAmt;
                   return (
                     <div key={inc.id} className={`rounded-xl border p-3 ${grossedUp ? 'border-purple-200 bg-purple-50/30' : 'border-slate-100 bg-white'}`}>
@@ -617,12 +622,12 @@ export default function QualifyingIntel() {
             <Section title="Housing Payment & Debts" subtitle="PITI auto-calculated from loan details. Debts from credit report." icon="🏠">
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
                 {[
-                  { label: 'Loan Amount',           val: loanAmount,  set: setLoanAmount,  ph: '300000' },
-                  { label: 'Property Taxes (mo)',   val: taxes,       set: setTaxes,       ph: '350'    },
-                  { label: 'Home Insurance (mo)',   val: insurance,   set: setInsurance,   ph: '120'    },
-                  { label: 'HOA Dues (mo)',          val: hoa,         set: setHoa,         ph: '0'      },
-                  { label: 'MI / MIP (mo)',          val: mi,          set: setMi,          ph: '0'      },
-                  { label: 'Monthly Debts',          val: debts,       set: setDebt,        ph: '850'    },
+                  { label: 'Loan Amount',         val: loanAmount, set: setLoanAmount, ph: '300000' },
+                  { label: 'Property Taxes (mo)', val: taxes,      set: setTaxes,      ph: '350'    },
+                  { label: 'Home Insurance (mo)', val: insurance,  set: setInsurance,  ph: '120'    },
+                  { label: 'HOA Dues (mo)',        val: hoa,        set: setHoa,        ph: '0'      },
+                  { label: 'MI / MIP (mo)',        val: mi,         set: setMi,         ph: '0'      },
+                  { label: 'Monthly Debts',        val: debts,      set: setDebt,       ph: '850'    },
                 ].map(f => (
                   <div key={f.label}>
                     <label className="block text-xs font-semibold text-slate-400 mb-1">{f.label}</label>
@@ -718,7 +723,6 @@ export default function QualifyingIntel() {
 
               {parseFloat(slBalance) > 0 ? (
                 <>
-                  {/* Current program qualifying payment */}
                   <div className={`rounded-xl border p-4 mb-4 ${slQualPayment === 0 ? 'bg-emerald-50 border-emerald-200' : slQualPayment > 400 ? 'bg-amber-50 border-amber-200' : 'bg-indigo-50 border-indigo-200'}`}>
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div>
@@ -737,7 +741,6 @@ export default function QualifyingIntel() {
                     </div>
                   </div>
 
-                  {/* All-program comparison table */}
                   <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                     <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
                       <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Program-by-Program Comparison</p>
@@ -754,18 +757,18 @@ export default function QualifyingIntel() {
                       </thead>
                       <tbody>
                         {SL_PROGRAM_COMPARISON.map(p => {
-                          const res     = calcSLPayment(slBalance, slActualPayment, slDeferred, slDeferMonths, p.key);
-                          const impact  = totalIncome > 0 ? (res.payment / totalIncome * 100).toFixed(1) : '—';
-                          const isCur   = (scenario?.loanType || '').toUpperCase() === p.key;
-                          const allPayments = SL_PROGRAM_COMPARISON.map(pp => calcSLPayment(slBalance, slActualPayment, slDeferred, slDeferMonths, pp.key).payment);
-                          const isLowest = res.payment === Math.min(...allPayments);
+                          const res      = calcSLPayment(slBalance, slActualPayment, slDeferred, slDeferMonths, p.key);
+                          const impact   = totalIncome > 0 ? (res.payment / totalIncome * 100).toFixed(1) : '—';
+                          const isCur    = (scenario?.loanType || '').toUpperCase() === p.key;
+                          const allPmts  = SL_PROGRAM_COMPARISON.map(pp => calcSLPayment(slBalance, slActualPayment, slDeferred, slDeferMonths, pp.key).payment);
+                          const isLowest = res.payment === Math.min(...allPmts);
                           return (
                             <tr key={p.key} className={`border-b border-slate-50 ${isCur ? 'bg-indigo-50' : isLowest ? 'bg-emerald-50/50' : ''}`}>
                               <td className="px-4 py-2.5 font-semibold text-slate-700">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {p.label}
-                                  {isCur     && <span className="text-xs bg-indigo-100 text-indigo-600 font-bold px-1.5 py-0.5 rounded">Current</span>}
-                                  {isLowest  && <span className="text-xs bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">Best</span>}
+                                  {isCur    && <span className="text-xs bg-indigo-100 text-indigo-600 font-bold px-1.5 py-0.5 rounded">Current</span>}
+                                  {isLowest && <span className="text-xs bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">Best</span>}
                                 </div>
                               </td>
                               <td className={`px-4 py-2.5 text-right font-black text-base ${res.payment === 0 ? 'text-emerald-600' : res.payment > parseFloat(slBalance) * 0.008 ? 'text-amber-600' : 'text-slate-700'}`}>
@@ -798,9 +801,9 @@ export default function QualifyingIntel() {
               <Section title="DTI Analysis" subtitle="Debt-to-Income ratios calculated across all applicable programs." icon="📊">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                   {[
-                    { label: 'Total Qualifying Income', val: fmt$(totalIncome),  sub: '/month',          color: 'emerald' },
-                    { label: 'Total PITI',               val: fmt$(totalHousing), sub: '/month',          color: 'blue'    },
-                    { label: 'Front-End DTI',            val: fmtPct(frontDTI),   sub: 'housing ÷ income', color: frontDTI > 36 ? 'red' : frontDTI > 28 ? 'amber' : 'emerald' },
+                    { label: 'Total Qualifying Income', val: fmt$(totalIncome),  sub: '/month',             color: 'emerald' },
+                    { label: 'Total PITI',               val: fmt$(totalHousing), sub: '/month',             color: 'blue'    },
+                    { label: 'Front-End DTI',            val: fmtPct(frontDTI),   sub: 'housing ÷ income',   color: frontDTI > 36 ? 'red' : frontDTI > 28 ? 'amber' : 'emerald' },
                     { label: 'Back-End DTI',             val: fmtPct(backDTI),    sub: 'all debts ÷ income', color: backDTI > 50 ? 'red' : backDTI > 43 ? 'amber' : 'emerald' },
                   ].map(item => (
                     <div key={item.label} className={`rounded-xl p-4 border text-center bg-${item.color}-50 border-${item.color}-200`}>
@@ -968,10 +971,10 @@ export default function QualifyingIntel() {
               <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Income Summary</h3>
               <div className="space-y-2 text-xs">
                 {[
-                  ['Borrower Income',   fmt$(totalBorrowerIncome)   + '/mo'],
-                  ['Co-Borrower Income',totalCoBorrowerIncome > 0 ? fmt$(totalCoBorrowerIncome) + '/mo' : '—'],
-                  ['Total Qualifying',  fmt$(totalIncome)           + '/mo'],
-                  ['Annual (×12)',      fmt$(totalIncome * 12)],
+                  ['Borrower Income',    fmt$(totalBorrowerIncome)   + '/mo'],
+                  ['Co-Borrower Income', totalCoBorrowerIncome > 0 ? fmt$(totalCoBorrowerIncome) + '/mo' : '—'],
+                  ['Total Qualifying',   fmt$(totalIncome)           + '/mo'],
+                  ['Annual (×12)',       fmt$(totalIncome * 12)],
                 ].map(([l, v]) => (
                   <div key={l} className="flex justify-between">
                     <span className="text-slate-400">{l}</span>
@@ -987,7 +990,6 @@ export default function QualifyingIntel() {
               </div>
             </div>
 
-            {/* Student Loan Summary in Right Panel */}
             {parseFloat(slBalance) > 0 && (
               <div className={`rounded-xl border p-4 ${slQualPayment === 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                 <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">🎓 Student Loan</h3>

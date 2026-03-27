@@ -224,6 +224,7 @@ export default function ARMStructureIntelligence() {
   const [step, setStep] = useState(0);
   const [scenario, setScenario] = useState(null);
   const [saved, setSaved] = useState(false);
+  const [savedRecordId, setSavedRecordId] = useState(null);
 
   // Step 1 — ARM Profile
   const [profile, setProfile] = useState({
@@ -429,7 +430,7 @@ export default function ARMStructureIntelligence() {
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Initial Fixed Period</p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                 {FIXED_PERIODS.map(fp => (
-                  <label key={fp.value} className={`block cursor-pointer p-3 rounded-xl border transition-all text-center ${profile.fixedPeriod===fp.value?"bg-orange-900/30 border-orange-500":"bg-slate-700/40 border-slate-600 hover:border-slate-500"}`}>
+                  <label key={fp.value} onClick={()=>setProfile(p=>({...p,fixedPeriod:fp.value}))} className={`block cursor-pointer p-3 rounded-xl border transition-all text-center ${profile.fixedPeriod===fp.value?"bg-orange-900/30 border-orange-500":"bg-slate-700/40 border-slate-600 hover:border-slate-500"}`}>
                     <input type="radio" className="hidden" checked={profile.fixedPeriod===fp.value} onChange={()=>setProfile(p=>({...p,fixedPeriod:fp.value}))}/>
                     <p className="font-bold text-white text-sm">{fp.label}</p>
                     <p className="text-xs text-slate-400 mt-0.5">{fp.note}</p>

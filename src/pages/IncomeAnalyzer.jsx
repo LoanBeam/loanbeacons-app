@@ -1,6 +1,7 @@
 // src/pages/IncomeAnalyzer.jsx
 // LoanBeacons™ — Module 3 | Stage 1: Pre-Structure
-// Income Analyzer™ — W2, Self-Employed, Rental, Social Security, etc.
+// Income Analyzer™ — Named per-borrower sections, unlimited co-borrowers from scenario
+// Rebuild: Each borrower (primary + all co-borrowers) gets their own named, expandable income section
 
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -10,6 +11,7 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 
+// ─── Income Methods ───────────────────────────────────────────────────────────
 const INCOME_METHODS = {
   W2: {
     id: 'W2', label: 'W-2 / Salaried', icon: '💼',
@@ -64,9 +66,9 @@ const INCOME_METHODS = {
     docs: ['Leave & Earnings Statement (LES)', 'Orders if PCS pending'],
     notes: 'BAH/BAS are non-taxable and can be grossed up 25%. All allotments count as qualifying income.',
     calc: (f) => {
-      const base = parseFloat(f.base_pay)||0;
-      const bah = (parseFloat(f.bah)||0) * 1.25;
-      const bas = (parseFloat(f.bas)||0) * 1.25;
+      const base  = parseFloat(f.base_pay)||0;
+      const bah   = (parseFloat(f.bah)||0) * 1.25;
+      const bas   = (parseFloat(f.bas)||0) * 1.25;
       const other = parseFloat(f.other_allotments)||0;
       return base + bah + bas + other;
     },
@@ -84,33 +86,145 @@ const INCOME_METHODS = {
 };
 
 const FIELD_LABELS = {
-  base_monthly: 'Base Monthly Salary ($)',
-  overtime_monthly: 'Overtime Monthly (2yr avg, $)',
-  bonus_monthly: 'Bonus Monthly (2yr avg, $)',
-  commission_monthly: 'Commission Monthly (2yr avg, $)',
-  yr1_net_income: 'Year 1 Net Income ($, annual)',
-  yr2_net_income: 'Year 2 Net Income ($, annual)',
-  addbacks_depreciation: 'Depreciation Addback ($, annual)',
-  addbacks_depletion: 'Depletion Addback ($, annual)',
-  business_use_of_home: 'Business Use of Home Addback ($, annual)',
-  gross_rents: 'Gross Monthly Rents ($)',
-  vacancy_factor_pct: 'Vacancy Factor (%, default 25)',
-  mortgage_payment: 'Mortgage Payment ($, mo)',
-  taxes_insurance: 'Taxes + Insurance ($, mo)',
-  repairs_maintenance: 'Repairs / Mgmt ($, mo)',
-  monthly_benefit: 'Monthly Benefit Amount ($)',
-  gross_up_eligible: 'Non-taxable (gross-up eligible)?',
-  monthly_amount: 'Monthly Amount ($)',
-  is_taxable: 'Is this income taxable?',
-  base_pay: 'Base Pay (monthly, $)',
-  bah: 'BAH (monthly, $)',
-  bas: 'BAS (monthly, $)',
-  other_allotments: 'Other Allotments (monthly, $)',
-  months_remaining: 'Months of Continuance Remaining',
+  base_monthly:           'Base Monthly Salary ($)',
+  overtime_monthly:       'Overtime Monthly (2yr avg, $)',
+  bonus_monthly:          'Bonus Monthly (2yr avg, $)',
+  commission_monthly:     'Commission Monthly (2yr avg, $)',
+  yr1_net_income:         'Year 1 Net Income ($, annual)',
+  yr2_net_income:         'Year 2 Net Income ($, annual)',
+  addbacks_depreciation:  'Depreciation Addback ($, annual)',
+  addbacks_depletion:     'Depletion Addback ($, annual)',
+  business_use_of_home:   'Business Use of Home Addback ($, annual)',
+  gross_rents:            'Gross Monthly Rents ($)',
+  vacancy_factor_pct:     'Vacancy Factor (%, default 25)',
+  mortgage_payment:       'Mortgage Payment ($, mo)',
+  taxes_insurance:        'Taxes + Insurance ($, mo)',
+  repairs_maintenance:    'Repairs / Mgmt ($, mo)',
+  monthly_benefit:        'Monthly Benefit Amount ($)',
+  gross_up_eligible:      'Non-taxable (gross-up eligible)?',
+  monthly_amount:         'Monthly Amount ($)',
+  is_taxable:             'Is this income taxable?',
+  base_pay:               'Base Pay (monthly, $)',
+  bah:                    'BAH (monthly, $)',
+  bas:                    'BAS (monthly, $)',
+  other_allotments:       'Other Allotments (monthly, $)',
+  months_remaining:       'Months of Continuance Remaining',
 };
 
 const fmt$ = n => n ? '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '$0.00';
 
+// Role badge + color styles
+const ROLE_STYLES = {
+  primary:       { badge: 'bg-indigo-100 text-indigo-700 border-indigo-200', dot: 'bg-indigo-500',  total: 'text-indigo-600', bar: 'bg-indigo-400' },
+  'co-borrower': { badge: 'bg-violet-100 text-violet-700 border-violet-200', dot: 'bg-violet-500',  total: 'text-violet-600', bar: 'bg-violet-400' },
+};
+
+// ─── Source Card ──────────────────────────────────────────────────────────────
+function SourceCard({ source, groupId, onUpdate, onRemove }) {
+  const method = INCOME_METHODS[source.method];
+  if (!method) return null;
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 mb-4">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-xl">{method.icon}</span>
+          <h3 className="font-bold text-slate-800">{method.label}</h3>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-right">
+            <div className="text-xs text-slate-400">Qualifying Monthly</div>
+            <div className="text-lg font-black text-indigo-600">{fmt$(source.calculated)}</div>
+          </div>
+          <button onClick={() => onRemove(groupId, source.id)} className="text-slate-300 hover:text-red-400 text-xl">✕</button>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        {method.fields.map(field => (
+          <div key={field}>
+            <label className="block text-xs font-semibold text-slate-400 mb-1">{FIELD_LABELS[field] || field}</label>
+            {field === 'gross_up_eligible' || field === 'is_taxable' ? (
+              <select value={source.fields[field]||'no'} onChange={e => onUpdate(groupId, source.id, field, e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300">
+                <option value="yes">Yes</option><option value="no">No</option>
+              </select>
+            ) : (
+              <input type="number" value={source.fields[field]||''} placeholder="0"
+                onChange={e => onUpdate(groupId, source.id, field, e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 mb-3">
+        <p className="text-xs text-amber-700"><strong>📐 Calculation:</strong> {method.notes}</p>
+      </div>
+      <div>
+        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Required Documentation</p>
+        <div className="flex flex-wrap gap-1.5">
+          {method.docs.map((d, i) => (
+            <span key={i} className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full">📎 {d}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Borrower Group Section ───────────────────────────────────────────────────
+function BorrowerGroup({ group, addingForGroup, onAddSource, onUpdate, onRemove, onStartAdd, onCancelAdd }) {
+  const styles   = ROLE_STYLES[group.role] || ROLE_STYLES['co-borrower'];
+  const groupTotal = group.sources.reduce((s, src) => s + (src.calculated||0), 0);
+  const isAdding = addingForGroup === group.id;
+
+  return (
+    <div className="mb-8">
+      {/* Section header with borrower name */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${styles.dot}`} />
+          <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">
+            {group.name || (group.role === 'primary' ? 'Borrower' : 'Co-Borrower')}
+          </h2>
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${styles.badge}`}>
+            {group.role === 'primary' ? 'Primary' : 'Co-Borrower'}
+          </span>
+        </div>
+        <div className={`text-sm font-black shrink-0 ${styles.total}`}>{fmt$(groupTotal)}/mo</div>
+      </div>
+
+      {/* Income source cards */}
+      {group.sources.map(s => (
+        <SourceCard key={s.id} source={s} groupId={group.id} onUpdate={onUpdate} onRemove={onRemove} />
+      ))}
+
+      {/* Income type picker */}
+      {isAdding ? (
+        <div className="bg-white rounded-xl border border-indigo-200 p-4">
+          <p className="text-sm font-bold text-slate-700 mb-3">
+            Select income type for {group.name || (group.role === 'primary' ? 'borrower' : 'co-borrower')}
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {Object.values(INCOME_METHODS).map(m => (
+              <button key={m.id} onClick={() => onAddSource(group.id, m.id)}
+                className="flex items-center gap-2 p-3 rounded-lg border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-left transition-all">
+                <span className="text-lg">{m.icon}</span>
+                <span className="text-sm font-semibold text-slate-700">{m.label}</span>
+              </button>
+            ))}
+          </div>
+          <button onClick={onCancelAdd} className="mt-3 text-xs text-slate-400 hover:text-slate-600">Cancel</button>
+        </div>
+      ) : (
+        <button onClick={() => onStartAdd(group.id)}
+          className="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-sm font-semibold text-slate-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
+          + Add Income Source for {group.name || (group.role === 'primary' ? 'Borrower' : 'Co-Borrower')}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Component ────────────────────────────────────────────────────────────
 export default function IncomeAnalyzer() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -118,16 +232,16 @@ export default function IncomeAnalyzer() {
 
   const { reportFindings } = useDecisionRecord(scenarioId);
   const [savedRecordId, setSavedRecordId] = useState(null);
-  const [recordSaving, setRecordSaving] = useState(false);
+  const [recordSaving, setRecordSaving]   = useState(false);
 
-  const [scenario, setScenario] = useState(null);
-  const [loading, setLoading] = useState(!!scenarioId);
+  const [scenario, setScenario]   = useState(null);
+  const [loading, setLoading]     = useState(!!scenarioId);
   const [scenarios, setScenarios] = useState([]);
-  const [incomeSources, setIncomeSources] = useState([]);
-  const [coborrowerSources, setCoborrowerSources] = useState([]);
-  const [notes, setNotes] = useState('');
-  const [addingFor, setAddingFor] = useState(null); // 'borrower' | 'coborrower'
+  const [notes, setNotes]         = useState('');
+  const [addingForGroup, setAddingForGroup] = useState(null);
+  const [borrowerGroups, setBorrowerGroups] = useState([]);
 
+  // ─── Load Scenario ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!scenarioId) {
       getDocs(collection(db, 'scenarios')).then(snap => {
@@ -137,57 +251,99 @@ export default function IncomeAnalyzer() {
       return;
     }
     getDoc(doc(db, 'scenarios', scenarioId)).then(snap => {
-      if (snap.exists()) {
-        const d = { id: snap.id, ...snap.data() };
-        setScenario(d);
-        if (d.monthlyIncome) {
-          setIncomeSources([{ id: 1, method: 'W2', fields: { base_monthly: String(d.monthlyIncome) }, calculated: parseFloat(d.monthlyIncome)||0 }]);
-        }
-        if (d.coBorrowerIncome && parseFloat(d.coBorrowerIncome) > 0) {
-          setCoborrowerSources([{ id: 1, method: 'W2', fields: { base_monthly: String(d.coBorrowerIncome) }, calculated: parseFloat(d.coBorrowerIncome)||0 }]);
-        }
+      if (!snap.exists()) return;
+      const d = { id: snap.id, ...snap.data() };
+      setScenario(d);
+
+      const groups = [];
+
+      // Primary borrower
+      const primaryName = `${d.firstName||''} ${d.lastName||''}`.trim() || d.borrowerName || 'Primary Borrower';
+      const primarySources = d.monthlyIncome && parseFloat(d.monthlyIncome) > 0
+        ? [{ id: Date.now(), method: 'W2', fields: { base_monthly: String(d.monthlyIncome) }, calculated: parseFloat(d.monthlyIncome)||0 }]
+        : [];
+      groups.push({ id: 'primary', name: primaryName, role: 'primary', sources: primarySources });
+
+      // Co-borrowers — support full array from scenario.coBorrowers
+      const coBorrowers = d.coBorrowers || [];
+      if (coBorrowers.length > 0) {
+        coBorrowers.forEach((cb, i) => {
+          const cbName   = `${cb.firstName||''} ${cb.lastName||''}`.trim() || `Co-Borrower ${i + 1}`;
+          const cbIncome = parseFloat(cb.monthlyIncome) || 0;
+          const cbSources = cbIncome > 0
+            ? [{ id: Date.now() + i + 1, method: 'W2', fields: { base_monthly: String(cbIncome) }, calculated: cbIncome }]
+            : [];
+          groups.push({ id: `co-${i}`, name: cbName, role: 'co-borrower', sources: cbSources });
+        });
+      } else if (d.coBorrowerIncome && parseFloat(d.coBorrowerIncome) > 0) {
+        // Legacy single co-borrower income field fallback
+        groups.push({
+          id: 'co-0', name: 'Co-Borrower', role: 'co-borrower',
+          sources: [{ id: Date.now() + 1, method: 'W2', fields: { base_monthly: String(d.coBorrowerIncome) }, calculated: parseFloat(d.coBorrowerIncome)||0 }],
+        });
+      } else {
+        // Always show at least one empty co-borrower section
+        groups.push({ id: 'co-0', name: 'Co-Borrower', role: 'co-borrower', sources: [] });
       }
+
+      setBorrowerGroups(groups);
     }).catch(console.error).finally(() => setLoading(false));
   }, [scenarioId]);
 
-  const addSource = (borrowerType, methodId) => {
+  // ─── Group Operations ────────────────────────────────────────────────────
+  const handleAddSource = (groupId, methodId) => {
     const newSource = { id: Date.now(), method: methodId, fields: {}, calculated: 0 };
-    if (borrowerType === 'borrower') setIncomeSources(p => [...p, newSource]);
-    else setCoborrowerSources(p => [...p, newSource]);
-    setAddingFor(null);
+    setBorrowerGroups(prev => prev.map(g =>
+      g.id === groupId ? { ...g, sources: [...g.sources, newSource] } : g
+    ));
+    setAddingForGroup(null);
   };
 
-  const updateSource = (borrowerType, id, field, val) => {
-    const updater = (prev) => prev.map(s => {
-      if (s.id !== id) return s;
-      const newFields = { ...s.fields, [field]: val };
-      const method = INCOME_METHODS[s.method];
-      const calculated = method ? method.calc(newFields) : 0;
-      return { ...s, fields: newFields, calculated };
-    });
-    if (borrowerType === 'borrower') setIncomeSources(updater);
-    else setCoborrowerSources(updater);
+  const handleUpdateSource = (groupId, sourceId, field, val) => {
+    setBorrowerGroups(prev => prev.map(g => {
+      if (g.id !== groupId) return g;
+      return {
+        ...g, sources: g.sources.map(s => {
+          if (s.id !== sourceId) return s;
+          const newFields = { ...s.fields, [field]: val };
+          const method    = INCOME_METHODS[s.method];
+          return { ...s, fields: newFields, calculated: method ? method.calc(newFields) : 0 };
+        }),
+      };
+    }));
   };
 
-  const removeSource = (borrowerType, id) => {
-    if (borrowerType === 'borrower') setIncomeSources(p => p.filter(s => s.id !== id));
-    else setCoborrowerSources(p => p.filter(s => s.id !== id));
+  const handleRemoveSource = (groupId, sourceId) => {
+    setBorrowerGroups(prev => prev.map(g =>
+      g.id === groupId ? { ...g, sources: g.sources.filter(s => s.id !== sourceId) } : g
+    ));
   };
 
-  const totalBorrower = incomeSources.reduce((s, src) => s + (src.calculated||0), 0);
-  const totalCoborrower = coborrowerSources.reduce((s, src) => s + (src.calculated||0), 0);
-  const totalQualifying = totalBorrower + totalCoborrower;
+  const handleAddCoBorrower = () => {
+    const nextIdx = borrowerGroups.filter(g => g.role === 'co-borrower').length;
+    setBorrowerGroups(prev => [...prev, {
+      id: `co-${Date.now()}`,
+      name: `Co-Borrower ${nextIdx + 1}`,
+      role: 'co-borrower',
+      sources: [],
+    }]);
+  };
 
+  // ─── Totals ──────────────────────────────────────────────────────────────
+  const groupTotals    = borrowerGroups.map(g => ({ ...g, total: g.sources.reduce((s, src) => s + (src.calculated||0), 0) }));
+  const totalQualifying = groupTotals.reduce((s, g) => s + g.total, 0);
+
+  // ─── Decision Record ─────────────────────────────────────────────────────
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
       const writtenId = await reportFindings('INCOME_ANALYZER', {
         totalQualifyingMonthly: parseFloat(totalQualifying.toFixed(2)),
-        totalBorrowerMonthly: parseFloat(totalBorrower.toFixed(2)),
-        totalCoborrowerMonthly: parseFloat(totalCoborrower.toFixed(2)),
         annualQualifyingIncome: parseFloat((totalQualifying * 12).toFixed(2)),
-        incomeSources: incomeSources.map(s => ({ method: s.method, monthly: parseFloat(s.calculated.toFixed(2)) })),
-        coborrowerSources: coborrowerSources.map(s => ({ method: s.method, monthly: parseFloat(s.calculated.toFixed(2)) })),
+        borrowerGroups: groupTotals.map(g => ({
+          name: g.name, role: g.role, totalMonthly: parseFloat(g.total.toFixed(2)),
+          sources: g.sources.map(s => ({ method: s.method, monthly: parseFloat(s.calculated.toFixed(2)) })),
+        })),
         loNotes: notes,
         timestamp: new Date().toISOString(),
       });
@@ -196,6 +352,7 @@ export default function IncomeAnalyzer() {
     finally { setRecordSaving(false); }
   };
 
+  // ─── Loading ──────────────────────────────────────────────────────────────
   if (loading) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <div className="flex items-center gap-3 text-slate-400">
@@ -205,6 +362,7 @@ export default function IncomeAnalyzer() {
     </div>
   );
 
+  // ─── No scenario — picker ─────────────────────────────────────────────────
   if (!scenarioId) return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-2xl mx-auto px-4">
@@ -230,61 +388,12 @@ export default function IncomeAnalyzer() {
     </div>
   );
 
-  const borrowerName = scenario ? `${scenario.firstName||''} ${scenario.lastName||''}`.trim() || scenario.borrowerName : null;
-
-  const SourceCard = ({ source, borrowerType }) => {
-    const method = INCOME_METHODS[source.method];
-    if (!method) return null;
-    return (
-      <div className="bg-white rounded-xl border border-gray-200 p-5 mb-4">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">{method.icon}</span>
-            <h3 className="font-bold text-slate-800">{method.label}</h3>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <div className="text-xs text-slate-400">Qualifying Monthly</div>
-              <div className="text-lg font-black text-indigo-600">{fmt$(source.calculated)}</div>
-            </div>
-            <button onClick={() => removeSource(borrowerType, source.id)} className="text-slate-300 hover:text-red-400 text-xl">✕</button>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          {method.fields.map(field => (
-            <div key={field}>
-              <label className="block text-xs font-semibold text-slate-400 mb-1">{FIELD_LABELS[field] || field}</label>
-              {field === 'gross_up_eligible' || field === 'is_taxable' ? (
-                <select value={source.fields[field]||'no'} onChange={e => updateSource(borrowerType, source.id, field, e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300">
-                  <option value="yes">Yes</option><option value="no">No</option>
-                </select>
-              ) : (
-                <input type="number" value={source.fields[field]||''} placeholder="0"
-                  onChange={e => updateSource(borrowerType, source.id, field, e.target.value)}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
-              )}
-            </div>
-          ))}
-        </div>
-        <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 mb-3">
-          <p className="text-xs text-amber-700"><strong>📐 Calculation:</strong> {method.notes}</p>
-        </div>
-        <div>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Required Documentation</p>
-          <div className="flex flex-wrap gap-1.5">
-            {method.docs.map((d, i) => (
-              <span key={i} className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full">📎 {d}</span>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  };
+  const allNames = borrowerGroups.map(g => g.name).filter(Boolean).join(' · ');
 
   return (
-    <div className="min-h-screen bg-gray-50 py-6">
+    <div className="min-h-screen bg-gray-50 py-6 pb-24">
       <div className="max-w-5xl mx-auto px-4">
+
         {/* Header */}
         <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-2xl px-6 py-5 mb-6">
           <div className="flex items-start justify-between">
@@ -294,9 +403,9 @@ export default function IncomeAnalyzer() {
                 <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">Module 3</span>
               </div>
               <h1 className="text-2xl font-bold">Income Analyzer™</h1>
-              <p className="text-indigo-200 text-sm mt-0.5">{borrowerName ? `${borrowerName} · ` : ''}W-2 · Self-Employed · Rental · SS · Military · More</p>
+              <p className="text-indigo-200 text-sm mt-0.5 truncate max-w-lg">{allNames || 'W-2 · Self-Employed · Rental · SS · Military · More'}</p>
             </div>
-            <div className="text-right">
+            <div className="text-right shrink-0 ml-4">
               <div className="text-xs text-slate-400 uppercase tracking-wide mb-1">Total Qualifying</div>
               <div className="text-3xl font-black text-white">{fmt$(totalQualifying)}<span className="text-sm font-normal text-slate-400">/mo</span></div>
               <div className="text-xs text-slate-400">{fmt$(totalQualifying * 12)}/yr</div>
@@ -306,63 +415,26 @@ export default function IncomeAnalyzer() {
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
           <div className="xl:col-span-2">
-            {/* Borrower */}
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">👤 Borrower Income</h2>
-                <div className="text-sm font-black text-indigo-600">{fmt$(totalBorrower)}/mo</div>
-              </div>
-              {incomeSources.map(s => <SourceCard key={s.id} source={s} borrowerType="borrower" />)}
-              {addingFor === 'borrower' ? (
-                <div className="bg-white rounded-xl border border-indigo-200 p-4">
-                  <p className="text-sm font-bold text-slate-700 mb-3">Select Income Type</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {Object.values(INCOME_METHODS).map(m => (
-                      <button key={m.id} onClick={() => addSource('borrower', m.id)}
-                        className="flex items-center gap-2 p-3 rounded-lg border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-left transition-all">
-                        <span className="text-lg">{m.icon}</span>
-                        <span className="text-sm font-semibold text-slate-700">{m.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <button onClick={() => setAddingFor(null)} className="mt-3 text-xs text-slate-400 hover:text-slate-600">Cancel</button>
-                </div>
-              ) : (
-                <button onClick={() => setAddingFor('borrower')}
-                  className="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-sm font-semibold text-slate-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
-                  + Add Borrower Income Source
-                </button>
-              )}
-            </div>
 
-            {/* Co-Borrower */}
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">👥 Co-Borrower Income</h2>
-                <div className="text-sm font-black text-indigo-600">{fmt$(totalCoborrower)}/mo</div>
-              </div>
-              {coborrowerSources.map(s => <SourceCard key={s.id} source={s} borrowerType="coborrower" />)}
-              {addingFor === 'coborrower' ? (
-                <div className="bg-white rounded-xl border border-indigo-200 p-4">
-                  <p className="text-sm font-bold text-slate-700 mb-3">Select Income Type</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {Object.values(INCOME_METHODS).map(m => (
-                      <button key={m.id} onClick={() => addSource('coborrower', m.id)}
-                        className="flex items-center gap-2 p-3 rounded-lg border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-left transition-all">
-                        <span className="text-lg">{m.icon}</span>
-                        <span className="text-sm font-semibold text-slate-700">{m.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <button onClick={() => setAddingFor(null)} className="mt-3 text-xs text-slate-400 hover:text-slate-600">Cancel</button>
-                </div>
-              ) : (
-                <button onClick={() => setAddingFor('coborrower')}
-                  className="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-sm font-semibold text-slate-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
-                  + Add Co-Borrower Income Source
-                </button>
-              )}
-            </div>
+            {/* Per-borrower income groups */}
+            {borrowerGroups.map(group => (
+              <BorrowerGroup
+                key={group.id}
+                group={group}
+                addingForGroup={addingForGroup}
+                onAddSource={handleAddSource}
+                onUpdate={handleUpdateSource}
+                onRemove={handleRemoveSource}
+                onStartAdd={(id) => setAddingForGroup(id)}
+                onCancelAdd={() => setAddingForGroup(null)}
+              />
+            ))}
+
+            {/* Add another co-borrower */}
+            <button onClick={handleAddCoBorrower}
+              className="w-full py-3 border-2 border-dashed border-violet-200 rounded-xl text-sm font-semibold text-violet-400 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50 transition-all mb-6">
+              + Add Another Co-Borrower
+            </button>
 
             {/* Notes */}
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-5">
@@ -379,26 +451,27 @@ export default function IncomeAnalyzer() {
 
           {/* Right Panel */}
           <div className="space-y-4">
+            {/* Income Summary — named per borrower */}
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
               <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Income Summary</h3>
               <div className="space-y-3">
-                {[
-                  { label: 'Borrower', val: totalBorrower, color: 'indigo' },
-                  { label: 'Co-Borrower', val: totalCoborrower, color: 'violet' },
-                ].map(row => (
-                  <div key={row.label}>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-slate-500">{row.label}</span>
-                      <span className={`font-bold text-${row.color}-600`}>{fmt$(row.val)}/mo</span>
-                    </div>
-                    {totalQualifying > 0 && (
-                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                        <div className={`h-full bg-${row.color}-400 rounded-full`}
-                          style={{ width: `${(row.val / totalQualifying) * 100}%` }} />
+                {groupTotals.map(g => {
+                  const styles = ROLE_STYLES[g.role] || ROLE_STYLES['co-borrower'];
+                  return (
+                    <div key={g.id}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-slate-600 font-semibold truncate max-w-[130px]">{g.name}</span>
+                        <span className={`font-bold shrink-0 ml-1 ${styles.total}`}>{fmt$(g.total)}/mo</span>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {totalQualifying > 0 && (
+                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div className={`h-full ${styles.bar} rounded-full transition-all`}
+                            style={{ width: `${(g.total / totalQualifying) * 100}%` }} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
                 <div className="border-t border-slate-100 pt-3 flex justify-between">
                   <span className="text-sm font-bold text-slate-600">Total Qualifying</span>
                   <span className="text-sm font-black text-indigo-600">{fmt$(totalQualifying)}/mo</span>
@@ -409,26 +482,33 @@ export default function IncomeAnalyzer() {
               </div>
             </div>
 
-            {/* Income sources breakdown */}
-            {(incomeSources.length > 0 || coborrowerSources.length > 0) && (
+            {/* Sources Breakdown — all borrowers with name labels */}
+            {borrowerGroups.some(g => g.sources.length > 0) && (
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
                 <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Sources Breakdown</h3>
                 <div className="space-y-2">
-                  {[...incomeSources, ...coborrowerSources].map(s => {
-                    const m = INCOME_METHODS[s.method];
-                    return (
-                      <div key={s.id} className="flex items-center justify-between text-xs">
-                        <span className="flex items-center gap-1.5 text-slate-600">
-                          <span>{m?.icon}</span>{m?.label}
-                        </span>
-                        <span className="font-bold text-slate-800">{fmt$(s.calculated)}</span>
-                      </div>
-                    );
-                  })}
+                  {borrowerGroups.map(g =>
+                    g.sources.map(s => {
+                      const m      = INCOME_METHODS[s.method];
+                      const styles = ROLE_STYLES[g.role] || ROLE_STYLES['co-borrower'];
+                      return (
+                        <div key={s.id} className="flex items-center justify-between text-xs gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${styles.dot}`} />
+                            <span className="text-slate-500 truncate max-w-[80px]">{g.name}</span>
+                            <span className="text-slate-300 shrink-0">·</span>
+                            <span className="text-slate-600 truncate">{m?.icon} {m?.label}</span>
+                          </div>
+                          <span className="font-bold text-slate-800 shrink-0">{fmt$(s.calculated)}</span>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             )}
 
+            {/* Key Rules */}
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
               <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2">⚠️ Key Rules</h3>
               <div className="text-xs text-amber-700 space-y-1.5">
@@ -443,7 +523,7 @@ export default function IncomeAnalyzer() {
           </div>
         </div>
       </div>
-<CanonicalSequenceBar currentModuleKey="INCOME_ANALYZER" scenarioId={scenarioId} recordId={savedRecordId} />
+      <CanonicalSequenceBar currentModuleKey="INCOME_ANALYZER" scenarioId={scenarioId} recordId={savedRecordId} />
     </div>
   );
 }

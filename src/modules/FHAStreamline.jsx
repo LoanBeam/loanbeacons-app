@@ -443,37 +443,26 @@ export default function FHAStreamline() {
   });
 
   const applyParsed = (parsed) => {
-    const upb     = parsed.existing_upb        || parsed.currentBalance                    || null;
-    const rateRaw = parsed.existing_note_rate  || parsed.originalRate  || parsed.currentRate || null;
-    const rate    = rateRaw ? parseFloat((parseFloat(rateRaw) < 1 ? parseFloat(rateRaw) * 100 : parseFloat(rateRaw)).toFixed(3)) : null;
-    const pi      = parsed.existing_monthly_pi || parsed.originalPayment || null;
-    const mip     = parsed.existing_monthly_mip|| parsed.currentMIP                        || null;
-    const ufmip   = parsed.original_ufmip      || parsed.ufmipPaid                         || null;
-    const endDate = parsed.endorsement_date    || parsed.closingDate                        || null;
-    const caseNum = parsed.existing_case_number|| parsed.loanNumber                         || null;
-    const propVal = parsed.property_value                                                   || null;
-    const state   = parsed.state                                                            || null;
-    const county  = parsed.county                                                           || null;
     setInp(p => ({...p,
-      existing_upb:             upb     ? String(upb)     : p.existing_upb,
-      existing_note_rate:       rate    ? String(rate)    : p.existing_note_rate,
-      existing_monthly_pi:      pi      ? String(pi)      : p.existing_monthly_pi,
-      existing_monthly_mip:     mip     ? String(mip)     : p.existing_monthly_mip,
-      original_ufmip:           ufmip   ? String(ufmip)   : p.original_ufmip,
-      endorsement_date:         endDate || p.endorsement_date,
-      existing_case_number:     caseNum || p.existing_case_number,
-      lates_last_6:             parsed.lates_last_6  ?? p.lates_last_6,
-      lates_months_7_12:        parsed.lates_months_7_12 ?? p.lates_months_7_12,
-      in_forbearance:           parsed.in_forbearance ?? p.in_forbearance,
-      is_delinquent:            parsed.is_delinquent  ?? p.is_delinquent,
-      estimated_property_value: propVal ? String(propVal) : p.estimated_property_value,
-      property_state:           state   || p.property_state,
-      property_county:          county  || p.property_county,
+      existing_upb:             parsed.existing_upb         ? String(parsed.existing_upb)         : p.existing_upb,
+      existing_note_rate:       parsed.existing_note_rate   ? String(parsed.existing_note_rate)   : p.existing_note_rate,
+      existing_monthly_pi:      parsed.existing_monthly_pi  ? String(parsed.existing_monthly_pi)  : p.existing_monthly_pi,
+      existing_monthly_mip:     parsed.existing_monthly_mip ? String(parsed.existing_monthly_mip) : p.existing_monthly_mip,
+      original_ufmip:           parsed.original_ufmip       ? String(parsed.original_ufmip)       : p.original_ufmip,
+      endorsement_date:         parsed.endorsement_date     || p.endorsement_date,
+      existing_case_number:     parsed.existing_case_number || p.existing_case_number,
+      lates_last_6:             parsed.lates_last_6         ?? p.lates_last_6,
+      lates_months_7_12:        parsed.lates_months_7_12    ?? p.lates_months_7_12,
+      in_forbearance:           parsed.in_forbearance       ?? p.in_forbearance,
+      is_delinquent:            parsed.is_delinquent        ?? p.is_delinquent,
+      estimated_property_value: parsed.property_value       ? String(parsed.property_value)       : p.estimated_property_value,
+      property_state:           parsed.state                || p.property_state,
+      property_county:          parsed.county               || p.property_county,
     }));
-    if (county && state) {
-      setTaxCalc(t => ({...t, county, state}));
-      const fmv = parseFloat(propVal || inp.estimated_property_value || 0);
-      if (fmv) setTaxResult(calcPropertyTax(fmv, county, state, 0));
+    if (parsed.county && parsed.state) {
+      setTaxCalc(t => ({...t, county:parsed.county, state:parsed.state}));
+      const fmv = parseFloat(parsed.property_value || inp.estimated_property_value || 0);
+      if (fmv) setTaxResult(calcPropertyTax(fmv, parsed.county, parsed.state, 0));
     }
   };
 
@@ -504,7 +493,7 @@ export default function FHAStreamline() {
         const result = await extractFn({
           base64Data,
           mediaType,
-          documentType: i === 0 ? 'closing_disclosure' : 'mortgage_statement',
+          documentType: 'fha_mortgage',
         });
 
         console.log(`Doc ${i+1} result:`, result.data);
