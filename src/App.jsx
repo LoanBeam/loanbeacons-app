@@ -15,7 +15,7 @@ import Admin from './pages/Admin'
 import AESharePage from './pages/AESharePage'
 import LenderMatch from './modules/LenderMatch'
 import DPAIntelligence from './modules/DPAIntelligence';
-import VAIRRRLIntelligence from './modules/VAIRRRLIntelligence'
+import VAIRRRL from './modules/VAIRRRL'
 import USDAIntelligence from './modules/USDAIntelligence'
 import ARMStructureIntelligence from './modules/ARMStructureIntelligence'
 import LenderIntakeForm from './modules/LenderIntakeForm'
@@ -60,7 +60,7 @@ function AppShell() {
         <Route path="/dpa-intelligence" element={<DPAIntelligence />} />
         <Route path="/aus-rescue" element={<AUSRescue />} />
         <Route path="/rehab-intelligence" element={<RehabIntelligence />} />
-        <Route path="/va-irrrl" element={<VAIRRRLIntelligence />} />
+        <Route path="/va-irrrl" element={<VAIRRRL />} />
         <Route path="/usda-intelligence" element={<USDAIntelligence />} />
         <Route path="/arm-structure" element={<ARMStructureIntelligence />} />
         <Route path="/lender-profile-builder" element={<LenderProfileBuilder />} />
