@@ -1,36 +1,25 @@
 'use strict';
 
 // functions/src/respondToScenarioShare.cjs
-// LoanBeacons™ — AE Response Cloud Function
-// Called from the AE landing page when AE clicks Approve / Need Info / Decline
-// Responsibilities:
-//   1. Find the scenarioShare doc by publicShareToken
-//   2. Write ae_response, ae_notes, responded_at, lo_notified to the doc
-//   3. Send notification email to the LO via SendGrid
-//   4. Return success to the AE landing page
+// LoanBeacons™ — AE Response Cloud Function Handler
+// Exported as { handler } for use in index.js with Gen2 onCall + Secret Manager
 
-const { onCall } = require('firebase-functions/v2/https');
-const admin       = require('firebase-admin');
-const sgMail      = require('@sendgrid/mail');
-require('dotenv').config();
+const admin  = require('firebase-admin');
+const sgMail = require('@sendgrid/mail');
 
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
+if (!admin.apps.length) admin.initializeApp();
 
 const db = admin.firestore();
 const { FieldValue } = admin.firestore;
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-
 // ── RESPONSE LABELS ──────────────────────────────────────────────────────────
 const RESPONSE_LABELS = {
   approved:   '✅ Approved',
-  needs_info: '💬 More Information Needed',
+  needs_info: '🔼 More Information Needed',
   declined:   '❌ Declined',
 };
 
-// ── BUILD LO NOTIFICATION EMAIL ──────────────────────────────────────────────
+// ── BUILD LO NOTIFICATION EMAIL ───────────────────────────────────────────────
 function buildLoNotificationEmail({ snapshot, aeEmail, aeResponse, aeNotes, shareId }) {
   const { lo, borrower, property, lender, scenarioId, publicShareToken } = snapshot;
   const responseLabel = RESPONSE_LABELS[aeResponse] || aeResponse;
@@ -109,17 +98,19 @@ function buildLoNotificationEmail({ snapshot, aeEmail, aeResponse, aeNotes, shar
 </html>`;
 }
 
-// ── CLOUD FUNCTION ───────────────────────────────────────────────────────────
-exports.respondToScenarioShare = onCall(async (request) => {
+// ── HANDLER (exported for index.js) ──────────────────────────────────────────
+async function handler(request) {
+  // Set API key at runtime — Secret Manager injects it as env var for Gen2 functions
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
   const { token, aeResponse, aeNotes, aeEmail } = request.data;
 
   if (!token)      throw new Error('token is required');
   if (!aeResponse) throw new Error('aeResponse is required');
 
   const validResponses = ['approved', 'needs_info', 'declined'];
-  if (!validResponses.includes(aeResponse)) {
+  if (!validResponses.includes(aeResponse))
     throw new Error(`aeResponse must be one of: ${validResponses.join(', ')}`);
-  }
 
   // 1. Find the share doc by publicShareToken
   const snap = await db
@@ -129,9 +120,7 @@ exports.respondToScenarioShare = onCall(async (request) => {
     .limit(1)
     .get();
 
-  if (snap.empty) {
-    throw new Error('Share not found or not yet sent');
-  }
+  if (snap.empty) throw new Error('Share not found or not yet sent');
 
   const shareDoc  = snap.docs[0];
   const shareId   = shareDoc.id;
@@ -149,12 +138,12 @@ exports.respondToScenarioShare = onCall(async (request) => {
 
   // 3. Write AE response to Firestore
   await db.collection('scenarioShares').doc(shareId).update({
-    ae_response:   aeResponse,
-    ae_notes:      aeNotes  || '',
-    ae_email:      aeEmail  || '',
-    responded_at:  FieldValue.serverTimestamp(),
-    lo_notified:   false,
-    updatedAt:     FieldValue.serverTimestamp(),
+    ae_response:  aeResponse,
+    ae_notes:     aeNotes  || '',
+    ae_email:     aeEmail  || '',
+    responded_at: FieldValue.serverTimestamp(),
+    lo_notified:  false,
+    updatedAt:    FieldValue.serverTimestamp(),
   });
 
   // 4. Send notification email to LO
@@ -164,13 +153,12 @@ exports.respondToScenarioShare = onCall(async (request) => {
       const subject = `AE Response: ${RESPONSE_LABELS[aeResponse]} — ${snapshot?.borrower?.name || 'Your Scenario'}`;
       await sgMail.send({
         to:      loEmail,
-        from:    { email: process.env.SENDGRID_FROM || 'noreply@loanbeacons.com', name: 'LoanBeacons™' },
+        from:    { email: 'george@cvls.loans', name: 'LoanBeacons™' },
         replyTo: aeEmail || undefined,
         subject,
         html:    buildLoNotificationEmail({ snapshot, aeEmail, aeResponse, aeNotes, shareId }),
       });
 
-      // Mark LO as notified
       await db.collection('scenarioShares').doc(shareId).update({
         lo_notified: true,
         updatedAt:   FieldValue.serverTimestamp(),
@@ -178,14 +166,13 @@ exports.respondToScenarioShare = onCall(async (request) => {
 
       console.log(`[respondToScenarioShare] LO notified at ${loEmail} for share ${shareId}`);
     } catch (emailErr) {
-      // Don't fail the whole function if email fails — response is already written
       console.error('[respondToScenarioShare] Email send failed:', emailErr);
     }
   } else {
     console.warn(`[respondToScenarioShare] No LO email found for share ${shareId} — skipping notification`);
   }
 
-  // 5. Also update the dpa_lender_approvals record if this was a DPA share
+  // 5. Update dpa_lender_approvals if this was a DPA share
   if (aeResponse === 'approved' && shareData.scenarioId && snapshot?.lender?.name) {
     try {
       const approvalsSnap = await db
@@ -212,10 +199,12 @@ exports.respondToScenarioShare = onCall(async (request) => {
   console.log(`[respondToScenarioShare] Share ${shareId} responded: ${aeResponse}`);
 
   return {
-    success:        true,
-    response:       aeResponse,
-    responseLabel:  RESPONSE_LABELS[aeResponse],
-    scenarioId:     shareData.scenarioId || '',
-    borrowerName:   snapshot?.borrower?.name || '',
+    success:       true,
+    response:      aeResponse,
+    responseLabel: RESPONSE_LABELS[aeResponse],
+    scenarioId:    shareData.scenarioId || '',
+    borrowerName:  snapshot?.borrower?.name || '',
   };
-});
+}
+
+exports.handler = handler;
