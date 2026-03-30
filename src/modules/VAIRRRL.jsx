@@ -7,6 +7,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { app } from '../firebase/config';
+import VAIRRRLPricingCommission from './VAIRRRLPricingCommission';
 
 const functions = getFunctions(app);
 const auth = getAuth(app);
@@ -59,14 +60,15 @@ const MODULES = [
 // ─── Tab Config ───────────────────────────────────────────────────────────────
 const TABS = [
   { id: 'snapshot',      label: 'Loan Snapshot' },
-  { id: 'benefit-test',  label: 'Benefit Test' },
   { id: 'irrrl-flag',    label: 'IRRRL-to-IRRRL' },
+  { id: 'benefit-test',  label: 'Benefit Test' },
   { id: 'funding-fee',   label: 'Funding Fee' },
-  { id: 'ntb-worksheet', label: 'NTB Worksheet' },
   { id: 'rate-shop',     label: 'Rate Shop' },
+  { id: 'pricing',       label: 'Pricing & Comp' },
+  { id: 'ntb-worksheet', label: 'NTB Worksheet' },
   { id: 'uw-worksheet',  label: 'UW Worksheet' },
-  { id: 'cash-out',      label: 'Cash-Out Refi' },
   { id: 'doc-checklist', label: 'Doc Checklist' },
+  { id: 'cash-out',      label: 'Cash-Out' },
 ];
 
 // ─── Doc Items ────────────────────────────────────────────────────────────────
@@ -131,13 +133,13 @@ const S = {
     marginBottom: 20,
   },
   tab: (active) => ({
-    padding: '9px 15px',
+    padding: '8px 10px',
     borderRadius: '8px 8px 0 0',
     border: 'none',
     background: active ? '#0d3b6e' : 'transparent',
     color: active ? '#fff' : '#6b7a8d',
     fontWeight: active ? 700 : 500,
-    fontSize: 13,
+    fontSize: 12,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
     marginBottom: active ? -2 : 0,
@@ -350,6 +352,8 @@ export default function VAIRRRL() {
             if (addr) setPropertyAddress(addr);
             const bal = match.currentLoanAmount || match.loanAmount || match.baseLoanAmount || '';
             if (bal) setRemainingBalance(String(bal));
+            const exempt = match.fundingFeeExempt ?? match.serviceConnectedDisability ?? match.vaFundingFeeExempt ?? null;
+            if (exempt != null) setFundingFeeExempt(exempt);
           }
         }
 
@@ -388,6 +392,8 @@ export default function VAIRRRL() {
       setPropertyAddress(s.propertyAddress);
     if (s.currentLoanAmount || s.loanAmount)
       setRemainingBalance(String(s.currentLoanAmount || s.loanAmount || ''));
+    const exempt = s.fundingFeeExempt ?? s.serviceConnectedDisability ?? s.vaFundingFeeExempt ?? null;
+    if (exempt != null) setFundingFeeExempt(exempt);
   };
 
   // ── PDF Drop Handlers
@@ -1325,6 +1331,19 @@ export default function VAIRRRL() {
     'uw-worksheet':  renderUWWorksheet,
     'cash-out':      renderCashOut,
     'doc-checklist': renderDocChecklist,
+    'pricing': () => (
+      <VAIRRRLPricingCommission
+        loanAmount={newLoanAmt}
+        currentRate={currentRatePct}
+        currentPI={currentPI}
+        newRate={newRatePct}
+        newPI={newPICalc}
+        fundingFeeStatus={fundingFeeExempt === true ? 'exempt' : fundingFeeExempt === false ? 'not_exempt' : 'unknown'}
+        veteranName={veteranName}
+        propertyAddress={propertyAddress}
+        remainingTerm={remTermMos}
+      />
+    ),
   };
 
   // ════════════════════════════════════════════════════════════════════════════
