@@ -381,16 +381,16 @@ exports.respondToScenarioShare = respondToScenarioShare;
 
 // ===========================================================================
 // FUNCTION 6: extractFHADocument → Gen2 | M10 FHA Streamline
-// Haiku extracts loan fields from closing disclosure, mortgage statement, or payoff statement PDF
+// Supports multi-doc { documents: [{label, base64, mediaType}] }
+// and legacy single-doc { documentBase64, mediaType, documentType }
 // ===========================================================================
 exports.extractFHADocument = onCall(
-  { secrets: [ANTHROPIC_KEY], timeoutSeconds: 60, memory: "512MiB" },
+  { secrets: [ANTHROPIC_KEY], timeoutSeconds: 120, memory: "512MiB" },
   async (request) => {
-    const { documentBase64, mediaType = "application/pdf", documentType = "mortgage_statement" } = request.data;
-    if (!documentBase64) throw new Error("documentBase64 is required");
+    const promptText = `You are extracting FHA loan data from one or more documents.
+Documents may include a Closing Disclosure, HUD-1, mortgage statement, or payment history.
+Combine information from all documents provided. Return ONLY a valid JSON object — no markdown, no backticks, no explanation.
 
-    const prompts = {
-      closing_disclosure: `Extract FHA loan data from this Closing Disclosure. Return ONLY valid JSON, no markdown, no backticks.
 {
   "existing_upb": number or null,
   "existing_note_rate": number as percent e.g. 7.25 or null,
@@ -398,58 +398,63 @@ exports.extractFHADocument = onCall(
   "existing_monthly_mip": number or null,
   "original_ufmip": number or null,
   "endorsement_date": "YYYY-MM-DD" or null,
-  "existing_case_number": "string" or null,
-  "fhaCaseNumber": "FHA case number string e.g. 105-1234567-703" or null,
+  "existing_case_number": "FHA case number string e.g. 105-1234567-703" or null,
   "property_value": number or null,
-  "state": "2-letter code" or null,
+  "state": "2-letter state code" or null,
   "county": "county name without the word County" or null,
-  "borrower_name": "string" or null,
-  "property_address": "string" or null,
-  "loanNumber": "loan number string" or null
-}`,
-      mortgage_statement: `Extract FHA loan data from this mortgage statement. Return ONLY valid JSON, no markdown, no backticks.
-{
-  "existing_upb": number or null,
-  "existing_note_rate": number as percent e.g. 7.25 or null,
-  "existing_monthly_pi": number or null,
-  "existing_monthly_mip": number or null,
-  "monthlyMIP": number or null,
-  "lates_last_6": number or null,
-  "lates_months_7_12": number or null,
-  "in_forbearance": boolean or null,
-  "is_delinquent": boolean or null,
-  "fhaCaseNumber": "FHA case number string e.g. 105-1234567-703" or null,
-  "property_address": "string" or null,
-  "loanNumber": "loan number string" or null
-}`,
-      payoff_statement: `Extract payoff data from this mortgage payoff statement. Return ONLY valid JSON, no markdown, no backticks.
-{
-  "existing_upb": number or null,
-  "existing_note_rate": number as percent e.g. 7.25 or null,
-  "payoff_amount": number or null,
-  "payoff_good_through": "YYYY-MM-DD" or null,
-  "loanNumber": "string" or null
-}`,
-    };
+  "borrower_name": "full borrower name string" or null,
+  "property_address": "full property address string" or null,
+  "lates_last_6": number of 30-day lates in last 6 months or null,
+  "lates_months_7_12": number of 30-day lates in months 7-12 or null,
+  "in_forbearance": true or false or null,
+  "is_delinquent": true or false or null,
+  "loan_number": "servicer loan number string" or null
+}`;
 
-    const promptText = prompts[documentType] || prompts.mortgage_statement;
+    let contentBlocks = [];
+
+    // ── Multi-doc format: { documents: [{ label, base64, mediaType }] }
+    if (request.data.documents && Array.isArray(request.data.documents)) {
+      if (request.data.documents.length === 0) throw new Error("documents array is empty");
+      for (const docItem of request.data.documents) {
+        if (!docItem.base64) throw new Error(`Document '${docItem.label || "unknown"}' is missing base64 data`);
+        contentBlocks.push({
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: docItem.mediaType || "application/pdf",
+            data: docItem.base64,
+          },
+        });
+      }
+    }
+    // ── Legacy single-doc format: { documentBase64, mediaType, documentType }
+    else if (request.data.documentBase64) {
+      contentBlocks.push({
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: request.data.mediaType || "application/pdf",
+          data: request.data.documentBase64,
+        },
+      });
+    }
+    else {
+      throw new Error("Provide either 'documents' array or 'documentBase64'");
+    }
+
+    contentBlocks.push({ type: "text", text: promptText });
 
     const response = await callAnthropic(ANTHROPIC_KEY.value(), {
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1024,
-      messages: [{
-        role: "user",
-        content: [
-          { type: "document", source: { type: "base64", media_type: mediaType, data: documentBase64 } },
-          { type: "text", text: promptText },
-        ],
-      }],
+      messages: [{ role: "user", content: contentBlocks }],
     });
 
     const raw     = response.content[0].text.trim();
     const cleaned = raw.replace(/```json\n?/g, "").replace(/```/g, "").trim();
     try {
-      return JSON.parse(cleaned);
+      return { data: JSON.parse(cleaned) };
     } catch (e) {
       throw new Error("Haiku returned non-JSON. Raw: " + raw.substring(0, 200));
     }

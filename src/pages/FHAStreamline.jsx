@@ -1,1575 +1,1479 @@
 // src/pages/FHAStreamline.jsx
 // LoanBeacons™ — FHA Streamline Intelligence™
-// v7: split fix + MIP/UFMIP/case# auto-fill + NTB Worksheet + Rate Shopping + UW Worksheet
+// v7.0 — Full rebuild matching VA IRRRL v3.4 architecture
+// UFMIP refund correctly wired | Real-time calculations | localStorage | DR Option B
 
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import DecisionRecordBanner from '../components/DecisionRecordBanner';
-import { useDecisionRecord } from '../hooks/useDecisionRecord';
-import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
+import React, { useState, useEffect, useRef } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { db } from '../firebase/config';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
+import { getFirestore, collection, query, orderBy, limit, getDocs, doc, getDoc } from 'firebase/firestore';
+import { app } from '../firebase/config';
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import { MODULE_KEYS } from '../constants/decisionRecordConstants';
 
-const FHA_RULES = {
-  NTB_COMBINED_RATE_REDUCTION: 0.50,
-  NEW_UFMIP_RATE: 0.0175,
-  CASH_BACK_LIMIT: 500,
-  ANNUAL_MIP_FACTOR: 0.55,
+const functions = getFunctions(app);
+const db        = getFirestore(app);
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const fmt       = (n, d = 2) => n == null || isNaN(n) ? '—' : Number(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const fmtDollar = (n) => (n == null || isNaN(n) ? '—' : `$${fmt(n)}`);
+const fmtPct    = (n, d = 3) => (n == null || isNaN(n) ? '—' : `${Number(n).toFixed(d)}%`);
+
+const calcPI = (principal, annualRatePct, termMonths) => {
+  if (!principal || !annualRatePct || !termMonths || principal <= 0 || termMonths <= 0) return 0;
+  const r = (annualRatePct / 100) / 12;
+  if (r <= 0) return principal / termMonths;
+  return (principal * r * Math.pow(1 + r, termMonths)) / (Math.pow(1 + r, termMonths) - 1);
 };
 
+// ─── FHA Rules ────────────────────────────────────────────────────────────────
+const NEW_UFMIP_RATE    = 0.0175;   // 1.75% of new loan amount
+const NEW_ANNUAL_MIP    = 0.0055;   // 0.55% — current FHA annual MIP for streamline
+const NTB_MIN_REDUCTION = 0.50;     // combined rate+MIP reduction required (%)
+
+// HUD UFMIP Refund Schedule — linear decline from 80% at month 0 to 0% at month 36
+// Per HUD Handbook 4000.1. No refund after 36 months.
 const UFMIP_REFUND = (months) => {
-  if (months <= 0)  return 1.00;
-  if (months <= 12) return Math.max(0, 0.80 - ((months - 1) * 0.0667));
-  if (months <= 36) return Math.max(0, 0.50 - ((months - 13) * 0.0208));
-  return 0;
+  if (months <= 0)  return 0.80;
+  if (months >= 36) return 0;
+  return Math.max(0, 0.80 * (1 - months / 36));
 };
 
-function computeMonthlyPI(principal, annualRate, termMonths) {
-  if (!principal || !annualRate || !termMonths) return 0;
-  if (annualRate === 0) return principal / termMonths;
-  const r = annualRate / 100 / 12;
-  return principal * (r * Math.pow(1 + r, termMonths)) / (Math.pow(1 + r, termMonths) - 1);
-}
-
+// ─── GA County Tax Data ───────────────────────────────────────────────────────
 const GA_COUNTIES = {
-  'Bibb':     { millage: 34.49, due: 'Dec 20', note: 'City of Macon adds ~12 mills for city services' },
-  'Chatham':  { millage: 14.54, due: 'Nov 15', note: 'City of Savannah adds ~13 mills' },
-  'Cherokee': { millage: 23.24, due: 'Nov 15', note: 'Low rate county — unincorporated areas' },
+  'Bibb':     { millage: 34.49, due: 'Dec 20', note: 'City of Macon adds ~12 mills' },
+  'Cherokee': { millage: 23.24, due: 'Nov 15', note: 'Low rate county' },
   'Clayton':  { millage: 33.55, due: 'Oct 20', note: 'City of Jonesboro adds additional mills' },
   'Cobb':     { millage: 22.55, due: 'Oct 1',  note: 'One of lowest rates in metro Atlanta' },
-  'Columbia': { millage: 18.80, due: 'Nov 15', note: 'Augusta-Richmond MSA — low county rate' },
-  'DeKalb':   { millage: 38.98, due: 'Oct 20', note: 'Unincorporated DeKalb — cities vary significantly' },
+  'DeKalb':   { millage: 38.98, due: 'Oct 20', note: 'Unincorporated DeKalb — cities vary' },
   'Douglas':  { millage: 28.76, due: 'Oct 20', note: 'City of Douglasville adds ~7 mills' },
-  'Fayette':  { millage: 22.19, due: 'Dec 1',  note: 'Low rate — Peachtree City ~28 mills total' },
-  'Forsyth':  { millage: 21.07, due: 'Nov 15', note: 'Rapidly growing — rate relatively stable' },
-  'Fulton':   { millage: 41.64, due: 'Oct 20', note: 'City of Atlanta adds ~12 mills. Highest in metro.' },
-  'Gwinnett': { millage: 27.76, due: 'Oct 20', note: 'City of Lawrenceville ~35 mills total' },
+  'Fayette':  { millage: 22.19, due: 'Dec 1',  note: 'Peachtree City ~28 mills total' },
+  'Forsyth':  { millage: 21.07, due: 'Nov 15', note: 'Rapidly growing — rate stable' },
+  'Fulton':   { millage: 41.64, due: 'Oct 20', note: 'City of Atlanta adds ~12 mills' },
+  'Gwinnett': { millage: 27.76, due: 'Oct 20', note: 'City of Lawrenceville ~35 mills' },
   'Hall':     { millage: 28.04, due: 'Nov 15', note: 'City of Gainesville adds ~4 mills' },
   'Henry':    { millage: 31.40, due: 'Oct 20', note: 'McDonough city adds additional mills' },
   'Houston':  { millage: 21.58, due: 'Oct 15', note: 'Warner Robins city ~26 mills total' },
-  'Lowndes':  { millage: 20.26, due: 'Dec 20', note: 'City of Valdosta ~30 mills total' },
-  'Muscogee': { millage: 38.92, due: 'Oct 20', note: 'Consolidated Columbus city-county government' },
   'Newton':   { millage: 31.12, due: 'Nov 15', note: 'City of Covington adds additional mills' },
-  'Paulding': { millage: 26.57, due: 'Oct 20', note: 'Growing county — Dallas city rate higher' },
-  'Richmond': { millage: 39.46, due: 'Oct 20', note: 'Augusta-Richmond consolidated government' },
+  'Paulding': { millage: 26.57, due: 'Oct 20', note: 'Dallas city rate higher' },
   'Rockdale': { millage: 32.90, due: 'Oct 20', note: 'City of Conyers adds additional mills' },
-  'Spalding': { millage: 32.04, due: 'Nov 15', note: 'City of Griffin ~38 mills total' },
   'Walton':   { millage: 28.97, due: 'Nov 15', note: 'City of Monroe adds additional mills' },
 };
 
-const OTHER_STATE_RATES = {
-  'AL': { rate: 0.0040, note: 'Alabama — very low property tax state (~0.40% effective)' },
-  'FL': { rate: 0.0098, note: 'Florida — ~0.98% effective rate; homestead exemption available' },
-  'NC': { rate: 0.0077, note: 'North Carolina — ~0.77% effective rate' },
-  'SC': { rate: 0.0056, note: 'South Carolina — ~0.56% effective rate; owner-occ lower' },
-  'TN': { rate: 0.0064, note: 'Tennessee — ~0.64% effective rate' },
-  'TX': { rate: 0.0180, note: 'Texas — high property tax (~1.80% effective rate)' },
+// ─── Canonical Sequence ───────────────────────────────────────────────────────
+const MODULES = [
+  { id: 1,  label: 'Scenario Creator',      path: '/scenario-creator' },
+  { id: 2,  label: 'Qualifying Intel',      path: '/qualifying-intel' },
+  { id: 3,  label: 'Income Analyzer',       path: '/income-analyzer' },
+  { id: 4,  label: 'Credit Intel',          path: '/credit-intel' },
+  { id: 5,  label: 'Lender Match',          path: '/lender-match' },
+  { id: 6,  label: 'Debt Resolution',       path: '/debt-resolution' },
+  { id: 7,  label: 'DPA Intelligence',      path: '/dpa-intelligence' },
+  { id: 8,  label: 'ARM Structure',         path: '/arm-structure' },
+  { id: 9,  label: 'Piggyback Optimizer',   path: '/piggyback-optimizer' },
+  { id: 10, label: 'FHA Streamline',        path: '/fha-streamline' },
+  { id: 11, label: 'VA IRRRL',              path: '/va-irrrl' },
+  { id: 12, label: 'CRA Eligibility',       path: '/cra-eligibility' },
+  { id: 13, label: 'USDA Intelligence',     path: '/usda-intelligence' },
+  { id: 14, label: 'Disclosure Intel',      path: '/disclosure-intel' },
+  { id: 15, label: 'Compliance Intel',      path: '/compliance-intel' },
+  { id: 16, label: 'Flood Intel',           path: '/flood-intel' },
+  { id: 17, label: 'Rehab Intelligence',    path: '/rehab-intelligence' },
+  { id: 18, label: 'Intelligent Checklist', path: '/intelligent-checklist' },
+  { id: 19, label: 'Bank Statement Intel',  path: '/bank-statement-intel' },
+  { id: 20, label: 'AUS Rescue',            path: '/aus-rescue' },
+  { id: 21, label: 'Decision Record',       path: '/decision-record' },
+  { id: 22, label: 'Loan Path Graph',       path: '/loan-path-graph' },
+  { id: 23, label: 'Lender Profile',        path: '/lender-profile' },
+  { id: 24, label: 'AE Share',              path: '/ae-share' },
+  { id: 25, label: 'Rate Sensitivity',      path: '/rate-sensitivity' },
+  { id: 26, label: 'Scenarios',             path: '/scenarios' },
+  { id: 27, label: 'Admin Center',          path: '/admin' },
+];
+
+const TABS = [
+  { id: 'snapshot',      label: 'Loan Snapshot' },
+  { id: 'eligibility',   label: 'Eligibility' },
+  { id: 'ntb',           label: 'NTB Test' },
+  { id: 'ufmip',         label: 'UFMIP Calculator' },
+  { id: 'rate-options',  label: 'Rate Options' },
+  { id: 'pricing',       label: 'Pricing & Comp' },
+  { id: 'ntb-worksheet', label: 'NTB Worksheet' },
+  { id: 'uw-worksheet',  label: 'UW Worksheet' },
+  { id: 'doc-checklist', label: 'Doc Checklist' },
+  { id: 'property-tax',  label: 'Property Tax' },
+];
+
+const DOC_ITEMS = [
+  { id: 'cd',            label: 'Original Closing Disclosure or HUD-1' },
+  { id: 'statement',     label: 'Current Mortgage Statement' },
+  { id: 'payment_hist',  label: '12-Month Payment History from Servicer' },
+  { id: 'case_confirm',  label: 'FHA Case Number Confirmation (FHA Connection)' },
+  { id: 'photo_id',      label: 'Government-Issued Photo ID' },
+  { id: 'ssn_doc',       label: 'Social Security Card or SSN Documentation' },
+  { id: 'hoi',           label: 'Homeowners Insurance Declaration Page' },
+  { id: 'tax_stmt',      label: 'Property Tax Statement or County Tax Record' },
+  { id: 'flood',         label: 'Flood Zone Determination' },
+  { id: 'title',         label: 'Title Commitment / Title Search' },
+  { id: 'payoff',        label: 'Payoff Statement from Current Servicer' },
+  { id: 'app1003',       label: 'Updated Loan Application (1003)' },
+  { id: 'ntb_worksheet', label: 'FHA Streamline NTB Worksheet' },
+  { id: 'hoa_ins',       label: 'HOA Master Insurance (if condo — optional)' },
+  { id: 'subordination', label: 'Subordination Agreement (if 2nd lien — optional)' },
+];
+
+// ─── Styles (matching VA IRRRL v3.4) ─────────────────────────────────────────
+const S = {
+  container:    { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', maxWidth: 1100, margin: '0 auto', padding: '24px 20px 160px', color: '#1a1a2e', minHeight: '100vh' },
+  header:       { background: 'linear-gradient(135deg, #0f4c81 0%, #1565c0 100%)', borderRadius: 12, padding: '20px 24px', marginBottom: 20, color: '#fff' },
+  headerTop:    { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 },
+  badge:        { display: 'inline-block', background: 'rgba(255,255,255,0.15)', borderRadius: 6, padding: '3px 10px', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em' },
+  badgeGreen:   { background: 'rgba(34,197,94,0.25)', color: '#86efac' },
+  badgeRed:     { background: 'rgba(239,68,68,0.25)',  color: '#fca5a5' },
+  badgeAmber:   { background: 'rgba(245,158,11,0.25)', color: '#fcd34d' },
+  scenarioRow:  { display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' },
+  headerSelect: { background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6, color: '#fff', padding: '6px 10px', fontSize: 13, minWidth: 220, cursor: 'pointer' },
+  tabBar:       { display: 'flex', gap: 3, flexWrap: 'wrap', borderBottom: '2px solid #e0e7ef', marginBottom: 20 },
+  tab: (a) =>   ({ padding: '8px 10px', borderRadius: '8px 8px 0 0', border: 'none', background: a ? '#0f4c81' : 'transparent', color: a ? '#fff' : '#6b7a8d', fontWeight: a ? 700 : 500, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', marginBottom: a ? -2 : 0, borderBottom: a ? '2px solid #0f4c81' : 'none', transition: 'all 0.15s' }),
+  card:         { background: '#fff', borderRadius: 10, border: '1px solid #e0e7ef', padding: 20, marginBottom: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' },
+  cardTitle:    { fontSize: 15, fontWeight: 700, color: '#0f4c81', marginBottom: 14, borderBottom: '1px solid #f0f4f8', paddingBottom: 10 },
+  grid2:        { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 },
+  grid3:        { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 },
+  grid4:        { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 },
+  label:        { fontSize: 12, fontWeight: 600, color: '#6b7a8d', marginBottom: 4, display: 'block' },
+  input:        { width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #d0dbe8', fontSize: 13, color: '#1a1a2e', boxSizing: 'border-box', outline: 'none' },
+  inputRO:      { width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #e0e7ef', fontSize: 13, color: '#1a1a2e', boxSizing: 'border-box', background: '#f8fafc', fontWeight: 700 },
+  btn:          { padding: '9px 18px', borderRadius: 7, border: 'none', fontWeight: 600, fontSize: 13, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, transition: 'opacity 0.15s' },
+  btnPrimary:   { background: '#0f4c81', color: '#fff' },
+  btnSecondary: { background: '#e9eef5', color: '#1a1a2e' },
+  btnGhost:     { background: 'transparent', color: '#0f4c81', border: '1px solid #0f4c81' },
+  btnRed:       { background: '#fdf0f0', color: '#8b1a1a', padding: '4px 10px', fontSize: 12 },
+  infoBox:      { background: '#eef4fb', border: '1px solid #b8d0e8', borderRadius: 8, padding: '12px 14px', fontSize: 13, color: '#1a4a7e', marginBottom: 14 },
+  warningBox:   { background: '#fffbeb', border: '1px solid #f9c846', borderRadius: 8, padding: '12px 14px', fontSize: 13, color: '#7a5a00' },
+  errorBox:     { background: '#fdf0f0', border: '1px solid #f5c6c6', borderRadius: 8, padding: '12px 14px', fontSize: 13, color: '#8b1a1a' },
+  successBox:   { background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8, padding: '12px 14px', fontSize: 13, color: '#166534' },
+  canonicalBar: { position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1000, background: '#0f4c81', boxShadow: '0 -2px 12px rgba(0,0,0,0.18)' },
+  canonicalMain:{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', maxWidth: 1100, margin: '0 auto', gap: 10 },
+  dot: (a) =>   ({ width: a ? 22 : 14, height: a ? 22 : 14, borderRadius: '50%', background: a ? '#f9c846' : 'rgba(255,255,255,0.2)', border: a ? '2px solid #fff' : 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 700, color: a ? '#000' : 'transparent', transition: 'all 0.15s', flexShrink: 0 }),
 };
 
-function calcPropertyTax(fmv, county, state, cityMillage) {
-  if (!fmv || fmv <= 0) return null;
-  if (state === 'GA' && GA_COUNTIES[county]) {
-    const data = GA_COUNTIES[county];
-    const totalMillage = data.millage + (parseFloat(cityMillage) || 0);
-    const assessedValue = fmv * 0.40;
-    const annualTax = assessedValue * (totalMillage / 1000);
-    return { fmv, assessedValue, totalMillage, annualTax, monthlyTax: annualTax / 12,
-      dueDate: data.due, note: data.note, source: `GA — 40% assessment ratio × ${totalMillage.toFixed(2)} mills` };
-  }
-  if (OTHER_STATE_RATES[state]) {
-    const d = OTHER_STATE_RATES[state];
-    const annualTax = fmv * d.rate;
-    return { fmv, assessedValue: null, annualTax, monthlyTax: annualTax / 12,
-      dueDate: 'Varies by county', note: d.note, source: `${state} — estimated effective rate` };
-  }
-  return { fmv, assessedValue: null, annualTax: fmv * 0.011, monthlyTax: (fmv * 0.011) / 12,
-    dueDate: 'Check county', note: 'Estimated — verify with county tax assessor', source: 'National average estimate' };
-}
-
-function runEligibilityRules(inputs) {
-  const results = []; let finalDecision = 'ELIGIBLE';
-  const check = (id, label, pass, passMsg, failMsg, type = 'HARD') => {
-    const status = pass ? 'PASS' : (type === 'WARN' ? 'WARN' : 'FAIL');
-    results.push({ id, label, status, message: pass ? passMsg : failMsg });
-    if (!pass) {
-      if (type === 'HARD' && finalDecision !== 'INELIGIBLE') finalDecision = 'INELIGIBLE';
-      if (type === 'WARN' && finalDecision === 'ELIGIBLE') finalDecision = 'NEEDS_INFO';
-    }
-  };
-  check('R001','FHA Insured Loan',       inputs.is_fha_insured,       'Confirmed FHA-insured.','Must be FHA-insured for streamline.');
-  check('R002','Payment Status',         !inputs.is_delinquent,       'Loan is current.','Loan is delinquent — not eligible.');
-  check('R003','Lates (Last 6 Months)',  inputs.lates_last_6 === 0,   'No late payments in last 6 months.',`${inputs.lates_last_6} late(s) — must be 0.`);
-  check('R004','Lates (Months 7-12)',    inputs.lates_months_7_12 <= 1,'Payment history months 7-12 acceptable.',`${inputs.lates_months_7_12} lates — max 1 allowed.`,'WARN');
-  check('R005','Occupancy',              inputs.occupancy_current==='OWNER','Owner-occupied — streamline eligible.','Non-owner occupied requires manual review.','WARN');
-  check('R006','Forbearance',            !inputs.in_forbearance,      'Not in forbearance.','In forbearance — not eligible.');
-  check('R007','Borrower / Title',       !inputs.borrower_removed && !inputs.title_changed,'No borrower or title changes.','Changes require credit qualifying streamline.','WARN');
-  return { rules: results, finalDecision };
-}
-
-function computeNTB(inputs, options) {
-  return options.map((opt, idx) => {
-    const existingRate      = parseFloat(inputs.existing_note_rate || 0);
-    const existingMIPFactor = parseFloat(inputs.existing_mip_factor || 0.55);
-    const newRate           = parseFloat(opt.note_rate || 0);
-    const existingCombined  = existingRate + existingMIPFactor;
-    const newCombined       = newRate + FHA_RULES.ANNUAL_MIP_FACTOR;
-    const combinedReduction = existingCombined - newCombined;
-    const ntbPass           = combinedReduction >= FHA_RULES.NTB_COMBINED_RATE_REDUCTION;
-    const upb               = parseFloat(inputs.existing_upb || 0);
-    const existingPI        = parseFloat(inputs.existing_monthly_pi || 0);
-    const existingMIP       = parseFloat(inputs.existing_monthly_mip || 0);
-    const newPI             = computeMonthlyPI(upb, newRate, parseInt(inputs.new_term_months || 360));
-    const newMIP            = (upb * FHA_RULES.ANNUAL_MIP_FACTOR) / 100 / 12;
-    const monthlySavings    = (existingPI + existingMIP) - (newPI + newMIP);
-    const endorsementDate   = inputs.endorsement_date ? new Date(inputs.endorsement_date) : null;
-    const monthsElapsed     = endorsementDate ? Math.max(0, Math.floor((Date.now() - endorsementDate.getTime()) / (1000*60*60*24*30))) : 0;
-    const refundPct         = UFMIP_REFUND(monthsElapsed);
-    const origUFMIP         = parseFloat(inputs.original_ufmip || 0);
-    const ufmipRefund       = origUFMIP * refundPct;
-    const newUFMIP          = upb * FHA_RULES.NEW_UFMIP_RATE;
-    const netUFMIP          = newUFMIP - ufmipRefund;
-    const breakevenMonths   = monthlySavings > 0 ? Math.ceil(netUFMIP / monthlySavings) : 999;
-    return {
-      option_id: idx+1, label:`Option ${String.fromCharCode(65+idx)}`,
-      note_rate: newRate, price: parseFloat(opt.price||100),
-      lenderCredit: parseFloat(opt.lender_credit||0), origination: parseFloat(opt.origination||0),
-      existingCombined: existingCombined.toFixed(3), newCombined: newCombined.toFixed(3),
-      combinedReduction: combinedReduction.toFixed(3), ntbPass, existingPI, existingMIP,
-      existingTotal: existingPI + existingMIP, newPI, newMIP, newTotal: newPI + newMIP,
-      monthlySavings, ufmipRefund, newUFMIP, netUFMIP, monthsElapsed,
-      refundPct: (refundPct*100).toFixed(1), breakevenMonths, upb,
-    };
-  });
-}
-
-function computeCommission(loanAmount, comp) {
-  const loan = parseFloat(loanAmount) || 0; if (!loan) return null;
-  const deductions = (parseFloat(comp.processing_fee)||0) + (parseFloat(comp.admin_fee)||0) + (parseFloat(comp.other_deductions)||0);
-  const results = {};
-  if (comp.lpc_rate > 0) {
-    const gross = loan * (comp.lpc_rate / 100);
-    const split = gross * (comp.lo_split / 100);
-    results.lpc = { type:'LPC', gross, split, deductions, net: split - deductions, effective_rate:(split-deductions)/loan*100 };
-  }
-  if (comp.bpc_points > 0 || comp.bpc_flat > 0) {
-    const gross = loan * (comp.bpc_points / 100) + (parseFloat(comp.bpc_flat)||0);
-    const split = gross * (comp.lo_split / 100);
-    results.bpc = { type:'BPC', gross, split, deductions, net: split - deductions, effective_rate:(split-deductions)/loan*100 };
-  }
-  if (results.lpc && results.bpc) {
-    results.recommendation = results.lpc.net >= results.bpc.net ? 'lpc' : 'bpc';
-    results.difference = Math.abs(results.lpc.net - results.bpc.net);
-  }
-  return results;
-}
-
-function computeMaxCashToClose(ntbResults, comp, closingCostEstimate) {
-  if (!ntbResults || ntbResults.length === 0) return null;
-  const cc = parseFloat(closingCostEstimate) || 3500;
-  return ntbResults.filter(r => r.ntbPass).map(r => {
-    const upb = r.upb; const price = r.price;
-    const lenderCreditPct = price > 100 ? (price - 100) / 100 : 0;
-    const lenderCredit = upb * lenderCreditPct;
-    const netCC = Math.max(0, cc - lenderCredit);
-    const lpcGross = comp.lpc_rate > 0 ? upb * (comp.lpc_rate / 100) : 0;
-    const lpcNet = lpcGross * (comp.lo_split / 100) - ((parseFloat(comp.processing_fee)||0) + (parseFloat(comp.admin_fee)||0));
-    const bpcGross = comp.bpc_points > 0 ? upb * (comp.bpc_points / 100) : 0;
-    const bpcNet = bpcGross * (comp.lo_split / 100) - ((parseFloat(comp.processing_fee)||0) + (parseFloat(comp.admin_fee)||0));
-    return { label: r.label, rate: r.rate || r.note_rate, price, lenderCredit, netCC,
-      maxBorrowerCash: netCC, lpcNet, bpcNet, bestNet: Math.max(lpcNet, bpcNet), monthlySavings: r.monthlySavings };
-  });
-}
-
-function buildDocChecklist(inp, extractionResult, selected) {
-  const docs = [];
-  const add = (id, label, category, required, obtained, tip) =>
-    docs.push({ id, label, category, required, obtained: obtained || false, tip });
-  const hasUpb   = !!(inp.existing_upb && parseFloat(inp.existing_upb) > 0);
-  const hasRate  = !!(inp.existing_note_rate && parseFloat(inp.existing_note_rate) > 0);
-  const hasPI    = !!(inp.existing_monthly_pi && parseFloat(inp.existing_monthly_pi) > 0);
-  const hasMIP   = !!(inp.existing_monthly_mip && parseFloat(inp.existing_monthly_mip) > 0);
-  const hasUFMIP = !!(inp.original_ufmip && parseFloat(inp.original_ufmip) > 0);
-  const hasDate  = !!inp.endorsement_date;
-  const hasCase  = !!inp.existing_case_number;
-  add('D001','Original Closing Disclosure or HUD-1','Existing Loan',true, hasUpb && hasRate && hasUFMIP,
-    'Shows original loan amount, rate, UFMIP paid, and origination date. Required for UFMIP refund calc.');
-  add('D002','Current Mortgage Statement','Existing Loan',true, hasUpb && hasPI && hasMIP,
-    'Confirms current balance, monthly payment, and MIP. Must be most recent statement.');
-  add('D003','12-Month Payment History from Servicer','Existing Loan',true,
-    inp.lates_last_6 !== undefined && inp.lates_months_7_12 !== undefined,
-    '0x30 in last 12 months required. Request directly from servicer.');
-  add('D004','FHA Case Number Confirmation','Existing Loan',true, hasCase,
-    'Pull from FHA Connection to confirm active insurance and endorsement date.');
-  add('D005','Endorsement / Closing Date','Existing Loan',true, hasDate,
-    'Needed to calculate 210-day seasoning and UFMIP refund percentage.');
-  add('D006','Government-Issued Photo ID','Borrower',true, false, "Driver's license, passport, or state ID — must not be expired.");
-  add('D007','Social Security Card or SSN Documentation','Borrower',true, false, 'Required for all borrowers listed on the existing note.');
-  add('D008','Homeowners Insurance Declaration Page','Borrower',true, !!(inp.estimated_property_value),
-    'Must show property address, coverage amounts, and premium. Current policy year.');
-  add('D009','Property Tax Statement or County Tax Record','Property',true, false,
-    'Needed for escrow calculation. LoanBeacons tax calculator provides estimate — verify with county.');
-  add('D010','Flood Zone Determination','Property',true, false, 'Required even without appraisal. If SFHA zone — flood insurance required at closing.');
-  add('D011','Title Commitment / Title Search','Property',true, false, 'Appraisal is waived but title search is still required. Confirm no new liens since origination.');
-  add('D012','Payoff Statement from Current Servicer','Closing',true, hasUpb,
-    'Good for 30 days. Request early — allow 5-7 business days. Per diem must be calculated.');
-  add('D013','New Loan Application (1003)','Closing',true, !!selected, 'Updated 1003 required. Income fields optional for non-credit-qualifying streamline.');
-  add('D014','FHA Streamline Net Tangible Benefit Worksheet','Closing',true, false, 'Must be in file documenting NTB calculation. LoanBeacons generates this automatically.');
-  add('D015','HOA Master Insurance (if condo)','Closing',false, false, 'Only if property is a condo — must meet FHA condo project approval requirements.');
-  add('D016','Subordination Agreement (if 2nd lien exists)','Closing',false, false, 'Only if there is a subordinate lien. Second lienholder must agree to remain subordinate.');
-  return docs;
-}
-
-const DECISION_STYLE = {
-  ELIGIBLE:   {bg:'bg-green-50', border:'border-green-400', text:'text-green-800', icon:'✅',label:'ELIGIBLE — Ready to Proceed'},
-  INELIGIBLE: {bg:'bg-red-50',   border:'border-red-400',   text:'text-red-800',   icon:'❌',label:'INELIGIBLE — Does Not Qualify'},
-  NEEDS_INFO: {bg:'bg-yellow-50',border:'border-yellow-400',text:'text-yellow-800',icon:'⚠️',label:'NEEDS INFO — Manual Review Required'},
-  INELIGIBLE_OR_NEEDS_INFO:{bg:'bg-orange-50',border:'border-orange-400',text:'text-orange-800',icon:'🔍',label:'REVIEW — Issues Found'},
-};
-const fmt$  = n => isNaN(n)||n===''||n===null?'—':'$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-const fmtP  = n => isNaN(n)||n===''||n===null?'—':Number(n).toFixed(3)+'%';
-
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function FHAStreamline() {
-  const navigate   = useNavigate();
-  const [sp]       = useSearchParams();
-  const scenarioId = sp.get('scenarioId');
-  const fileRef    = useRef(null);
-  const fileRef2   = useRef(null);
-  const fileRef3   = useRef(null);
+  const CURRENT_MODULE = 10;
+  const prevMod = MODULES[CURRENT_MODULE - 2];
+  const nextMod = MODULES[CURRENT_MODULE];
+  const navigate = (path) => { window.location.href = path; };
 
-  const [scenarios,      setScenarios]      = useState([]);
-  const [selected,       setSelected]       = useState(null);
-  const [tab,            setTab]            = useState('eligibility');
-  const [saving,         setSaving]         = useState(false);
-  const [eligibility,    setEligibility]    = useState(null);
-  const [ntb,            setNtb]            = useState(null);
-  const [checkedDocs,    setCheckedDocs]    = useState({});
-  const [extractedNoteRate, setExtractedNoteRate] = useState(null);
+  // ── Scenario
+  const [scenarios,        setScenarios]        = useState([]);
+  const [selectedScenId,   setSelectedScenId]   = useState('');
+  const [loadingScenarios, setLoadingScenarios] = useState(false);
 
-  const { reportFindings }               = useDecisionRecord(scenarioId);
-  const [savedRecordId,  setSavedRecordId]  = useState(null);
-  const [recordSaving,   setRecordSaving]   = useState(false);
+  // ── Decision Record (Option B — auto-log on Save)
+  const [drRecordId, setDrRecordId] = useState(null);
+  const { reportFindings }          = useDecisionRecord(selectedScenId);
 
-  const [uploadedDocs,    setUploadedDocs]    = useState([null, null, null]);
-  const [extracting,      setExtracting]      = useState(false);
-  const [extractionResult,setExtractionResult]= useState(null);
-  const [extractionError, setExtractionError] = useState(null);
-  const [extractionLog,   setExtractionLog]   = useState([]);
+  // ── UI
+  const [activeTab,         setActiveTab]         = useState('snapshot');
+  const [canonicalExpanded, setCanonicalExpanded] = useState(false);
+  const [savedAt,           setSavedAt]           = useState(null);
+  const [saveFlash,         setSaveFlash]         = useState(false);
 
-  const [comp, setComp] = useState({
-    lo_split:70, lpc_rate:2.75, bpc_points:1.0, bpc_flat:0, processing_fee:395, admin_fee:0, other_deductions:0,
-  });
-  const [commissionResult, setCommissionResult] = useState(null);
+  // ── Existing Loan Details
+  const [borrowerName,     setBorrowerName]     = useState('');
+  const [propertyAddress,  setPropertyAddress]  = useState('');
+  const [caseNumber,       setCaseNumber]       = useState('');
+  const [endorsementDate,  setEndorsementDate]  = useState('');
+  const [existingUPB,      setExistingUPB]      = useState('');
+  const [existingRate,     setExistingRate]     = useState('');
+  const [existingPI,       setExistingPI]       = useState('');
+  const [existingMIP,      setExistingMIP]      = useState('');  // monthly MIP ($)
+  const [existingMIPFactor,setExistingMIPFactor]= useState('0.55'); // annual MIP (%)
+  const [originalUFMIP,    setOriginalUFMIP]    = useState('');  // original UFMIP paid ($)
+  const [isFHAInsured,     setIsFHAInsured]     = useState(true);
+  const [estimatedValue,   setEstimatedValue]   = useState('');
 
-  const [taxCalc, setTaxCalc] = useState({ state:'GA', county:'', city_millage:'', use_scenario_value:true, manual_fmv:'' });
-  const [taxResult, setTaxResult] = useState(null);
+  // ── New Loan
+  const [newRate, setNewRate] = useState('');
+  const [newTerm, setNewTerm] = useState('360');
 
-  const [closingCostEst, setClosingCostEst] = useState('3500');
-  const [maxCTCResults,  setMaxCTCResults]  = useState(null);
+  // ── Eligibility Inputs
+  const [isDelinquent,    setIsDelinquent]    = useState(false);
+  const [latesLast6,      setLatesLast6]      = useState(0);
+  const [latesMo7to12,    setLatesMo7to12]    = useState(0);
+  const [occupancy,       setOccupancy]       = useState('OWNER');
+  const [inForbearance,   setInForbearance]   = useState(false);
+  const [borrowerRemoved, setBorrowerRemoved] = useState(false);
+  const [titleChanged,    setTitleChanged]    = useState(false);
 
-  const [inp, setInp] = useState({
-    is_fha_insured:true, existing_case_number:'', endorsement_date:'',
-    occupancy_current:'OWNER', is_delinquent:false,
-    lates_last_6:0, lates_months_7_12:0, in_forbearance:false,
-    borrower_removed:false, title_changed:false,
-    existing_upb:'', existing_note_rate:'', existing_mip_factor:'0.55',
-    existing_monthly_pi:'', existing_monthly_mip:'', original_ufmip:'',
-    new_term_months:'360', new_amort_type:'FIXED', estimated_property_value:'',
-    property_state:'GA', property_county:'',
-  });
-
-  const [pricing, setPricing] = useState([
-    {note_rate:'',price:'',lender_credit:'',origination:''},
-    {note_rate:'',price:'',lender_credit:'',origination:''},
+  // ── Rate Options (up to 3 lender quotes)
+  const [rateOptions, setRateOptions] = useState([
+    { id: 1, lender: '', rate: '', price: '', lenderCredit: '' },
+    { id: 2, lender: '', rate: '', price: '', lenderCredit: '' },
+    { id: 3, lender: '', rate: '', price: '', lenderCredit: '' },
   ]);
 
-  useEffect(() => {
-    getDocs(collection(db,'scenarios')).then(snap => {
-      const list = snap.docs.map(d => ({id:d.id,...d.data()}));
-      setScenarios(list);
-      if (scenarioId) { const match = list.find(s => s.id === scenarioId); if (match) pick(match); }
-    }).catch(console.error);
-  }, [scenarioId]);
+  // ── Closing Cost Estimator (single source of truth — flows to NTB, Pricing, UW)
+  const [ccMode,        setCcMode]        = useState('itemized');
+  const [ccTitle,       setCcTitle]       = useState('850');
+  const [ccTitleIns,    setCcTitleIns]    = useState('650');
+  const [ccRecording,   setCcRecording]   = useState('125');
+  const [ccOrigination, setCcOrigination] = useState('0');
+  const [ccProcessing,  setCcProcessing]  = useState('895');
+  const [ccUnderwriting,setCcUnderwriting]= useState('0');
+  const [ccOther,       setCcOther]       = useState('0');
+  const [ccLumpSum,     setCcLumpSum]     = useState('');
 
-  const docChecklist = useMemo(() => buildDocChecklist(inp, extractionResult, selected), [inp, extractionResult, selected]);
-  const docsObtained = docChecklist.filter(d => d.obtained || checkedDocs[d.id]).length;
-  const docsPct      = Math.round((docsObtained / docChecklist.length) * 100);
+  // ── Pricing & Comp
+  const [compLOSplit,        setCompLOSplit]        = useState('70');
+  const [compLPCRate,        setCompLPCRate]        = useState('2.75');
+  const [compBPCPoints,      setCompBPCPoints]      = useState('1.0');
+  const [compProcessingFee,  setCompProcessingFee]  = useState('395');
+  const [compAdminFee,       setCompAdminFee]       = useState('0');
+  const [compOtherDeductions,setCompOtherDeductions]= useState('0');
 
-  const pick = (s) => {
-    setSelected(s);
-    const county = (s.county || '').replace(' County','').replace(' county','');
-    const state  = s.state || 'GA';
-    setInp(p => ({...p,
-      existing_upb: s.loanAmount || s.loan_amount || '',
-      existing_note_rate: s.interestRate || s.interest_rate || '',
-      estimated_property_value: s.propertyValue || s.property_value || '',
-      property_state: state, property_county: county,
-    }));
-    setTaxCalc(p => ({...p, state, county}));
-    setEligibility(null); setNtb(null); setExtractionResult(null);
-    setUploadedDocs([null,null,null]); setExtractionLog([]); setExtractionError(null);
-    setMaxCTCResults(null); setCheckedDocs({}); setExtractedNoteRate(null);
-    const amt = s.loanAmount || s.loan_amount || 0;
-    if (amt) setCommissionResult(computeCommission(amt, comp));
-    const fmv = parseFloat(s.propertyValue || s.property_value || 0);
-    if (fmv && county && GA_COUNTIES[county]) setTaxResult(calcPropertyTax(fmv, county, state, 0));
+  // ── Property Tax
+  const [taxState,      setTaxState]      = useState('GA');
+  const [taxCounty,     setTaxCounty]     = useState('');
+  const [taxCityMills,  setTaxCityMills]  = useState('');
+  const [taxFMV,        setTaxFMV]        = useState('');
+  const [taxResult,     setTaxResult]     = useState(null);
+
+  // ── PDF Upload
+  const [pdfFiles,          setPdfFiles]          = useState({ cd: null, statement: null, payment: null });
+  const [isDragging,        setIsDragging]        = useState({ cd: false, statement: false, payment: false });
+  const [isExtracting,      setIsExtracting]      = useState(false);
+  const [extractionError,   setExtractionError]   = useState('');
+  const [extractionSuccess, setExtractionSuccess] = useState(false);
+  const cdRef        = useRef(null);
+  const statementRef = useRef(null);
+  const paymentRef   = useRef(null);
+
+  // ── Doc Checklist
+  const [checkedDocs, setCheckedDocs] = useState({});
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // COMPUTED VALUES (real-time, no "Run" button)
+  // ─────────────────────────────────────────────────────────────────────────────
+  const upb            = parseFloat(existingUPB)      || 0;
+  const existingRateN  = parseFloat(existingRate)     || 0;
+  const newRateN       = parseFloat(newRate)          || 0;
+  const termMos        = parseInt(newTerm)            || 360;
+  const mipFactorN     = parseFloat(existingMIPFactor)|| 0.55;
+  const origUFMIPAmt   = parseFloat(originalUFMIP)   || 0;
+  const existingPIAmt  = parseFloat(existingPI)       || 0;
+  const existingMIPAmt = parseFloat(existingMIP)      || 0;
+
+  // ── UFMIP refund (FIXED: floor at 0, PI on correct loan amount)
+  const monthsElapsed  = endorsementDate
+    ? Math.max(0, Math.floor((Date.now() - new Date(endorsementDate).getTime()) / (1000 * 60 * 60 * 24 * 30.44)))
+    : 0;
+  const ufmipRefundPct = UFMIP_REFUND(monthsElapsed);
+  const ufmipRefundAmt = origUFMIPAmt * ufmipRefundPct;
+  const newUFMIPGross  = upb * NEW_UFMIP_RATE;
+  const netUFMIP       = Math.max(0, newUFMIPGross - ufmipRefundAmt); // FIXED: floor at 0
+  const newLoanAmt     = upb + netUFMIP;                               // FIXED: was just upb
+
+  // ── Closing costs
+  const ccItemizedTotal = [ccTitle, ccTitleIns, ccRecording, ccOrigination, ccProcessing, ccUnderwriting, ccOther]
+    .reduce((sum, v) => sum + (parseFloat(v) || 0), 0);
+  const effectiveCC = ccMode === 'itemized' ? ccItemizedTotal : (parseFloat(ccLumpSum) || 0);
+
+  // ── New payment (FIXED: calcPI on newLoanAmt, not raw upb)
+  const newPIAmt      = newRateN > 0 && newLoanAmt > 0 ? calcPI(newLoanAmt, newRateN, termMos) : 0;
+  const newMIPMonthly = (newLoanAmt * NEW_ANNUAL_MIP) / 12;
+
+  // ── NTB combined rate test
+  const existingCombined  = existingRateN + mipFactorN;
+  const newCombined       = newRateN + (NEW_ANNUAL_MIP * 100); // 0.0055 → 0.55%
+  const combinedReduction = existingCombined - newCombined;
+  const ntbCombinedPass   = combinedReduction >= NTB_MIN_REDUCTION;
+
+  // ── NTB payment test
+  const existingTotalPmt = existingPIAmt + existingMIPAmt;
+  const newTotalPmt      = newPIAmt + newMIPMonthly;
+  const paymentSavings   = existingTotalPmt - newTotalPmt;
+  const ntbPaymentPass   = paymentSavings > 0;
+  const ntbPass          = ntbCombinedPass; // FHA NTB is the combined rate test per HUD
+
+  // ── Recoupment (uses netUFMIP per HUD — not closing costs alone)
+  const recoupMos = paymentSavings > 0 ? Math.ceil((netUFMIP + effectiveCC) / paymentSavings) : Infinity;
+
+  // ── Seasoning
+  const seasoningDays = endorsementDate
+    ? Math.floor((Date.now() - new Date(endorsementDate).getTime()) / (1000 * 60 * 60 * 24))
+    : 0;
+  const seasoningPass = seasoningDays >= 210;
+
+  // ── Eligibility rules (real-time)
+  const eligRules = [
+    { id: 'R001', rule: 'FHA-insured loan confirmed',            pass: isFHAInsured,                        hard: true  },
+    { id: 'R002', rule: 'Loan is current (not delinquent)',       pass: !isDelinquent,                       hard: true  },
+    { id: 'R003', rule: 'No late payments — last 6 months',      pass: latesLast6 === 0,                    hard: true  },
+    { id: 'R004', rule: 'Max 1 late payment — months 7–12',      pass: latesMo7to12 <= 1,                   hard: false },
+    { id: 'R005', rule: 'Owner-occupied property',                pass: occupancy === 'OWNER',               hard: false },
+    { id: 'R006', rule: 'Not in forbearance or loss mitigation', pass: !inForbearance,                      hard: true  },
+    { id: 'R007', rule: 'No borrower / title changes',           pass: !borrowerRemoved && !titleChanged,   hard: false },
+    { id: 'R008', rule: '210-day seasoning satisfied',           pass: seasoningPass,                       hard: true  },
+  ];
+  const hardFails  = eligRules.filter(r => !r.pass && r.hard).length;
+  const warns      = eligRules.filter(r => !r.pass && !r.hard).length;
+  const eligStatus = hardFails > 0 ? 'INELIGIBLE' : warns > 0 ? 'NEEDS_INFO' : 'ELIGIBLE';
+
+  // ── Commission
+  const loSplit     = parseFloat(compLOSplit) / 100 || 0.70;
+  const lpcRateN    = parseFloat(compLPCRate) / 100 || 0;
+  const bpcPointsN  = parseFloat(compBPCPoints) / 100 || 0;
+  const compDeduct  = (parseFloat(compProcessingFee) || 0) + (parseFloat(compAdminFee) || 0) + (parseFloat(compOtherDeductions) || 0);
+  const lpcGross    = upb * lpcRateN;
+  const lpcNet      = lpcGross * loSplit - compDeduct;
+  const bpcGross    = upb * bpcPointsN;
+  const bpcNet      = bpcGross * loSplit - compDeduct;
+  const lpcEffRate  = upb > 0 ? (lpcNet / upb) * 100 : 0;
+  const bpcEffRate  = upb > 0 ? (bpcNet / upb) * 100 : 0;
+  const compRec     = lpcNet >= bpcNet ? 'LPC' : 'BPC';
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // SAVE / RESTORE (localStorage)
+  // ─────────────────────────────────────────────────────────────────────────────
+  const getSaveKey = () => {
+    const params = new URLSearchParams(window.location.search);
+    const sid = params.get('scenarioId') || selectedScenId || 'default';
+    return `lb_fha_streamline_${sid}`;
   };
 
-  const si  = (k,v) => setInp(p => ({...p,[k]:v}));
-  const spr = (i,k,v) => setPricing(p => p.map((o,j) => j===i ? {...o,[k]:v} : o));
-  const sc  = (k,v) => {
-    const c = {...comp,[k]:v}; setComp(c);
-    const amt = inp.existing_upb || (selected?.loanAmount) || 0;
-    if (amt) setCommissionResult(computeCommission(amt, c));
-  };
-
-  const setDoc = (idx, file) => {
-    setUploadedDocs(prev => { const n=[...prev]; n[idx]=file; return n; });
-    setExtractionResult(null); setExtractionError(null);
-  };
-  const removeDoc = (idx) => setUploadedDocs(prev => { const n=[...prev]; n[idx]=null; return n; });
-  const toBase64 = (file) => new Promise((res,rej) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result.split(',')[1]);
-    r.onerror = () => rej(new Error('Read failed'));
-    r.readAsDataURL(file);
+  const getStateSnapshot = () => ({
+    borrowerName, propertyAddress, caseNumber, endorsementDate,
+    existingUPB, existingRate, existingPI, existingMIP, existingMIPFactor, originalUFMIP,
+    isFHAInsured, estimatedValue, newRate, newTerm,
+    isDelinquent, latesLast6, latesMo7to12, occupancy, inForbearance, borrowerRemoved, titleChanged,
+    rateOptions, checkedDocs,
+    ccMode, ccTitle, ccTitleIns, ccRecording, ccOrigination, ccProcessing, ccUnderwriting, ccOther, ccLumpSum,
+    compLOSplit, compLPCRate, compBPCPoints, compProcessingFee, compAdminFee, compOtherDeductions,
+    taxState, taxCounty, taxCityMills, taxFMV,
   });
 
-  const applyParsed = (parsed) => {
-    const upb     = parsed.existing_upb        || parsed.currentBalance                        || null;
-    const rateRaw = parsed.existing_note_rate  || parsed.originalRate  || parsed.currentRate   || null;
-    const rate    = rateRaw ? parseFloat((parseFloat(rateRaw) < 1 ? parseFloat(rateRaw) * 100 : parseFloat(rateRaw)).toFixed(3)) : null;
-    const pi      = parsed.existing_monthly_pi || parsed.originalPayment                       || null;
-    const mip     = parsed.existing_monthly_mip|| parsed.monthlyMIP                            || null;
-    const ufmip   = parsed.original_ufmip      || parsed.ufmipPaid     || parsed.ufmipFinanced || null;
-    const endDate = parsed.endorsement_date    || parsed.closingDate                           || null;
-    const caseNum = parsed.existing_case_number|| parsed.fhaCaseNumber                        || null;
-    const propVal = parsed.property_value      || parsed.salePrice                            || null;
-    const state   = parsed.state                                                               || null;
-    const county  = parsed.county                                                              || null;
-
-    if (rate) setExtractedNoteRate(rate);
-
-    setInp(p => ({...p,
-      existing_upb:             upb     ? String(upb)     : p.existing_upb,
-      existing_note_rate:       rate    ? String(rate)    : p.existing_note_rate,
-      existing_monthly_pi:      pi      ? String(pi)      : p.existing_monthly_pi,
-      existing_monthly_mip:     mip     ? String(mip)     : p.existing_monthly_mip,
-      original_ufmip:           ufmip   ? String(ufmip)   : p.original_ufmip,
-      endorsement_date:         endDate || p.endorsement_date,
-      existing_case_number:     caseNum || p.existing_case_number,
-      lates_last_6:             parsed.lates_last_6     ?? p.lates_last_6,
-      lates_months_7_12:        parsed.lates_months_7_12 ?? p.lates_months_7_12,
-      in_forbearance:           parsed.in_forbearance   ?? p.in_forbearance,
-      is_delinquent:            parsed.is_delinquent    ?? p.is_delinquent,
-      estimated_property_value: propVal ? String(propVal) : p.estimated_property_value,
-      property_state:           state  || p.property_state,
-      property_county:          county || p.property_county,
-    }));
-    if (county && state) {
-      setTaxCalc(t => ({...t, county, state}));
-      const fmv = parseFloat(propVal || inp.estimated_property_value || 0);
-      if (fmv) setTaxResult(calcPropertyTax(fmv, county, state, 0));
-    }
+  const restoreFromStorage = (key) => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      if (d.borrowerName     !== undefined) setBorrowerName(d.borrowerName);
+      if (d.propertyAddress  !== undefined) setPropertyAddress(d.propertyAddress);
+      if (d.caseNumber       !== undefined) setCaseNumber(d.caseNumber);
+      if (d.endorsementDate  !== undefined) setEndorsementDate(d.endorsementDate);
+      if (d.existingUPB      !== undefined) setExistingUPB(d.existingUPB);
+      if (d.existingRate     !== undefined) setExistingRate(d.existingRate);
+      if (d.existingPI       !== undefined) setExistingPI(d.existingPI);
+      if (d.existingMIP      !== undefined) setExistingMIP(d.existingMIP);
+      if (d.existingMIPFactor!== undefined) setExistingMIPFactor(d.existingMIPFactor);
+      if (d.originalUFMIP    !== undefined) setOriginalUFMIP(d.originalUFMIP);
+      if (d.isFHAInsured     !== undefined) setIsFHAInsured(d.isFHAInsured);
+      if (d.estimatedValue   !== undefined) setEstimatedValue(d.estimatedValue);
+      if (d.newRate          !== undefined) setNewRate(d.newRate);
+      if (d.newTerm          !== undefined) setNewTerm(d.newTerm);
+      if (d.isDelinquent     !== undefined) setIsDelinquent(d.isDelinquent);
+      if (d.latesLast6       !== undefined) setLatesLast6(d.latesLast6);
+      if (d.latesMo7to12     !== undefined) setLatesMo7to12(d.latesMo7to12);
+      if (d.occupancy        !== undefined) setOccupancy(d.occupancy);
+      if (d.inForbearance    !== undefined) setInForbearance(d.inForbearance);
+      if (d.borrowerRemoved  !== undefined) setBorrowerRemoved(d.borrowerRemoved);
+      if (d.titleChanged     !== undefined) setTitleChanged(d.titleChanged);
+      if (d.rateOptions      !== undefined) setRateOptions(d.rateOptions);
+      if (d.checkedDocs      !== undefined) setCheckedDocs(d.checkedDocs);
+      if (d.ccMode           !== undefined) setCcMode(d.ccMode);
+      if (d.ccTitle          !== undefined) setCcTitle(d.ccTitle);
+      if (d.ccTitleIns       !== undefined) setCcTitleIns(d.ccTitleIns);
+      if (d.ccRecording      !== undefined) setCcRecording(d.ccRecording);
+      if (d.ccOrigination    !== undefined) setCcOrigination(d.ccOrigination);
+      if (d.ccProcessing     !== undefined) setCcProcessing(d.ccProcessing);
+      if (d.ccUnderwriting   !== undefined) setCcUnderwriting(d.ccUnderwriting);
+      if (d.ccOther          !== undefined) setCcOther(d.ccOther);
+      if (d.ccLumpSum        !== undefined) setCcLumpSum(d.ccLumpSum);
+      if (d.compLOSplit      !== undefined) setCompLOSplit(d.compLOSplit);
+      if (d.compLPCRate      !== undefined) setCompLPCRate(d.compLPCRate);
+      if (d.compBPCPoints    !== undefined) setCompBPCPoints(d.compBPCPoints);
+      if (d.compProcessingFee!== undefined) setCompProcessingFee(d.compProcessingFee);
+      if (d.compAdminFee     !== undefined) setCompAdminFee(d.compAdminFee);
+      if (d.compOtherDeductions!==undefined)setCompOtherDeductions(d.compOtherDeductions);
+      if (d.taxState         !== undefined) setTaxState(d.taxState);
+      if (d.taxCounty        !== undefined) setTaxCounty(d.taxCounty);
+      if (d.taxCityMills     !== undefined) setTaxCityMills(d.taxCityMills);
+      if (d.taxFMV           !== undefined) setTaxFMV(d.taxFMV);
+      if (d.savedAt) setSavedAt(new Date(d.savedAt));
+      return true;
+    } catch { return false; }
   };
 
-  const handleExtractAll = async () => {
-    const docs = uploadedDocs.filter(Boolean);
-    if (docs.length === 0) return;
-    setExtracting(true); setExtractionError(null); setExtractionLog([]);
-    const fns = getFunctions();
-    const extractFn = httpsCallable(fns, 'extractFHADocument', { timeout: 120000 });
-    const log = []; let merged = {};
-    for (let i = 0; i < docs.length; i++) {
-      const file = docs[i];
-      log.push({ name: file.name, status: 'extracting', data: null });
-      setExtractionLog([...log]);
+  // ── handleSave: localStorage + DR Option B auto-log ──────────────────────
+  const handleSave = async () => {
+    // 1. localStorage
+    try {
+      const key      = getSaveKey();
+      const snapshot = { ...getStateSnapshot(), savedAt: new Date().toISOString() };
+      localStorage.setItem(key, JSON.stringify(snapshot));
+      setSavedAt(new Date());
+      setSaveFlash(true);
+      setTimeout(() => setSaveFlash(false), 2000);
+    } catch (e) { console.warn('FHA Save failed:', e); }
+
+    // 2. Decision Record auto-log (Option B)
+    if (selectedScenId) {
       try {
-        const base64Data = await toBase64(file);
-        if (!base64Data) throw new Error('Could not read file');
-        const mediaType = file.type === 'application/pdf' ? 'application/pdf' : file.type.startsWith('image/') ? file.type : 'application/pdf';
-        console.log(`Extracting doc ${i+1}: ${file.name} (${base64Data.length} chars base64, type: ${mediaType})`);
-        const result = await extractFn({
-          base64Data, mediaType,
-          documentType: i === 0 ? 'closing_disclosure' : 'mortgage_statement',
-        });
-        console.log(`Doc ${i+1} result:`, result.data);
-        const parsed = result.data?.data || {};
-        merged = { ...merged, ...Object.fromEntries(Object.entries(parsed).filter(([,v]) => v !== null && v !== undefined && v !== '')) };
-        log[i] = { name: file.name, status: 'done', data: parsed };
-        setExtractionLog([...log]);
-      } catch (err) {
-        console.error(`Doc ${i+1} extraction error:`, err);
-        log[i] = { name: file.name, status: 'error', error: err.message };
-        setExtractionLog([...log]);
-      }
+        const findings = {
+          borrowerName:         borrowerName || null,
+          propertyAddress:      propertyAddress || null,
+          caseNumber:           caseNumber || null,
+          endorsementDate:      endorsementDate || null,
+          monthsElapsed:        monthsElapsed || null,
+          seasoningDays:        seasoningDays || null,
+          seasoningPass,
+          existingUPB:          upb || null,
+          existingRatePct:      existingRateN || null,
+          existingPI:           existingPIAmt || null,
+          existingMIP:          existingMIPAmt || null,
+          existingMIPFactor:    mipFactorN,
+          originalUFMIP:        origUFMIPAmt || null,
+          isFHAInsured,
+          newRatePct:           newRateN || null,
+          newTermMonths:        termMos,
+          ufmipRefundPct:       +(ufmipRefundPct * 100).toFixed(1),
+          ufmipRefundAmt:       +ufmipRefundAmt.toFixed(2),
+          newUFMIPGross:        +newUFMIPGross.toFixed(2),
+          netUFMIP:             +netUFMIP.toFixed(2),
+          newLoanAmount:        +newLoanAmt.toFixed(2),
+          newPI:                newPIAmt > 0 ? +newPIAmt.toFixed(2) : null,
+          newMIPMonthly:        +newMIPMonthly.toFixed(2),
+          existingCombinedRate: +existingCombined.toFixed(3),
+          newCombinedRate:      +newCombined.toFixed(3),
+          combinedReduction:    +combinedReduction.toFixed(3),
+          ntbCombinedPass,
+          paymentSavings:       paymentSavings > 0 ? +paymentSavings.toFixed(2) : null,
+          ntbPaymentPass,
+          ntbSatisfied:         ntbPass,
+          recoupmentMonths:     isFinite(recoupMos) ? recoupMos : null,
+          totalClosingCosts:    +effectiveCC.toFixed(2),
+          eligibilityStatus:    eligStatus,
+          docsChecked:          Object.values(checkedDocs).filter(Boolean).length,
+          totalDocs:            DOC_ITEMS.length,
+          savedAt:              new Date().toISOString(),
+        };
+        const rid = await reportFindings(MODULE_KEYS.FHA_STREAMLINE, findings, [], [], '7.0.0');
+        if (rid) setDrRecordId(rid);
+      } catch (e) { console.warn('[DR] FHA reportFindings failed:', e); }
     }
-    if (Object.keys(merged).length > 0) { setExtractionResult(merged); applyParsed(merged); }
-    else setExtractionError('No data could be extracted. Check console for details. Fill in fields manually.');
-    setExtracting(false);
   };
 
-  const runTaxCalc = () => {
-    const fmv = taxCalc.use_scenario_value ? parseFloat(inp.estimated_property_value || 0) : parseFloat(taxCalc.manual_fmv || 0);
-    const result = calcPropertyTax(fmv, taxCalc.county, taxCalc.state, taxCalc.city_millage);
-    setTaxResult(result);
-    if (result) si('monthly_tax_estimate', String(result.monthlyTax.toFixed(2)));
+  // ── Scenario loading ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const load = async () => {
+      setLoadingScenarios(true);
+      const params0 = new URLSearchParams(window.location.search);
+      const sid0    = params0.get('scenarioId') || 'default';
+      restoreFromStorage(`lb_fha_streamline_${sid0}`);
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const sid    = params.get('scenarioId');
+        if (sid) {
+          const snap = await getDoc(doc(db, 'scenarios', sid));
+          if (snap.exists()) {
+            const m = { id: snap.id, ...snap.data() };
+            setSelectedScenId(sid);
+            const name = m.borrowerName || m.borrower_name || ((m.firstName || '') + ' ' + (m.lastName || '')).trim() || '';
+            if (name) setBorrowerName(name);
+            const addr = m.propertyAddress || m.subjectPropertyAddress || [m.streetAddress, m.city, m.state].filter(Boolean).join(', ') || '';
+            if (addr) setPropertyAddress(addr);
+            if (m.loanAmount || m.currentLoanAmount) setExistingUPB(String(m.loanAmount || m.currentLoanAmount));
+            if (m.interestRate) setExistingRate(String(m.interestRate));
+            if (m.propertyValue || m.estimatedValue) setEstimatedValue(String(m.propertyValue || m.estimatedValue));
+          }
+        }
+        try {
+          const q    = query(collection(db, 'scenarios'), orderBy('created_at', 'desc'), limit(15));
+          const snp  = await getDocs(q);
+          const list = snp.docs.map(d => ({ id: d.id, ...d.data() }));
+          setScenarios(list);
+          if (sid && !list.find(x => x.id === sid)) {
+            const snap2 = await getDoc(doc(db, 'scenarios', sid));
+            if (snap2.exists()) setScenarios([{ id: snap2.id, ...snap2.data() }, ...list]);
+          }
+        } catch (e) { console.warn('Scenario list load failed:', e.message); }
+      } catch (e) { console.error('FHA load error:', e); }
+      finally { setLoadingScenarios(false); }
+    };
+    load();
+  }, []);
+
+  const handleScenarioSelect = (id) => {
+    setSelectedScenId(id);
+    const s = scenarios.find(x => x.id === id);
+    if (!s) return;
+    const name = s.borrowerName || s.borrower_name || ((s.firstName || '') + ' ' + (s.lastName || '')).trim() || '';
+    if (name) setBorrowerName(name);
+    if (s.propertyAddress) setPropertyAddress(s.propertyAddress);
+    if (s.loanAmount || s.currentLoanAmount) setExistingUPB(String(s.loanAmount || s.currentLoanAmount));
+    if (s.interestRate) setExistingRate(String(s.interestRate));
+    if (s.propertyValue) setEstimatedValue(String(s.propertyValue));
   };
 
-  const run = () => {
-    const el     = runEligibilityRules(inp);
-    const filled = pricing.filter(o => o.note_rate && o.price);
-    const ntbRes = filled.length > 0 ? computeNTB(inp, filled) : [];
-    setEligibility(el); setNtb(ntbRes); setTab('eligibility');
-    const amt = inp.existing_upb || (selected?.loanAmount) || 0;
-    if (amt) setCommissionResult(computeCommission(amt, comp));
-    if (ntbRes.length > 0) setMaxCTCResults(computeMaxCashToClose(ntbRes, comp, closingCostEst));
+  // ── PDF handlers ─────────────────────────────────────────────────────────
+  const handleDragOver  = (zone) => (e) => { e.preventDefault(); setIsDragging(p => ({ ...p, [zone]: true })); };
+  const handleDragLeave = (zone) => ()  => setIsDragging(p => ({ ...p, [zone]: false }));
+  const handleDrop = (zone) => (e) => {
+    e.preventDefault();
+    setIsDragging(p => ({ ...p, [zone]: false }));
+    const file = e.dataTransfer.files[0];
+    if (file?.type === 'application/pdf') { setPdfFiles(p => ({ ...p, [zone]: file })); setExtractionError(''); setExtractionSuccess(false); }
   };
+  const handleFileSelect = (zone) => (e) => {
+    const file = e.target.files[0];
+    if (file) { setPdfFiles(p => ({ ...p, [zone]: file })); setExtractionError(''); setExtractionSuccess(false); }
+  };
+  const clearZone = (zone) => { setPdfFiles(p => ({ ...p, [zone]: null })); setExtractionSuccess(false); setExtractionError(''); };
 
-  const save = async () => {
-    if (!selected || !eligibility) return; setSaving(true);
+  const handleExtract = async () => {
+    const uploaded = Object.entries(pdfFiles).filter(([, f]) => f !== null);
+    if (uploaded.length === 0) return;
+    setIsExtracting(true); setExtractionError(''); setExtractionSuccess(false);
     try {
-      await updateDoc(doc(db,'scenarios',selected.id),{
-        fha_streamline_analysis: { completed_at: new Date().toISOString(), final_decision: eligibility.finalDecision, rules: eligibility.rules, ntb_results: ntb, inputs: inp }
+      const toBase64 = (file) => new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload  = () => res(r.result.split(',')[1]);
+        r.onerror = () => rej(new Error('File read failed'));
+        r.readAsDataURL(file);
       });
-    } catch(e) { alert('Error: '+e.message); } finally { setSaving(false); }
+      const documents = await Promise.all(
+        uploaded.map(async ([label, file]) => ({ label, base64: await toBase64(file), mediaType: 'application/pdf' }))
+      );
+      const extractFn = httpsCallable(functions, 'extractFHADocument');
+      const result    = await extractFn({ documents });
+      const d = result.data || {};
+      if (d.borrowerName || d.borrower_name) setBorrowerName(d.borrowerName || d.borrower_name);
+      if (d.existingUPB || d.existing_upb)   setExistingUPB(String(d.existingUPB || d.existing_upb));
+      if (d.existingRate || d.existing_note_rate) setExistingRate(String(d.existingRate || d.existing_note_rate));
+      if (d.existingPI || d.existing_monthly_pi)  setExistingPI(String(d.existingPI || d.existing_monthly_pi));
+      if (d.existingMIP || d.existing_monthly_mip) setExistingMIP(String(d.existingMIP || d.existing_monthly_mip));
+      if (d.originalUFMIP || d.original_ufmip)     setOriginalUFMIP(String(d.originalUFMIP || d.original_ufmip));
+      if (d.endorsementDate || d.endorsement_date) setEndorsementDate(d.endorsementDate || d.endorsement_date);
+      if (d.caseNumber || d.existing_case_number)  setCaseNumber(d.caseNumber || d.existing_case_number);
+      if (d.propertyAddress) setPropertyAddress(d.propertyAddress);
+      setExtractionSuccess(true);
+    } catch (err) {
+      setExtractionError(err.message || 'Extraction failed — enter fields manually.');
+    } finally { setIsExtracting(false); }
   };
 
-  const handleSaveToRecord = async () => {
-    if (!eligibility) return; setRecordSaving(true);
-    try {
-      const id = await reportFindings('FHA_STREAMLINE',{ finalDecision: eligibility.finalDecision, existingRate: inp.existing_note_rate, ntbResults: ntb, commissionResult, taxResult, timestamp: new Date().toISOString() });
-      if (id) setSavedRecordId(id);
-    } catch(e) { console.error(e); } finally { setRecordSaving(false); }
+  // ── Property Tax ─────────────────────────────────────────────────────────
+  const runTaxCalc = () => {
+    const fmv = parseFloat(taxFMV) || parseFloat(estimatedValue) || 0;
+    if (!fmv) return;
+    if (taxState === 'GA' && GA_COUNTIES[taxCounty]) {
+      const data      = GA_COUNTIES[taxCounty];
+      const totalMill = data.millage + (parseFloat(taxCityMills) || 0);
+      const assessed  = fmv * 0.40;
+      const annual    = assessed * (totalMill / 1000);
+      setTaxResult({ fmv, assessed, totalMill, annual, monthly: annual / 12, due: data.due, note: data.note });
+    } else {
+      const rate   = 0.011;
+      const annual = fmv * rate;
+      setTaxResult({ fmv, assessed: null, annual, monthly: annual / 12, due: 'Check county', note: 'National avg estimate (~1.1%)' });
+    }
   };
 
-  const getBadge = (r,all) => {
-    if (!r.ntbPass) return {label:'Does Not Meet NTB',color:'bg-red-100 text-red-700'};
-    const passing = all.filter(x=>x.ntbPass);
-    const bestSave = Math.max(...passing.map(x=>x.monthlySavings));
-    const bestBE   = Math.min(...passing.map(x=>x.breakevenMonths));
-    if (r.monthlySavings===bestSave) return {label:'⭐ Best Overall',color:'bg-blue-600 text-white'};
-    if (r.breakevenMonths===bestBE)  return {label:'⚡ Fastest BE',color:'bg-green-600 text-white'};
-    return {label:'✓ Meets NTB',color:'bg-gray-100 text-gray-700'};
-  };
+  // ─────────────────────────────────────────────────────────────────────────────
+  // TAB RENDERERS
+  // ─────────────────────────────────────────────────────────────────────────────
 
-  // ── Print Worksheet Generators ─────────────────────────────────────────────
-  const generateNTBWorksheetHTML = () => {
-    const borrowerName = selected ? `${selected.firstName||''} ${selected.lastName||''}`.trim() : 'N/A';
-    const existingCombined = (parseFloat(inp.existing_note_rate||0)+parseFloat(inp.existing_mip_factor||0.55)).toFixed(3);
-    const existingTotal = (Number(inp.existing_monthly_pi||0)+Number(inp.existing_monthly_mip||0)).toFixed(2);
-    const days = inp.endorsement_date ? Math.floor((Date.now()-new Date(inp.endorsement_date).getTime())/(1000*60*60*24)) : 0;
-    return `<!DOCTYPE html><html><head><title>FHA Streamline NTB Worksheet</title>
-<style>body{font-family:Arial,sans-serif;font-size:12px;margin:40px;color:#333}h1{font-size:16px;border-bottom:2px solid #1e40af;padding-bottom:8px;color:#1e40af;text-align:center}h2{font-size:13px;margin-top:20px;color:#374151;border-bottom:1px solid #d1d5db;padding-bottom:4px}table{width:100%;border-collapse:collapse;margin:10px 0}th{background:#eff6ff;text-align:left;padding:6px 8px;font-weight:bold;border:1px solid #bfdbfe}td{padding:6px 8px;border:1px solid #e5e7eb}.pass{color:#166534;font-weight:bold}.fail{color:#991b1b;font-weight:bold}.result-box{border:2px solid #1e40af;padding:12px;margin:16px 0;background:#eff6ff}.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}.info-block{border:1px solid #e5e7eb;padding:10px;border-radius:4px}@media print{body{margin:20px}}</style>
-</head><body>
-<h1>LoanBeacons™ — FHA Streamline Net Tangible Benefit Worksheet</h1>
-<p style="text-align:center;color:#6b7280;font-size:11px;margin-bottom:16px">HUD Handbook 4000.1 §III.A.2.a — Required Documentation for All FHA Streamline Files</p>
-<div class="info-grid">
-  <div class="info-block"><strong>Borrower:</strong> ${borrowerName}<br><strong>Property:</strong> ${selected?.streetAddress||'—'}, ${selected?.city||'—'}, ${selected?.state||'GA'}<br><strong>FHA Case #:</strong> ${inp.existing_case_number||'—'}<br><strong>Loan Number:</strong> ${selected?.id||'—'}</div>
-  <div class="info-block"><strong>Loan Officer:</strong> George Chevalier IV<br><strong>LO NMLS:</strong> 1175947<br><strong>Lender:</strong> Clearview Lending Solutions NMLS #1175947<br><strong>Date:</strong> ${new Date().toLocaleDateString()}</div>
-</div>
-<h2>Part 1 — Existing FHA Loan Data</h2>
-<table><tr><th>Field</th><th>Value</th><th>Source</th></tr>
-<tr><td>Current Unpaid Principal Balance</td><td>$${Number(inp.existing_upb||0).toLocaleString('en-US',{minimumFractionDigits:2})}</td><td>Current Mortgage Statement</td></tr>
-<tr><td>Existing Interest Rate</td><td>${parseFloat(inp.existing_note_rate||0).toFixed(3)}%</td><td>Mortgage Statement / Closing Disclosure</td></tr>
-<tr><td>Annual MIP Factor</td><td>${parseFloat(inp.existing_mip_factor||0.55).toFixed(3)}%</td><td>MIP Schedule / HUD Guidelines</td></tr>
-<tr><td><strong>Existing Combined Rate (Rate + MIP)</strong></td><td><strong>${existingCombined}%</strong></td><td>Calculated: ${inp.existing_note_rate}% + ${inp.existing_mip_factor}%</td></tr>
-<tr><td>Monthly P&I Payment</td><td>$${Number(inp.existing_monthly_pi||0).toFixed(2)}</td><td>Current Mortgage Statement</td></tr>
-<tr><td>Monthly MIP Payment</td><td>$${Number(inp.existing_monthly_mip||0).toFixed(2)}</td><td>Current Mortgage Statement</td></tr>
-<tr><td><strong>Total Monthly P&I + MIP</strong></td><td><strong>$${existingTotal}</strong></td><td>Calculated</td></tr>
-<tr><td>FHA Case Number</td><td>${inp.existing_case_number||'—'}</td><td>FHA Connection</td></tr>
-<tr><td>Endorsement / Closing Date</td><td>${inp.endorsement_date||'—'}</td><td>HUD-1 / Closing Disclosure</td></tr>
-<tr><td>Days Since Closing</td><td>${days} days (${Math.floor(days/30)} payments)</td><td>Calculated</td></tr>
-<tr><td>210-Day Seasoning Requirement</td><td class="${days>=210?'pass':'fail'}">${days>=210?'✓ SATISFIED — '+days+' days elapsed':'✗ NOT MET — need '+(210-days)+' more days'}</td><td>HUD 4000.1 §III.A.2.a</td></tr>
-<tr><td>Original UFMIP Paid</td><td>$${Number(inp.original_ufmip||0).toFixed(2)}</td><td>HUD-1 / Closing Disclosure</td></tr>
-</table>
-${ntb ? ntb.map(r => `
-<h2>Part 2 — Proposed Loan: ${r.label} at ${r.note_rate}%</h2>
-<table><tr><th>Field</th><th>Value</th><th>Notes</th></tr>
-<tr><td>Proposed Interest Rate</td><td>${r.note_rate}%</td><td>Rate sheet / lock confirmation</td></tr>
-<tr><td>New Annual MIP Factor</td><td>0.550%</td><td>FHA Standard — LTV > 90%, term > 15 years</td></tr>
-<tr><td><strong>New Combined Rate (Rate + MIP)</strong></td><td><strong>${r.newCombined}%</strong></td><td>Calculated: ${r.note_rate}% + 0.550%</td></tr>
-<tr><td>New Monthly P&I</td><td>$${r.newPI.toFixed(2)}</td><td>Amortization: $${Number(inp.existing_upb||0).toLocaleString()} @ ${r.note_rate}% / ${inp.new_term_months} months</td></tr>
-<tr><td>New Monthly MIP</td><td>$${r.newMIP.toFixed(2)}</td><td>$${Number(inp.existing_upb||0).toLocaleString()} × 0.55% ÷ 12</td></tr>
-<tr><td><strong>New Total Monthly P&I + MIP</strong></td><td><strong>$${r.newTotal.toFixed(2)}</strong></td><td>Calculated</td></tr>
-</table>
-<h2>Part 3 — NTB Calculation: ${r.label}</h2>
-<table><tr><th>Step</th><th>Calculation</th><th>Result</th></tr>
-<tr><td>1. Existing Combined Rate</td><td>${inp.existing_note_rate}% (rate) + ${inp.existing_mip_factor}% (MIP)</td><td>${r.existingCombined}%</td></tr>
-<tr><td>2. New Combined Rate</td><td>${r.note_rate}% (rate) + 0.550% (MIP)</td><td>${r.newCombined}%</td></tr>
-<tr><td>3. Combined Rate Reduction</td><td>${r.existingCombined}% − ${r.newCombined}%</td><td>${r.combinedReduction}%</td></tr>
-<tr><td>4. NTB Threshold Required</td><td>Minimum 0.500% reduction per HUD 4000.1</td><td>0.500%</td></tr>
-<tr><td><strong>5. NTB Determination</strong></td><td></td><td class="${r.ntbPass?'pass':'fail'}">${r.ntbPass?'✓ MEETS NTB — '+r.combinedReduction+'% ≥ 0.500%':'✗ FAILS NTB — '+r.combinedReduction+'% < 0.500%'}</td></tr>
-<tr><td>6. Monthly Payment Reduction</td><td>$${(r.existingPI+r.existingMIP).toFixed(2)} (existing) − $${r.newTotal.toFixed(2)} (new)</td><td>$${r.monthlySavings.toFixed(2)}/month savings</td></tr>
-<tr><td>7. UFMIP Refund (${r.refundPct}% at ${r.monthsElapsed} months)</td><td>$${Number(inp.original_ufmip||0).toFixed(2)} × ${r.refundPct}%</td><td>$${r.ufmipRefund.toFixed(2)} credit</td></tr>
-<tr><td>8. New UFMIP (1.75%)</td><td>$${Number(inp.existing_upb||0).toFixed(2)} × 1.75%</td><td>$${r.newUFMIP.toFixed(2)}</td></tr>
-<tr><td>9. Net UFMIP Cost</td><td>$${r.newUFMIP.toFixed(2)} − $${r.ufmipRefund.toFixed(2)}</td><td>$${r.netUFMIP.toFixed(2)}</td></tr>
-<tr><td>10. Breakeven Period</td><td>$${r.netUFMIP.toFixed(2)} ÷ $${r.monthlySavings.toFixed(2)}/month</td><td>${r.breakevenMonths<999?r.breakevenMonths+' months':'N/A (no savings)'}</td></tr>
-</table>`).join('') : '<p>Run analysis to generate NTB data.</p>'}
-<div class="result-box">
-<h2 style="margin-top:0;border:none;color:#1e40af">Part 4 — Final NTB Determination</h2>
-${ntb && ntb.length > 0 ? `<p>Based on the FHA Streamline Net Tangible Benefit analysis:</p><ul>${ntb.map(r=>`<li><strong>${r.label} (${r.note_rate}%):</strong> <span class="${r.ntbPass?'pass':'fail'}">${r.ntbPass?'✓ MEETS':'✗ DOES NOT MEET'}</span> the Net Tangible Benefit requirement. Combined rate reduction: ${r.combinedReduction}% (threshold: 0.500%)</li>`).join('')}</ul>` : '<p>Run analysis first.</p>'}
-</div>
-<h2>Certifications</h2>
-<p>I certify that the information in this worksheet is accurate and complete, and that the proposed FHA Streamline Refinance has been analyzed in accordance with HUD Handbook 4000.1 requirements.</p>
-<table style="margin-top:40px"><tr>
-<td style="border:none;padding-top:40px;border-top:1px solid #333;width:33%">Loan Officer Signature / Date</td>
-<td style="border:none;width:5%"></td>
-<td style="border:none;padding-top:40px;border-top:1px solid #333;width:33%">Borrower Signature / Date</td>
-<td style="border:none;width:5%"></td>
-<td style="border:none;padding-top:40px;border-top:1px solid #333;width:24%">Co-Borrower / Date</td>
-</tr></table>
-<p style="color:#9ca3af;font-size:10px;margin-top:40px;text-align:center">Generated by LoanBeacons™ FHA Streamline Intelligence™ | Clearview Lending Solutions NMLS #1175947 | ${new Date().toLocaleString()} | Patent Pending</p>
-<script>window.print();</script></body></html>`;
-  };
-
-  const generateUWWorksheetHTML = () => {
-    const borrowerName = selected ? `${selected.firstName||''} ${selected.lastName||''}`.trim() : 'N/A';
-    const days = inp.endorsement_date ? Math.floor((Date.now()-new Date(inp.endorsement_date).getTime())/(1000*60*60*24)) : 0;
-    const pmts = Math.floor(days/30);
-    return `<!DOCTYPE html><html><head><title>FHA Streamline UW Summary</title>
-<style>body{font-family:Arial,sans-serif;font-size:11px;margin:30px;color:#333}h1{font-size:14px;border-bottom:2px solid #1e40af;padding-bottom:6px;color:#1e40af}h2{font-size:11px;margin-top:14px;color:#fff;background:#374151;padding:4px 8px}table{width:100%;border-collapse:collapse;margin:6px 0;font-size:11px}th{background:#dbeafe;text-align:left;padding:5px 6px;font-weight:bold;border:1px solid #93c5fd}td{padding:5px 6px;border:1px solid #e5e7eb}.pass{color:#166534;font-weight:bold}.fail{color:#991b1b;font-weight:bold}.warn{color:#92400e;font-weight:bold}.det{border:2px solid #1e40af;padding:10px;margin:12px 0;background:#eff6ff}@media print{body{margin:15px}}</style>
-</head><body>
-<h1>🏦 LoanBeacons™ — FHA Streamline Underwriting Summary</h1>
-<p style="color:#6b7280;font-size:10px">File #: ${inp.existing_case_number||'PENDING'} | Generated: ${new Date().toLocaleString()} | LoanBeacons™ v7</p>
-<h2>1. FILE IDENTIFICATION</h2>
-<table><tr><td width="150"><strong>Borrower</strong></td><td>${borrowerName}</td><td width="150"><strong>FHA Case #</strong></td><td>${inp.existing_case_number||'—'}</td></tr>
-<tr><td><strong>Property</strong></td><td>${selected?.streetAddress||'—'}, ${selected?.city||'—'}, ${selected?.state||'GA'} ${selected?.zipCode||''}</td><td><strong>County</strong></td><td>${selected?.county||inp.property_county||'—'}</td></tr>
-<tr><td><strong>Loan Officer</strong></td><td>George Chevalier IV</td><td><strong>LO NMLS</strong></td><td>1175947</td></tr>
-<tr><td><strong>Lender</strong></td><td>Clearview Lending Solutions</td><td><strong>Lender NMLS</strong></td><td>1175947</td></tr>
-<tr><td><strong>Analysis Date</strong></td><td>${new Date().toLocaleDateString()}</td><td><strong>System</strong></td><td>LoanBeacons™ FHA Streamline Intelligence™ v7</td></tr></table>
-<h2>2. SEASONING VERIFICATION (HUD 4000.1 §III.A.2.a)</h2>
-<table><tr><th>Requirement</th><th>Required</th><th>Actual</th><th>Status</th></tr>
-<tr><td>Days Since Closing</td><td>≥ 210 days</td><td>${days} days</td><td class="${days>=210?'pass':'fail'}">${days>=210?'✓ PASS':'✗ FAIL'}</td></tr>
-<tr><td>Payments Made</td><td>≥ 6 payments</td><td>~${pmts} payments</td><td class="${pmts>=6?'pass':'fail'}">${pmts>=6?'✓ PASS':'✗ FAIL'}</td></tr>
-<tr><td>Endorsement Date</td><td>—</td><td>${inp.endorsement_date||'—'}</td><td>—</td></tr></table>
-<h2>3. ELIGIBILITY RULES CHECKLIST</h2>
-<table><tr><th>Rule</th><th>Label</th><th>Criteria</th><th>Finding</th><th>Status</th></tr>
-${eligibility ? eligibility.rules.map(r=>`<tr><td>${r.id}</td><td>${r.label}</td><td>${r.id==='R001'?'FHA-insured loan required':r.id==='R002'?'Must be current — no delinquency':r.id==='R003'?'0×30-day late in last 6 months':r.id==='R004'?'Max 1×30-day late in months 7-12':r.id==='R005'?'Owner-occupied property':r.id==='R006'?'Not in forbearance/loss mitigation':'No borrower or title changes'}</td><td>${r.message}</td><td class="${r.status==='PASS'?'pass':r.status==='FAIL'?'fail':'warn'}">${r.status}</td></tr>`).join(''):'<tr><td colspan="5">Run analysis first</td></tr>'}
-${eligibility?`<tr style="background:#f9fafb"><td colspan="4"><strong>OVERALL ELIGIBILITY DETERMINATION</strong></td><td class="${eligibility.finalDecision==='ELIGIBLE'?'pass':eligibility.finalDecision==='INELIGIBLE'?'fail':'warn'}"><strong>${eligibility.finalDecision}</strong></td></tr>`:''}
-</table>
-<h2>4. NTB CALCULATION DETAIL</h2>
-<table><tr><th>Component</th><th>Existing</th>${ntb?ntb.map(r=>`<th>${r.label} (${r.note_rate}%)</th>`).join(''):'<th>—</th>'}</tr>
-<tr><td>Interest Rate</td><td>${parseFloat(inp.existing_note_rate||0).toFixed(3)}%</td>${ntb?ntb.map(r=>`<td>${r.note_rate}%</td>`).join(''):'<td>—</td>'}</tr>
-<tr><td>Annual MIP Factor</td><td>${parseFloat(inp.existing_mip_factor||0.55).toFixed(3)}%</td>${ntb?ntb.map(()=>'<td>0.550%</td>').join(''):'<td>—</td>'}</tr>
-<tr><td><strong>Combined Rate</strong></td><td><strong>${(parseFloat(inp.existing_note_rate||0)+parseFloat(inp.existing_mip_factor||0.55)).toFixed(3)}%</strong></td>${ntb?ntb.map(r=>`<td><strong>${r.newCombined}%</strong></td>`).join(''):'<td>—</td>'}</tr>
-<tr><td>Rate Reduction</td><td>—</td>${ntb?ntb.map(r=>`<td>${r.combinedReduction}%</td>`).join(''):'<td>—</td>'}</tr>
-<tr><td>Meets 0.50% NTB?</td><td>—</td>${ntb?ntb.map(r=>`<td class="${r.ntbPass?'pass':'fail'}">${r.ntbPass?'✓ YES — PASS':'✗ NO — FAIL'}</td>`).join(''):'<td>—</td>'}</tr>
-<tr><td>Monthly P&I</td><td>$${Number(inp.existing_monthly_pi||0).toFixed(2)}</td>${ntb?ntb.map(r=>`<td>$${r.newPI.toFixed(2)}</td>`).join(''):'<td>—</td>'}</tr>
-<tr><td>Monthly MIP</td><td>$${Number(inp.existing_monthly_mip||0).toFixed(2)}</td>${ntb?ntb.map(r=>`<td>$${r.newMIP.toFixed(2)}</td>`).join(''):'<td>—</td>'}</tr>
-<tr><td><strong>Total P&I+MIP</strong></td><td><strong>$${(Number(inp.existing_monthly_pi||0)+Number(inp.existing_monthly_mip||0)).toFixed(2)}</strong></td>${ntb?ntb.map(r=>`<td><strong>$${r.newTotal.toFixed(2)}</strong></td>`).join(''):'<td>—</td>'}</tr>
-<tr><td>Monthly Savings</td><td>—</td>${ntb?ntb.map(r=>`<td>$${r.monthlySavings.toFixed(2)}/mo</td>`).join(''):'<td>—</td>'}</tr>
-<tr><td>Breakeven</td><td>—</td>${ntb?ntb.map(r=>`<td>${r.breakevenMonths<999?r.breakevenMonths+' months':'N/A'}</td>`).join(''):'<td>—</td>'}</tr>
-</table>
-<h2>5. UFMIP REFUND CALCULATION</h2>
-<table><tr><th>Item</th><th>Value</th><th>Notes</th></tr>
-<tr><td>Original UFMIP Paid at Closing</td><td>$${Number(inp.original_ufmip||0).toFixed(2)}</td><td>From HUD-1 / Closing Disclosure</td></tr>
-${ntb&&ntb[0]?`<tr><td>Months Since Endorsement</td><td>${ntb[0].monthsElapsed} months</td><td>Calculated from ${inp.endorsement_date||'—'}</td></tr>
-<tr><td>UFMIP Refund Percentage</td><td>${ntb[0].refundPct}%</td><td>Per FHA UFMIP refund schedule</td></tr>
-<tr><td>UFMIP Refund Amount</td><td>$${ntb[0].ufmipRefund.toFixed(2)}</td><td>Applied as credit against new UFMIP</td></tr>
-<tr><td>New UFMIP (1.75%)</td><td>$${ntb[0].newUFMIP.toFixed(2)}</td><td>1.75% × $${Number(inp.existing_upb||0).toLocaleString()}</td></tr>
-<tr><td><strong>Net UFMIP Cost</strong></td><td><strong>$${ntb[0].netUFMIP.toFixed(2)}</strong></td><td>New UFMIP less refund credit</td></tr>`
-:'<tr><td colspan="3">Run analysis first</td></tr>'}
-</table>
-<h2>6. PROPERTY TAX VERIFICATION</h2>
-<table><tr><th>Item</th><th>Value</th><th>Source / Notes</th></tr>
-<tr><td>State</td><td>${inp.property_state||'GA'}</td><td>Scenario</td></tr>
-<tr><td>County</td><td>${inp.property_county||taxCalc.county||'—'}</td><td>Scenario / Property records</td></tr>
-${taxResult?`<tr><td>Fair Market Value</td><td>$${Number(taxResult.fmv).toLocaleString()}</td><td>Scenario / Appraisal</td></tr>
-<tr><td>Assessed Value</td><td>${taxResult.assessedValue?'$'+Number(taxResult.assessedValue).toLocaleString():'N/A'}</td><td>${inp.property_state==='GA'?'GA 40% assessment ratio':'Estimated'}</td></tr>
-<tr><td>Annual Property Tax (Est.)</td><td>$${Number(taxResult.annualTax).toFixed(2)}</td><td>${taxResult.source}</td></tr>
-<tr><td><strong>Monthly Tax Escrow (Est.)</strong></td><td><strong>$${taxResult.monthlyTax.toFixed(2)}</strong></td><td>Annual ÷ 12</td></tr>
-<tr><td>Tax Due Date</td><td>${taxResult.dueDate}</td><td>County records</td></tr>`
-:'<tr><td colspan="3">Run property tax calculator first</td></tr>'}
-</table>
-<p style="color:#dc2626;font-size:10px">⚠️ Property tax estimates must be verified with county tax assessor before closing. Rates change annually.</p>
-<h2>7. LO COMPENSATION DISCLOSURE (RESPA/TILA)</h2>
-<table><tr><th>Item</th><th>LPC (Lender Paid)</th><th>BPC (Borrower Paid)</th></tr>
-${commissionResult?`<tr><td>Gross Commission</td><td>$${commissionResult.lpc?commissionResult.lpc.gross.toFixed(2):'—'}</td><td>$${commissionResult.bpc?commissionResult.bpc.gross.toFixed(2):'—'}</td></tr>
-<tr><td>LO Split (${comp.lo_split}%)</td><td>$${commissionResult.lpc?commissionResult.lpc.split.toFixed(2):'—'}</td><td>$${commissionResult.bpc?commissionResult.bpc.split.toFixed(2):'—'}</td></tr>
-<tr><td>Deductions</td><td>($${commissionResult.lpc?commissionResult.lpc.deductions.toFixed(2):'—'})</td><td>($${commissionResult.bpc?commissionResult.bpc.deductions.toFixed(2):'—'})</td></tr>
-<tr><td><strong>Net to LO</strong></td><td><strong>$${commissionResult.lpc?commissionResult.lpc.net.toFixed(2):'—'}</strong></td><td><strong>$${commissionResult.bpc?commissionResult.bpc.net.toFixed(2):'—'}</strong></td></tr>
-<tr><td>Comp Selected</td><td colspan="2">${commissionResult.recommendation?commissionResult.recommendation.toUpperCase()+' — '+(commissionResult.recommendation==='lpc'?'Lender Paid Compensation':'Borrower Paid Compensation'):'—'}</td></tr>`
-:'<tr><td colspan="3">Select scenario with loan amount</td></tr>'}
-</table>
-<p style="color:#92400e;font-size:10px">RESPA: LO may receive LPC or BPC — not both on the same file.</p>
-<div class="det">
-<h2 style="margin-top:0;background:none;color:#1e40af;border:none">8. FINAL UNDERWRITING DETERMINATION</h2>
-<p><strong>Eligibility:</strong> <span class="${eligibility?.finalDecision==='ELIGIBLE'?'pass':eligibility?.finalDecision==='INELIGIBLE'?'fail':'warn'}">${eligibility?.finalDecision||'PENDING — Run analysis first'}</span></p>
-<p><strong>NTB:</strong> ${ntb&&ntb.some(r=>r.ntbPass)?`<span class="pass">PASS — ${ntb.filter(r=>r.ntbPass).map(r=>r.label+' ('+r.note_rate+'%)').join(', ')} meet(s) NTB requirement</span>`:'<span class="fail">No options currently meet NTB threshold</span>'}</p>
-<p><strong>Recommendation:</strong> ${eligibility?.finalDecision==='ELIGIBLE'&&ntb?.some(r=>r.ntbPass)?'<span class="pass">✓ PROCEED — File meets all FHA Streamline requirements. File may be submitted.</span>':'<span class="fail">✗ HOLD — Review issues noted above before submission.</span>'}</p>
-</div>
-<table style="margin-top:30px"><tr>
-<td style="border:none;padding-top:35px;border-top:1px solid #333;width:32%">Underwriter Signature / Date</td>
-<td style="border:none;width:2%"></td>
-<td style="border:none;padding-top:35px;border-top:1px solid #333;width:32%">Loan Officer / Date</td>
-<td style="border:none;width:2%"></td>
-<td style="border:none;padding-top:35px;border-top:1px solid #333;width:32%">Supervisor / Date (if required)</td>
-</tr></table>
-<p style="color:#9ca3af;font-size:10px;margin-top:20px;text-align:center">LoanBeacons™ FHA Streamline Intelligence™ v7 | Clearview Lending Solutions NMLS #1175947 | ${new Date().toLocaleString()} | Patent Pending</p>
-<script>window.print();</script></body></html>`;
-  };
-
-  // ── JSX ───────────────────────────────────────────────────────────────────
-  return (
-    <div className="min-h-screen bg-gray-50">
-
-      {/* Header */}
-      <div className="bg-gradient-to-r from-blue-800 to-blue-600 text-white px-6 py-5">
-        <div className="max-w-6xl mx-auto flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <button onClick={()=>navigate('/')} className="text-blue-200 text-sm mb-1 hover:text-white block">← Back to Dashboard</button>
-            <div className="flex items-center gap-3">
-              <span className="text-3xl">📋</span>
-              <div>
-                <h1 className="text-xl font-bold">FHA Streamline Intelligence™</h1>
-                <p className="text-blue-100 text-sm">Eligibility · NTB · MIP · Property Tax · LO Commission · Cash-to-Close Optimizer</p>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 flex-wrap">
-            {selected && (
-              <div className="bg-white/10 rounded-xl px-3 py-2 text-xs">
-                <div className="text-blue-200">Doc Checklist</div>
-                <div className="font-bold">{docsObtained}/{docChecklist.length} ready</div>
-                <div className="w-24 h-1.5 bg-white/20 rounded-full mt-1 overflow-hidden">
-                  <div className="h-full bg-green-400 rounded-full" style={{width:`${docsPct}%`}}/>
-                </div>
-              </div>
-            )}
-            {eligibility && (
-              <div className={`rounded-xl px-4 py-2 border-2 ${DECISION_STYLE[eligibility.finalDecision].border} ${DECISION_STYLE[eligibility.finalDecision].bg}`}>
-                <div className={`font-bold text-sm ${DECISION_STYLE[eligibility.finalDecision].text}`}>
-                  {DECISION_STYLE[eligibility.finalDecision].icon} {DECISION_STYLE[eligibility.finalDecision].label}
-                </div>
-              </div>
-            )}
-          </div>
+  const renderSnapshot = () => (
+    <div>
+      {/* ── PDF Upload ── */}
+      <div style={S.card}>
+        <div style={S.cardTitle}>🗂️ Upload FHA Loan Documents</div>
+        <div style={S.infoBox}>
+          Upload up to three documents. Haiku AI extracts loan details from whichever files you provide.
+          Closing Disclosure → UFMIP + rate. Mortgage Statement → UPB + payments. Payment History → lates.
         </div>
+        {[
+          { zone: 'cd',        ref: cdRef,        icon: '📄', label: 'Closing Disclosure / HUD-1',    sub: 'Original UFMIP · rate · origination date' },
+          { zone: 'statement', ref: statementRef, icon: '🏦', label: 'Current Mortgage Statement',     sub: 'Current balance · P&I · monthly MIP' },
+          { zone: 'payment',   ref: paymentRef,   icon: '📊', label: 'Payment History (12–24 months)', sub: '30-day lates for eligibility check' },
+        ].map(({ zone, ref, icon, label, sub }) => {
+          const file = pdfFiles[zone];
+          const drag = isDragging[zone];
+          return (
+            <div key={zone} style={{ marginBottom: 10 }}>
+              <div
+                style={{ border: `2px dashed ${drag ? '#0f4c81' : file ? '#22c55e' : '#b0c4de'}`, borderRadius: 10, padding: '14px 18px', background: drag ? '#eef4fb' : file ? '#f0fdf4' : '#f8fafc', cursor: file ? 'default' : 'pointer', transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: 14 }}
+                onDragOver={handleDragOver(zone)} onDragLeave={handleDragLeave(zone)} onDrop={handleDrop(zone)}
+                onClick={() => { if (!file) ref.current?.click(); }}
+              >
+                <span style={{ fontSize: 22, flexShrink: 0 }}>{file ? '✅' : icon}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: file ? '#166534' : '#1a1a2e' }}>{label}</div>
+                  {file
+                    ? <div style={{ fontSize: 12, color: '#166534', marginTop: 2 }}>{file.name} · {(file.size / 1024).toFixed(1)} KB</div>
+                    : <div style={{ fontSize: 12, color: '#6b7a8d', marginTop: 2 }}>{sub} · Drop here or click to browse</div>}
+                </div>
+                {file && <button style={{ ...S.btn, ...S.btnRed, flexShrink: 0 }} onClick={(e) => { e.stopPropagation(); clearZone(zone); }}>✕ Remove</button>}
+              </div>
+              <input ref={ref} type="file" accept=".pdf" style={{ display: 'none' }} onChange={handleFileSelect(zone)} />
+            </div>
+          );
+        })}
+        <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+          <button style={{ ...S.btn, ...S.btnPrimary, opacity: (Object.values(pdfFiles).every(f => !f) || isExtracting) ? 0.6 : 1 }}
+            onClick={handleExtract} disabled={Object.values(pdfFiles).every(f => !f) || isExtracting}>
+            {isExtracting ? '⏳ Extracting...' : '🤖 Extract with AI'}
+          </button>
+          {Object.values(pdfFiles).some(f => f) && (
+            <button style={{ ...S.btn, ...S.btnSecondary }} onClick={() => { setPdfFiles({ cd: null, statement: null, payment: null }); setExtractionSuccess(false); setExtractionError(''); }}>
+              ✕ Clear All
+            </button>
+          )}
+        </div>
+        {extractionError   && <div style={{ ...S.errorBox,   marginTop: 10 }}>⚠️ {extractionError}</div>}
+        {extractionSuccess && <div style={{ ...S.successBox, marginTop: 10 }}>✅ Extraction complete — review fields below and confirm accuracy.</div>}
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
+      {/* ── Loan Details ── */}
+      <div style={S.card}>
+        <div style={S.cardTitle}>📋 Existing FHA Loan Details</div>
+        <div style={S.grid2}>
+          <div><label style={S.label}>Borrower Name</label><input style={S.input} value={borrowerName} onChange={e => setBorrowerName(e.target.value)} placeholder="e.g. Patricia Moore" /></div>
+          <div><label style={S.label}>FHA Case Number</label><input style={S.input} value={caseNumber} onChange={e => setCaseNumber(e.target.value)} placeholder="105-XXXXXXX-XXX" /></div>
+          <div><label style={S.label}>Closing / Endorsement Date</label><input style={S.input} type="date" value={endorsementDate} onChange={e => setEndorsementDate(e.target.value)} /></div>
+          <div><label style={S.label}>Current UPB ($)</label><input style={S.input} type="number" value={existingUPB} onChange={e => setExistingUPB(e.target.value)} placeholder="e.g. 301080" /></div>
+          <div><label style={S.label}>Current Note Rate (%)</label><input style={S.input} type="number" step="0.001" value={existingRate} onChange={e => setExistingRate(e.target.value)} placeholder="e.g. 7.125" /></div>
+          <div><label style={S.label}>Current P&amp;I Payment ($)</label><input style={S.input} type="number" value={existingPI} onChange={e => setExistingPI(e.target.value)} placeholder="e.g. 1207.58" /></div>
+          <div><label style={S.label}>Current Monthly MIP ($)</label><input style={S.input} type="number" value={existingMIP} onChange={e => setExistingMIP(e.target.value)} placeholder="e.g. 96.25" /></div>
+          <div><label style={S.label}>Annual MIP Factor (%)</label><input style={S.input} type="number" step="0.01" value={existingMIPFactor} onChange={e => setExistingMIPFactor(e.target.value)} placeholder="0.55" /></div>
+          <div><label style={S.label}>Original UFMIP Paid ($)</label><input style={S.input} type="number" value={originalUFMIP} onChange={e => setOriginalUFMIP(e.target.value)} placeholder="e.g. 3097.50" /></div>
+          <div><label style={S.label}>Estimated Property Value ($)</label><input style={S.input} type="number" value={estimatedValue} onChange={e => setEstimatedValue(e.target.value)} placeholder="e.g. 312000" /></div>
+          <div style={{ gridColumn: '1 / -1' }}><label style={S.label}>Property Address</label><input style={S.input} value={propertyAddress} onChange={e => setPropertyAddress(e.target.value)} placeholder="123 Main St, City, State 00000" /></div>
+        </div>
 
-        {!selected ? (
-          <div className="bg-white rounded-xl border-2 border-blue-200 p-6">
-            <h2 className="font-bold text-gray-800 mb-1">Select a Scenario</h2>
-            <p className="text-gray-500 text-sm mb-4">Choose an FHA loan scenario to analyze streamline eligibility</p>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {scenarios.map(s => (
-                <button key={s.id} onClick={()=>pick(s)}
-                  className="w-full text-left bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-300 rounded-lg p-4 transition-all">
-                  <div className="font-semibold text-gray-800">{s.scenarioName||`${s.firstName||''} ${s.lastName||''}`.trim()||'Unnamed'}</div>
-                  <div className="text-sm text-gray-500">${Number(s.loanAmount||0).toLocaleString()} · Rate: {s.interestRate||'—'}% · {s.loanType||'—'} · {s.county||s.city||'—'}</div>
-                </button>
-              ))}
-              {scenarios.length===0&&<p className="text-gray-400 text-sm text-center py-6">No scenarios found.</p>}
+        {/* FHA Insured Status */}
+        <div style={{ marginTop: 16 }}>
+          <label style={S.label}>FHA Insurance Status</label>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6 }}>
+            {[
+              { val: true,  label: '✅ FHA-Insured Confirmed',     activeColor: '#166534', activeBg: '#f0fdf4' },
+              { val: false, label: '❌ Not FHA-Insured / Unknown', activeColor: '#8b1a1a', activeBg: '#fdf0f0' },
+            ].map(opt => (
+              <button key={String(opt.val)} onClick={() => setIsFHAInsured(opt.val)}
+                style={{ ...S.btn, fontSize: 12, background: isFHAInsured === opt.val ? opt.activeBg : '#f1f5f9', color: isFHAInsured === opt.val ? opt.activeColor : '#6b7a8d', border: isFHAInsured === opt.val ? `2px solid ${opt.activeColor}` : '2px solid transparent' }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Seasoning live badge */}
+        {endorsementDate && (
+          <div style={{ marginTop: 14, padding: '10px 14px', borderRadius: 8, background: seasoningPass ? '#f0fdf4' : '#fffbeb', border: `1px solid ${seasoningPass ? '#86efac' : '#f9c846'}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: seasoningPass ? '#166534' : '#92400e' }}>
+                {seasoningPass ? '✅ 210-Day Seasoning Met' : '⏳ Seasoning Pending'}
+              </div>
+              <div style={{ fontSize: 11, color: '#6b7a8d', marginTop: 2 }}>
+                {seasoningDays} days since endorsement · {monthsElapsed} months elapsed
+                {!seasoningPass && ` · ${210 - seasoningDays} days remaining`}
+              </div>
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: seasoningPass ? '#166534' : '#92400e' }}>{seasoningDays}d</div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Closing Cost Estimator (single source of truth) ── */}
+      <div style={{ ...S.card, border: '2px solid #0f4c81' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, paddingBottom: 10, borderBottom: '1px solid #f0f4f8' }}>
+          <div>
+            <div style={S.cardTitle}>💵 Closing Cost Estimator</div>
+            <div style={{ fontSize: 12, color: '#6b7a8d', marginTop: -10 }}>This total flows into NTB Test, Pricing &amp; Comp, and UW Worksheet automatically.</div>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {['itemized', 'lump'].map(mode => (
+              <button key={mode} onClick={() => setCcMode(mode)}
+                style={{ ...S.btn, fontSize: 12, padding: '6px 14px', background: ccMode === mode ? '#0f4c81' : '#e9eef5', color: ccMode === mode ? '#fff' : '#1a1a2e' }}>
+                {mode === 'itemized' ? '📋 Itemized' : '🔢 Lump Sum'}
+              </button>
+            ))}
+          </div>
+        </div>
+        {ccMode === 'itemized' ? (
+          <div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 14 }}>
+              <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0f4c81', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6 }}>TITLE &amp; SETTLEMENT</div>
+              <div><label style={S.label}>Title/Settlement Fee ($)</label><input style={S.input} type="number" value={ccTitle} onChange={e => setCcTitle(e.target.value)} placeholder="850" /></div>
+              <div><label style={S.label}>Lender's Title Insurance ($)</label><input style={S.input} type="number" value={ccTitleIns} onChange={e => setCcTitleIns(e.target.value)} placeholder="650" /></div>
+              <div><label style={S.label}>Recording Fees ($)</label><input style={S.input} type="number" value={ccRecording} onChange={e => setCcRecording(e.target.value)} placeholder="125" /></div>
+              <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0f4c81', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6, marginTop: 4 }}>LENDER FEES</div>
+              <div><label style={S.label}>Origination Fee ($)</label><input style={S.input} type="number" value={ccOrigination} onChange={e => setCcOrigination(e.target.value)} placeholder="0" /></div>
+              <div><label style={S.label}>Processing Fee ($)</label><input style={S.input} type="number" value={ccProcessing} onChange={e => setCcProcessing(e.target.value)} placeholder="895" /></div>
+              <div><label style={S.label}>Underwriting / Admin Fee ($)</label><input style={S.input} type="number" value={ccUnderwriting} onChange={e => setCcUnderwriting(e.target.value)} placeholder="0" /></div>
+              <div><label style={S.label}>Other Costs ($)</label><input style={S.input} type="number" value={ccOther} onChange={e => setCcOther(e.target.value)} placeholder="0" /></div>
+            </div>
+            <div style={{ background: '#0f4c81', borderRadius: 8, padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div><div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', marginBottom: 2 }}>TOTAL CLOSING COSTS</div><div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>Used by all tabs automatically</div></div>
+              <div style={{ fontSize: 28, fontWeight: 800, color: '#f9c846' }}>{fmtDollar(ccItemizedTotal)}</div>
             </div>
           </div>
         ) : (
+          <div>
+            <div style={S.infoBox}>Enter total closing costs as a single number.</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'end' }}>
+              <div><label style={S.label}>Total Closing Costs ($)</label><input style={{ ...S.input, fontSize: 16, fontWeight: 700 }} type="number" value={ccLumpSum} onChange={e => setCcLumpSum(e.target.value)} placeholder="e.g. 3500" /></div>
+              <div style={{ background: '#0f4c81', borderRadius: 8, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)' }}>TOTAL</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: '#f9c846' }}>{fmtDollar(parseFloat(ccLumpSum) || 0)}</div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderEligibility = () => {
+    const statusConfig = {
+      ELIGIBLE:   { bg: '#f0fdf4', border: '#86efac', color: '#166534', icon: '✅', label: 'ELIGIBLE — Ready to Proceed' },
+      NEEDS_INFO: { bg: '#fffbeb', border: '#f9c846', color: '#92400e', icon: '⚠️', label: 'NEEDS INFO — Manual Review Required' },
+      INELIGIBLE: { bg: '#fdf0f0', border: '#fca5a5', color: '#8b1a1a', icon: '❌', label: 'INELIGIBLE — Does Not Qualify' },
+    };
+    const sc = statusConfig[eligStatus];
+    return (
+      <div>
+        {/* Overall Status */}
+        <div style={{ ...S.card, background: sc.bg, border: `2px solid ${sc.border}` }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: sc.color }}>{sc.icon} {sc.label}</div>
+          <div style={{ fontSize: 13, color: sc.color, marginTop: 6, opacity: 0.8 }}>
+            {hardFails} hard fail{hardFails !== 1 ? 's' : ''} · {warns} warning{warns !== 1 ? 's' : ''} · {eligRules.filter(r => r.pass).length}/{eligRules.length} rules passed
+          </div>
+        </div>
+
+        {/* Eligibility Rules */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>📋 FHA Streamline Eligibility Rules (Real-Time)</div>
+          {eligRules.map((r, i) => (
+            <div key={r.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 0', borderBottom: i < eligRules.length - 1 ? '1px solid #f0f4f8' : 'none' }}>
+              <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>{r.pass ? '✅' : r.hard ? '❌' : '⚠️'}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: r.pass ? '#1a1a2e' : r.hard ? '#8b1a1a' : '#92400e' }}>{r.rule}</div>
+                {!r.pass && <div style={{ fontSize: 11, color: '#9aa5b4', marginTop: 2 }}>{r.hard ? 'HARD STOP — loan does not qualify' : 'WARNING — manual review required'}</div>}
+              </div>
+              <span style={{ fontSize: 10, fontWeight: 700, color: '#9aa5b4', fontFamily: 'monospace' }}>{r.id}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Eligibility Inputs Card */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>⚙️ Eligibility Inputs</div>
+          <div style={S.grid2}>
+            <div>
+              <label style={S.label}>Late Payments — Last 6 Months</label>
+              <select style={S.input} value={latesLast6} onChange={e => setLatesLast6(parseInt(e.target.value))}>
+                {[0, 1, 2, 3, 4, 5, 6].map(n => <option key={n} value={n}>{n === 0 ? '0 — None (Required)' : n}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={S.label}>Late Payments — Months 7–12</label>
+              <select style={S.input} value={latesMo7to12} onChange={e => setLatesMo7to12(parseInt(e.target.value))}>
+                {[0, 1, 2, 3, 4, 5, 6].map(n => <option key={n} value={n}>{n === 0 ? '0' : n === 1 ? '1 — Max Allowed' : `${n} — Exceeds Limit`}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={S.label}>Occupancy</label>
+              <select style={S.input} value={occupancy} onChange={e => setOccupancy(e.target.value)}>
+                <option value="OWNER">Owner-Occupied</option>
+                <option value="INVESTMENT">Investment Property</option>
+                <option value="SECOND">Second Home</option>
+              </select>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
+            {[
+              { label: '🚫 Loan is Delinquent',    val: isDelinquent,    set: setIsDelinquent,    danger: true },
+              { label: '🚫 In Forbearance',         val: inForbearance,   set: setInForbearance,   danger: true },
+              { label: '⚠️ Borrower Removed',      val: borrowerRemoved, set: setBorrowerRemoved, danger: false },
+              { label: '⚠️ Title Change Occurred', val: titleChanged,    set: setTitleChanged,    danger: false },
+            ].map(({ label, val, set, danger }) => (
+              <button key={label} onClick={() => set(!val)}
+                style={{ ...S.btn, fontSize: 12, background: val ? (danger ? '#fdf0f0' : '#fffbeb') : '#f1f5f9', color: val ? (danger ? '#8b1a1a' : '#92400e') : '#6b7a8d', border: val ? `2px solid ${danger ? '#fca5a5' : '#f9c846'}` : '2px solid transparent' }}>
+                {val ? '☑ ' : '☐ '}{label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* FHA Eligibility Reference */}
+        <div style={{ ...S.card, background: '#fffbeb', border: '1px solid #f9c846' }}>
+          <div style={S.cardTitle}>📐 FHA Streamline Quick Rules</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 13 }}>
+            {[
+              ['NTB:', 'Combined rate reduction ≥ 0.50%'],
+              ['Seasoning:', '210 days from closing + 6 payments made'],
+              ['Payment history:', '0x30 in last 6 months, max 1x30 in months 7–12'],
+              ['UFMIP refund:', 'Applied as credit against new UFMIP (declines monthly)'],
+              ['Max cash back:', '$500 at closing'],
+              ['No appraisal:', 'Required — streamline process'],
+            ].map(([k, v]) => (
+              <div key={k} style={{ display: 'flex', gap: 6 }}>
+                <span style={{ fontWeight: 700, color: '#0f4c81', minWidth: 130, flexShrink: 0 }}>{k}</span>
+                <span style={{ color: '#4a5568' }}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderNTBTest = () => {
+    const hasData = existingRateN > 0 && newRateN > 0;
+    return (
+      <div>
+        {/* New Loan Parameters */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>🎯 New Loan Parameters</div>
+          <div style={S.grid3}>
+            <div><label style={S.label}>New Note Rate (%)</label><input style={S.input} type="number" step="0.001" value={newRate} onChange={e => setNewRate(e.target.value)} placeholder="e.g. 6.500" /></div>
+            <div><label style={S.label}>New Term (months)</label><input style={S.input} type="number" value={newTerm} onChange={e => setNewTerm(e.target.value)} placeholder="360" /></div>
+            <div><label style={S.label}>New Loan Amount (with UFMIP)</label><input style={S.inputRO} value={newLoanAmt > 0 ? fmtDollar(newLoanAmt) : '—'} readOnly /></div>
+          </div>
+          {!hasData && <div style={{ ...S.infoBox, marginTop: 10 }}>Enter existing rate on Loan Snapshot and new rate above to see real-time NTB results.</div>}
+        </div>
+
+        {/* Combined Rate Test */}
+        {hasData && (
           <>
-            {/* Working banner */}
-            <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-3 flex items-center justify-between flex-wrap gap-2">
-              <div>
-                <span className="text-green-600 font-bold">✓ Working on:</span>
-                <span className="font-semibold text-gray-800 ml-2">{selected.scenarioName||`${selected.firstName||''} ${selected.lastName||''}`.trim()}</span>
-                <span className="text-gray-500 text-sm ml-3">
-                  ${Number(selected.loanAmount||0).toLocaleString()} ·
-                  {extractedNoteRate ? (
-                    <span> <span className="line-through text-gray-400">{selected.interestRate||'—'}%</span> <span className="text-blue-600 font-semibold">{extractedNoteRate}%</span> <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full ml-1">from PDF</span></span>
-                  ) : ` ${selected.interestRate||'—'}%`} · {selected.county||''}
-                </span>
-              </div>
-              <button onClick={()=>{setSelected(null);setEligibility(null);setNtb(null);setExtractionResult(null);setUploadedDocs([null,null,null]);setExtractionLog([]);setMaxCTCResults(null);setTaxResult(null);setCheckedDocs({});setExtractedNoteRate(null);}}
-                className="text-blue-600 text-sm hover:underline">Change Scenario</button>
-            </div>
-
-            {/* AI PDF Auto-Fill */}
-            <div className="bg-white rounded-xl border-2 border-blue-200 p-5">
-              <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="bg-blue-600 text-white rounded px-2 py-1 text-xs font-bold">AI</span>
-                  <div>
-                    <p className="font-bold text-gray-800">PDF Auto-Fill — Upload Up to 3 Documents</p>
-                    <p className="text-xs text-gray-500">Closing Disclosure + Mortgage Statement + Payment History — Haiku extracts and merges all fields</p>
-                  </div>
-                </div>
-                {uploadedDocs.some(Boolean) && !extractionResult && (
-                  <button onClick={handleExtractAll} disabled={extracting}
-                    className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all whitespace-nowrap ${extracting?'bg-blue-300 text-white cursor-not-allowed':'bg-blue-600 hover:bg-blue-700 text-white shadow-md'}`}>
-                    {extracting ? (
-                      <span className="flex items-center gap-2">
-                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"/>
-                        Extracting {uploadedDocs.filter(Boolean).length} doc{uploadedDocs.filter(Boolean).length>1?'s':''}…
-                      </span>
-                    ) : `🤖 Extract ${uploadedDocs.filter(Boolean).length} Doc${uploadedDocs.filter(Boolean).length>1?'s':''} with Haiku AI`}
-                  </button>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+            <div style={S.card}>
+              <div style={S.cardTitle}>📉 Combined Rate + MIP Test (FHA NTB Requirement)</div>
+              <div style={S.infoBox}>FHA NTB requires the combined rate (note rate + annual MIP factor) to decrease by ≥ 0.50%. This is the primary test. Payment reduction is a secondary check.</div>
+              <div style={S.grid3}>
                 {[
-                  {idx:0, label:'Doc 1 — Closing Disclosure / HUD-1', ref:fileRef,  tip:'Original CD shows rate, UFMIP, origination date'},
-                  {idx:1, label:'Doc 2 — Current Mortgage Statement',  ref:fileRef2, tip:'Shows current balance, monthly payment, MIP'},
-                  {idx:2, label:'Doc 3 — Payment History (12-24 months)', ref:fileRef3, tip:'Shows 30-day lates for eligibility check'},
-                ].map(({idx, label, ref, tip}) => {
-                  const file = uploadedDocs[idx]; const logEntry = extractionLog[idx];
-                  return (
-                    <div key={idx} onClick={() => !file && ref.current?.click()}
-                      onDragOver={e=>e.preventDefault()}
-                      onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)setDoc(idx,f);}}
-                      className={`border-2 border-dashed rounded-xl p-3 transition-all
-                        ${file?'border-blue-400 bg-blue-50':logEntry?.status==='done'?'border-green-400 bg-green-50':logEntry?.status==='error'?'border-red-300 bg-red-50':'border-gray-300 hover:border-blue-400 hover:bg-blue-50 cursor-pointer'}`}>
-                      <input ref={ref} type="file" accept=".pdf,image/*" className="hidden" onChange={e=>{const f=e.target.files?.[0];if(f)setDoc(idx,f);}}/>
-                      <p className="text-xs font-bold text-gray-600 mb-1.5">{label}</p>
-                      {file ? (
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg">{logEntry?.status==='done'?'✅':logEntry?.status==='error'?'❌':'📄'}</span>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-semibold text-blue-700 text-xs truncate">{file.name}</p>
-                            <p className="text-xs text-gray-400">{(file.size/1024).toFixed(1)} KB
-                              {logEntry?.status==='done' && <span className="text-green-600 ml-1">· Extracted ✓</span>}
-                              {logEntry?.status==='error' && <span className="text-red-500 ml-1">· Failed</span>}
-                              {logEntry?.status==='extracting' && <span className="text-blue-500 ml-1">· Extracting…</span>}
-                            </p>
-                          </div>
-                          <button onClick={e=>{e.stopPropagation();removeDoc(idx);}} className="text-gray-400 hover:text-red-500 text-sm shrink-0">✕</button>
-                        </div>
-                      ) : (
-                        <div className="text-center py-1"><div className="text-xl mb-0.5">📎</div><p className="text-xs text-gray-400">{tip}</p></div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {extractionLog.length > 0 && (
-                <div className="space-y-1 mb-3">
-                  {extractionLog.map((entry, i) => (
-                    <div key={i} className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg ${entry.status==='done'?'bg-green-50 text-green-700':entry.status==='error'?'bg-red-50 text-red-600':'bg-blue-50 text-blue-600'}`}>
-                      <span>{entry.status==='done'?'✅':entry.status==='error'?'❌':'⏳'}</span>
-                      <span className="font-semibold truncate">{entry.name}</span>
-                      <span>—</span>
-                      <span>{entry.status==='done'?`${Object.keys(entry.data||{}).length} fields extracted`:entry.status==='error'?`Error: ${entry.error}`:'Extracting…'}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {extractionResult && (
-                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-                  <p className="font-bold text-green-800 mb-2">✅ Extraction Complete — All Fields Merged & Auto-Populated</p>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                    {[
-                      ['Balance',      extractionResult.currentBalance       ? '$'+Number(extractionResult.currentBalance).toLocaleString()         : null],
-                      ['Rate',         extractionResult.originalRate||extractionResult.currentRate ? ((parseFloat(extractionResult.originalRate||extractionResult.currentRate)<1?(parseFloat(extractionResult.originalRate||extractionResult.currentRate)*100):parseFloat(extractionResult.originalRate||extractionResult.currentRate)).toFixed(3))+'%' : null],
-                      ['P&I',          extractionResult.originalPayment      ? '$'+Number(extractionResult.originalPayment).toFixed(2)              : null],
-                      ['MIP/mo',       extractionResult.monthlyMIP           ? '$'+Number(extractionResult.monthlyMIP).toFixed(2)                   : null],
-                      ['UFMIP',        extractionResult.ufmipPaid||extractionResult.ufmipFinanced ? '$'+Number(extractionResult.ufmipPaid||extractionResult.ufmipFinanced).toLocaleString() : null],
-                      ['FHA Case #',   extractionResult.fhaCaseNumber                                                                                || null],
-                      ['Closing Date', extractionResult.closingDate                                                                                  || null],
-                      ['Pmts Made',    extractionResult.paymentsMade !== undefined ? `${extractionResult.paymentsMade} payments`                    : null],
-                    ].filter(([,v])=>v).map(([label,value])=>(
-                      <div key={label} className="bg-white rounded-lg px-2.5 py-1.5 border border-green-200">
-                        <div className="text-gray-500">{label}</div>
-                        <div className="font-semibold text-gray-800 truncate">{value}</div>
-                      </div>
-                    ))}
+                  { label: 'Existing Combined', value: fmtPct(existingCombined), sub: `${fmtPct(existingRateN)} rate + ${fmtPct(mipFactorN)} MIP`, color: '#6b7a8d', bg: '#f8fafc' },
+                  { label: 'New Combined',      value: fmtPct(newCombined),      sub: `${fmtPct(newRateN)} rate + 0.550% MIP`, color: '#0f4c81', bg: '#eef4fb' },
+                  { label: 'Reduction',         value: fmtPct(combinedReduction), sub: `Need ≥ ${NTB_MIN_REDUCTION.toFixed(2)}%`, color: ntbCombinedPass ? '#166534' : '#8b1a1a', bg: ntbCombinedPass ? '#f0fdf4' : '#fdf0f0' },
+                ].map(({ label, value, sub, color, bg }) => (
+                  <div key={label} style={{ background: bg, borderRadius: 8, padding: '14px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 11, color: '#6b7a8d', fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color }}>{value}</div>
+                    <div style={{ fontSize: 11, color: '#9aa5b4', marginTop: 4 }}>{sub}</div>
                   </div>
-                  <p className="text-xs text-green-600 mt-2">Review fields below and adjust if needed before running analysis.</p>
+                ))}
+              </div>
+              <div style={{ marginTop: 16, textAlign: 'center', padding: '12px', borderRadius: 8, background: ntbCombinedPass ? '#f0fdf4' : '#fdf0f0', border: `2px solid ${ntbCombinedPass ? '#86efac' : '#fca5a5'}` }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: ntbCombinedPass ? '#166534' : '#8b1a1a' }}>
+                  {ntbCombinedPass ? '✅ NTB SATISFIED' : '❌ NTB NOT MET — Rate reduction insufficient'}
                 </div>
-              )}
-
-              {extractionError && (
-                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">⚠️ {extractionError}</div>
-              )}
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-
-              {/* LEFT col */}
-              <div className="xl:col-span-3 space-y-4">
-                <div className="bg-white rounded-xl border border-gray-200 p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-bold text-gray-800 text-sm">📋 Document Checklist</h3>
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${docsPct===100?'bg-green-100 text-green-700':docsPct>=60?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}`}>{docsObtained}/{docChecklist.length}</span>
-                  </div>
-                  <div className="w-full h-2 bg-gray-100 rounded-full mb-4 overflow-hidden">
-                    <div className={`h-full rounded-full transition-all ${docsPct===100?'bg-green-500':docsPct>=60?'bg-amber-400':'bg-red-400'}`} style={{width:`${docsPct}%`}}/>
-                  </div>
-                  {['Existing Loan','Borrower','Property','Closing'].map(cat => {
-                    const catDocs = docChecklist.filter(d => d.category === cat);
-                    const catDone = catDocs.filter(d => d.obtained || checkedDocs[d.id]).length;
-                    return (
-                      <div key={cat} className="mb-4">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">{cat}</span>
-                          <span className="text-xs text-gray-400">{catDone}/{catDocs.length}</span>
-                        </div>
-                        <div className="space-y-1.5">
-                          {catDocs.map(d => {
-                            const done = d.obtained || checkedDocs[d.id];
-                            return (
-                              <label key={d.id} className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-all text-xs ${done?'bg-green-50 border border-green-200':'bg-gray-50 border border-gray-200 hover:border-blue-300'}`}>
-                                <input type="checkbox" checked={!!done} onChange={e => setCheckedDocs(p=>({...p,[d.id]:e.target.checked}))} className="w-3.5 h-3.5 mt-0.5 accent-green-600 shrink-0"/>
-                                <div className="flex-1 min-w-0">
-                                  <div className={`font-semibold leading-tight ${done?'text-green-700 line-through opacity-70':'text-gray-700'}`}>
-                                    {d.label}{!d.required && <span className="ml-1 text-gray-400 font-normal no-underline">(opt)</span>}
-                                  </div>
-                                  {!done && <div className="text-gray-400 mt-0.5 leading-tight">{d.tip}</div>}
-                                </div>
-                                {d.obtained && !checkedDocs[d.id] && <span className="text-xs text-blue-600 font-bold shrink-0">AI ✓</span>}
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {docsObtained === docChecklist.length && (
-                    <div className="bg-green-100 border border-green-300 rounded-xl p-3 text-center">
-                      <div className="text-lg mb-1">✅</div>
-                      <div className="font-bold text-green-800 text-sm">All Documents Ready</div>
-                      <div className="text-xs text-green-600 mt-0.5">File is complete — ready to run analysis</div>
+            {/* Payment Comparison */}
+            <div style={S.card}>
+              <div style={S.cardTitle}>💰 Payment Comparison (Secondary Check)</div>
+              <div style={S.grid2}>
+                <div style={{ background: '#f8fafc', borderRadius: 8, padding: 16, border: '1px solid #e0e7ef' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#6b7a8d', marginBottom: 10, letterSpacing: '0.05em' }}>CURRENT PAYMENT</div>
+                  {[['P&I', fmtDollar(existingPIAmt)], ['Monthly MIP', fmtDollar(existingMIPAmt)], ['Total', fmtDollar(existingTotalPmt)]].map(([k, v], i) => (
+                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i < 2 ? '1px solid #e0e7ef' : 'none', fontWeight: i === 2 ? 800 : 400, fontSize: i === 2 ? 16 : 13 }}>
+                      <span style={{ color: '#6b7a8d' }}>{k}</span><span>{v}</span>
                     </div>
-                  )}
+                  ))}
+                </div>
+                <div style={{ background: newRateN > 0 ? '#eef4fb' : '#f8fafc', borderRadius: 8, padding: 16, border: '1px solid #b8d0e8' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#0f4c81', marginBottom: 10, letterSpacing: '0.05em' }}>NEW PAYMENT</div>
+                  {[['P&I (on {newLoanAmt})', fmtDollar(newPIAmt)], ['New Monthly MIP', fmtDollar(newMIPMonthly)], ['Total', fmtDollar(newTotalPmt)]].map(([k, v], i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i < 2 ? '1px solid #e0e7ef' : 'none', fontWeight: i === 2 ? 800 : 400, fontSize: i === 2 ? 16 : 13 }}>
+                      <span style={{ color: '#6b7a8d' }}>{i === 0 ? `P&I (on ${fmtDollar(newLoanAmt)})` : i === 1 ? 'New Monthly MIP' : 'Total'}</span><span>{v}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
-
-              {/* CENTER col */}
-              <div className="xl:col-span-5 space-y-4">
-
-                {/* Existing Loan */}
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
-                  <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <span className="bg-blue-100 text-blue-700 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">1</span>
-                    Existing FHA Loan
-                  </h3>
-                  <div className="flex flex-wrap gap-4 mb-3">
-                    <label className="flex items-center gap-2 text-sm cursor-pointer">
-                      <input type="checkbox" checked={inp.is_fha_insured} onChange={e=>si('is_fha_insured',e.target.checked)} className="w-4 h-4 accent-blue-600"/>
-                      <span className="font-semibold text-gray-700">Confirmed FHA-Insured</span>
-                    </label>
-                    <label className="flex items-center gap-2 text-sm cursor-pointer">
-                      <input type="checkbox" checked={inp.is_delinquent} onChange={e=>si('is_delinquent',e.target.checked)} className="w-4 h-4 accent-red-600"/>
-                      <span className="text-gray-700">Loan is Delinquent</span>
-                    </label>
+              <div style={{ display: 'flex', gap: 12, marginTop: 14 }}>
+                {[
+                  { label: 'Monthly Savings', value: paymentSavings > 0 ? fmtDollar(paymentSavings) : '—', color: ntbPaymentPass ? '#166534' : '#8b1a1a', bg: ntbPaymentPass ? '#f0fdf4' : '#fdf0f0' },
+                  { label: 'Recoupment', value: isFinite(recoupMos) ? `${recoupMos} months` : '∞', color: recoupMos <= 60 ? '#166534' : '#8b1a1a', bg: recoupMos <= 60 ? '#f0fdf4' : '#fdf0f0' },
+                  { label: 'Payment Test', value: ntbPaymentPass ? '✅ PASS' : '❌ FAIL', color: ntbPaymentPass ? '#166534' : '#8b1a1a', bg: ntbPaymentPass ? '#f0fdf4' : '#fdf0f0' },
+                ].map(({ label, value, color, bg }) => (
+                  <div key={label} style={{ flex: 1, background: bg, borderRadius: 8, padding: '12px 14px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 11, color: '#6b7a8d', fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color }}>{value}</div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {[
-                      {label:'Current Balance ($)',       key:'existing_upb',          ph:'e.g. 172840'},
-                      {label:'Note Rate (%)',              key:'existing_note_rate',    ph:'e.g. 7.250'},
-                      {label:'Monthly P&I ($)',            key:'existing_monthly_pi',   ph:'e.g. 1207.58'},
-                      {label:'Monthly MIP ($)',            key:'existing_monthly_mip',  ph:'e.g. 96.25'},
-                      {label:'Original UFMIP Paid ($)',    key:'original_ufmip',        ph:'e.g. 3097.50'},
-                      {label:'Annual MIP Factor (%)',      key:'existing_mip_factor',   ph:'0.55'},
-                      {label:'FHA Case Number',            key:'existing_case_number',  ph:'105-XXXXXXX-XXX', type:'text'},
-                      {label:'Closing / Endorsement Date', key:'endorsement_date',      ph:'', type:'date'},
-                    ].map(f=>(
-                      <div key={f.key}>
-                        <label className="block text-xs text-gray-500 mb-1">{f.label}</label>
-                        <input type={f.type||'number'} step="any" value={inp[f.key]} placeholder={f.ph}
-                          onChange={e=>si(f.key,e.target.value)}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-                      </div>
-                    ))}
-                  </div>
-                  {inp.endorsement_date && (() => {
-                    const days = Math.floor((Date.now()-new Date(inp.endorsement_date).getTime())/(1000*60*60*24));
-                    const ok = days >= 210; const pmts = Math.floor(days/30);
-                    return (
-                      <div className={`mt-3 rounded-lg px-4 py-2.5 border text-sm flex items-center gap-3 ${ok?'bg-green-50 border-green-300':'bg-red-50 border-red-300'}`}>
-                        <span className="text-lg">{ok?'✅':'❌'}</span>
-                        <div>
-                          <p className={`font-bold text-sm ${ok?'text-green-800':'text-red-800'}`}>210-Day Seasoning: {ok?'PASSED':'NOT MET'} — {days} days / {pmts} payments</p>
-                          {!ok && <p className="text-xs text-gray-500">Need {210-days} more days.</p>}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
+                ))}
+              </div>
+            </div>
 
-                {/* Payment History */}
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
-                  <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <span className="bg-blue-100 text-blue-700 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">2</span>
-                    Payment History
-                    <span className="text-xs font-normal text-blue-500 ml-auto">Auto-filled from PDF upload</span>
-                  </h3>
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    {[{label:'30-Day Lates — Last 6 Months',key:'lates_last_6'},{label:'30-Day Lates — Months 7-12',key:'lates_months_7_12'}].map(f=>(
-                      <div key={f.key}>
-                        <label className="block text-xs text-gray-500 mb-1">{f.label}</label>
-                        <select value={inp[f.key]} onChange={e=>si(f.key,parseInt(e.target.value))}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                          {[0,1,2,3,4,5,6].map(n=><option key={n} value={n}>{n}</option>)}
-                        </select>
-                      </div>
-                    ))}
-                  </div>
+            {/* Borrower Summary */}
+            {existingPIAmt > 0 && newPIAmt > 0 && (
+              <div style={{ background: 'linear-gradient(135deg, #0f4c81 0%, #1565c0 100%)', borderRadius: 10, padding: '20px 24px', color: '#fff' }}>
+                <div style={{ fontSize: 10, opacity: 0.6, letterSpacing: '0.1em', marginBottom: 4 }}>FOR THE BORROWER — PLAIN ENGLISH</div>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14 }}>Here's what this refinance means{borrowerName ? ` for ${borrowerName.split(' ')[0]}` : ''}:</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
                   {[
-                    {label:'In Forbearance or Loss Mitigation',key:'in_forbearance'},
-                    {label:'Borrower Being Removed from Loan', key:'borrower_removed'},
-                    {label:'Title Holders Changed',            key:'title_changed'},
-                  ].map(c=>(
-                    <label key={c.key} className="flex items-center gap-2 text-sm cursor-pointer mb-2">
-                      <input type="checkbox" checked={inp[c.key]} onChange={e=>si(c.key,e.target.checked)} className="w-4 h-4 accent-red-600"/>
-                      <span className="text-gray-700">{c.label}</span>
-                    </label>
-                  ))}
-                </div>
-
-                {/* Property Tax Calculator */}
-                <div className="bg-white rounded-xl border-2 border-amber-200 p-5">
-                  <h3 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
-                    <span className="text-xl">🏛️</span> Property Tax Calculator
-                    {taxResult && <span className="ml-auto text-xs font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{fmt$(taxResult.monthlyTax)}/mo</span>}
-                  </h3>
-                  <p className="text-xs text-gray-500 mb-4">Auto-calculates based on county millage rate and assessment ratio. Critical for accurate PITI and escrow.</p>
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">State</label>
-                      <select value={taxCalc.state} onChange={e=>setTaxCalc(p=>({...p,state:e.target.value}))}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
-                        <option value="GA">Georgia</option><option value="AL">Alabama</option><option value="FL">Florida</option>
-                        <option value="NC">North Carolina</option><option value="SC">South Carolina</option>
-                        <option value="TN">Tennessee</option><option value="TX">Texas</option><option value="OTHER">Other State</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">{taxCalc.state==='GA'?'GA County':'County / Area'}</label>
-                      {taxCalc.state==='GA' ? (
-                        <select value={taxCalc.county} onChange={e=>setTaxCalc(p=>({...p,county:e.target.value}))}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
-                          <option value="">— Select County —</option>
-                          {Object.keys(GA_COUNTIES).sort().map(c=>(<option key={c} value={c}>{c} ({GA_COUNTIES[c].millage} mills)</option>))}
-                        </select>
-                      ) : (
-                        <input type="text" value={taxCalc.county} placeholder="County name"
-                          onChange={e=>setTaxCalc(p=>({...p,county:e.target.value}))}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"/>
-                      )}
-                    </div>
-                    {taxCalc.state==='GA' && (
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">City Millage (add if incorporated)</label>
-                        <input type="number" step="0.01" value={taxCalc.city_millage} placeholder="e.g. 0 or 12.5"
-                          onChange={e=>setTaxCalc(p=>({...p,city_millage:e.target.value}))}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"/>
-                        <p className="text-xs text-gray-400 mt-0.5">Add city mills if property is inside city limits</p>
-                      </div>
-                    )}
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Property Value (FMV)</label>
-                      <label className="flex items-center gap-1 text-xs cursor-pointer mb-1">
-                        <input type="checkbox" checked={taxCalc.use_scenario_value} onChange={e=>setTaxCalc(p=>({...p,use_scenario_value:e.target.checked}))} className="w-3.5 h-3.5 accent-amber-600"/>
-                        <span className="text-gray-500">Use scenario value</span>
-                      </label>
-                      {!taxCalc.use_scenario_value && (
-                        <input type="number" value={taxCalc.manual_fmv} placeholder="e.g. 195000"
-                          onChange={e=>setTaxCalc(p=>({...p,manual_fmv:e.target.value}))}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"/>
-                      )}
-                      {taxCalc.use_scenario_value && inp.estimated_property_value && (
-                        <p className="text-xs text-gray-500">Using: {fmt$(parseFloat(inp.estimated_property_value))}</p>
-                      )}
-                    </div>
-                  </div>
-                  <button onClick={runTaxCalc} className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-2.5 rounded-xl text-sm transition-all mb-3">
-                    🏛️ Calculate Property Tax
-                  </button>
-                  {taxResult && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
-                        {[
-                          {label:'Fair Market Value',       val: fmt$(taxResult.fmv)},
-                          {label:'Assessed Value (GA 40%)', val: taxResult.assessedValue ? fmt$(taxResult.assessedValue) : 'See note'},
-                          {label:'Annual Property Tax',     val: fmt$(taxResult.annualTax)},
-                          {label:'Monthly Escrow Needed',   val: fmt$(taxResult.monthlyTax), highlight:true},
-                          {label:'Tax Due Date',            val: taxResult.dueDate},
-                          {label:'Calculation Source',      val: taxResult.source},
-                        ].map(item=>(
-                          <div key={item.label} className={`rounded-lg p-2.5 ${item.highlight?'bg-amber-200 border border-amber-400 col-span-2':'bg-white border border-amber-200'}`}>
-                            <div className="text-xs text-gray-500">{item.label}</div>
-                            <div className={`font-bold ${item.highlight?'text-amber-900 text-lg':'text-gray-800'}`}>{item.val}</div>
-                          </div>
-                        ))}
-                      </div>
-                      {taxResult.note && <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2"><p className="text-xs text-blue-700">💡 {taxResult.note}</p></div>}
-                      <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                        <p className="text-xs text-red-700 font-semibold">⚠️ Always verify with county tax assessor before closing. Rates change annually.</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* New Loan Params */}
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
-                  <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <span className="bg-blue-100 text-blue-700 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">3</span>
-                    New Loan Parameters
-                  </h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">New Loan Term</label>
-                      <select value={inp.new_term_months} onChange={e=>si('new_term_months',e.target.value)}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                        <option value="360">30 Years</option><option value="300">25 Years</option>
-                        <option value="240">20 Years</option><option value="180">15 Years</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Occupancy</label>
-                      <select value={inp.occupancy_current} onChange={e=>si('occupancy_current',e.target.value)}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                        <option value="OWNER">Owner Occupied</option>
-                        <option value="SECOND">Second Home</option>
-                        <option value="INVESTMENT">Investment</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Est. Property Value ($)</label>
-                      <input type="number" value={inp.estimated_property_value} onChange={e=>{si('estimated_property_value',e.target.value);}}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Est. Closing Costs ($)</label>
-                      <input type="number" value={closingCostEst} onChange={e=>setClosingCostEst(e.target.value)}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-                      <p className="text-xs text-gray-400 mt-0.5">Used for cash-to-close optimizer</p>
-                    </div>
-                  </div>
-                </div>
-
-                <button onClick={run} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl text-base transition-all shadow-md">
-                  🔍 Run Eligibility &amp; NTB Analysis
-                </button>
-
-                {/* Results tabs */}
-                {eligibility && (
-                  <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                    <div className="flex border-b border-gray-200 overflow-x-auto">
-                      {[
-                        {id:'eligibility', label:'🔍 Eligibility'},
-                        {id:'mip',         label:'💰 MIP'},
-                        {id:'ntb',         label:'📊 NTB'},
-                        {id:'ctc',         label:'💵 Cash-to-Close'},
-                        {id:'rate_shop',   label:'📈 Rate Shop'},
-                        {id:'ntb_ws',      label:'📋 NTB Worksheet'},
-                        {id:'uw_ws',       label:'🏦 UW Worksheet'},
-                      ].map(t=>(
-                        <button key={t.id} onClick={()=>setTab(t.id)}
-                          className={`px-4 py-3 text-xs font-semibold whitespace-nowrap transition-all ${tab===t.id?'border-b-2 border-blue-600 text-blue-700 bg-blue-50':'text-gray-500 hover:text-gray-800'}`}>
-                          {t.label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="p-4">
-
-                      {tab==='eligibility' && (
-                        <div className="space-y-2">
-                          {eligibility.rules.map(rule=>(
-                            <div key={rule.id} className={`flex items-start gap-3 p-3 rounded-lg ${rule.status==='PASS'?'bg-green-50':rule.status==='FAIL'?'bg-red-50':'bg-yellow-50'}`}>
-                              <span className="text-lg mt-0.5">{rule.status==='PASS'?'✅':rule.status==='FAIL'?'❌':'⚠️'}</span>
-                              <div className="flex-1">
-                                <div className={`font-semibold text-sm ${rule.status==='PASS'?'text-green-800':rule.status==='FAIL'?'text-red-800':'text-yellow-800'}`}>{rule.label}</div>
-                                <div className="text-xs text-gray-600 mt-0.5">{rule.message}</div>
-                              </div>
-                              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${rule.status==='PASS'?'bg-green-200 text-green-800':rule.status==='FAIL'?'bg-red-200 text-red-800':'bg-yellow-200 text-yellow-800'}`}>{rule.id}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {tab==='mip' && (ntb&&ntb.length>0 ? (
-                        <div className="space-y-4">
-                          {ntb.map(r=>(
-                            <div key={r.option_id} className="border border-gray-200 rounded-xl overflow-hidden">
-                              <div className="bg-gray-50 px-4 py-2 font-semibold text-sm text-gray-700 border-b">{r.label} — {r.note_rate}% Rate</div>
-                              <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3">
-                                {[
-                                  {l:'Months Since Endorse.',v:`${r.monthsElapsed} mo`},
-                                  {l:`UFMIP Refund (${r.refundPct}%)`,v:fmt$(r.ufmipRefund)},
-                                  {l:'New UFMIP (1.75%)',v:fmt$(r.newUFMIP)},
-                                  {l:'Net UFMIP Cost',v:fmt$(r.netUFMIP),hi:true},
-                                  {l:'Existing MIP/mo',v:`${fmt$(r.existingMIP)}/mo`},
-                                  {l:'New MIP/mo',v:`${fmt$(r.newMIP)}/mo`},
-                                  {l:'MIP Savings/mo',v:`${fmt$(r.existingMIP-r.newMIP)}/mo`},
-                                  {l:'Breakeven',v:r.breakevenMonths<999?`${r.breakevenMonths} mo`:'N/A'},
-                                ].map(item=>(
-                                  <div key={item.l} className={`rounded-lg p-2.5 text-center ${item.hi?'bg-blue-50 border border-blue-200':'bg-gray-50'}`}>
-                                    <div className="font-bold text-gray-800 text-sm">{item.v}</div>
-                                    <div className="text-xs text-gray-500 mt-0.5">{item.l}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : <p className="text-gray-400 text-sm text-center py-6">Enter pricing options and run analysis.</p>)}
-
-                      {tab==='ntb' && (ntb&&ntb.length>0 ? (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-xs">
-                            <thead><tr className="bg-gray-50 border-b border-gray-200">
-                              {['Option','Rate','Exist. Comb.','New Comb.','Reduction','NTB','New P&I','New Total','Saves/mo','Badge'].map(h=>(
-                                <th key={h} className="text-left px-2 py-2 font-semibold text-gray-600">{h}</th>
-                              ))}
-                            </tr></thead>
-                            <tbody>
-                              {ntb.map(r=>{ const badge=getBadge(r,ntb); return (
-                                <tr key={r.option_id} className="border-b border-gray-100 hover:bg-gray-50">
-                                  <td className="px-2 py-2 font-bold">{r.label}</td>
-                                  <td className="px-2 py-2">{fmtP(r.note_rate)}</td>
-                                  <td className="px-2 py-2">{fmtP(r.existingCombined)}</td>
-                                  <td className="px-2 py-2">{fmtP(r.newCombined)}</td>
-                                  <td className="px-2 py-2 font-semibold text-blue-700">{fmtP(r.combinedReduction)}</td>
-                                  <td className="px-2 py-2"><span className={r.ntbPass?'text-green-600 font-bold':'text-red-600 font-bold'}>{r.ntbPass?'PASS ✓':'FAIL ✗'}</span></td>
-                                  <td className="px-2 py-2">{fmt$(r.newPI)}</td>
-                                  <td className="px-2 py-2">{fmt$(r.newTotal)}</td>
-                                  <td className="px-2 py-2 font-semibold text-green-700">{fmt$(r.monthlySavings)}</td>
-                                  <td className="px-2 py-2"><span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${badge.color}`}>{badge.label}</span></td>
-                                </tr>
-                              );})}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : <p className="text-gray-400 text-sm text-center py-6">Enter pricing options and run analysis.</p>)}
-
-                      {tab==='ctc' && (
-                        <div>
-                          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
-                            <p className="font-bold text-blue-800 text-sm mb-1">💵 Max Cash-to-Close &amp; LO Income Optimizer</p>
-                            <p className="text-xs text-blue-700">Higher rate = more lender credit = lower borrower cash-to-close. This optimizer shows the tradeoff between borrower cost and your net income.</p>
-                          </div>
-                          {maxCTCResults && maxCTCResults.length > 0 ? (
-                            <div className="space-y-3">
-                              {maxCTCResults.map((r,i) => (
-                                <div key={i} className="border border-gray-200 rounded-xl overflow-hidden">
-                                  <div className="bg-gray-50 px-4 py-2 flex items-center justify-between border-b">
-                                    <span className="font-bold text-sm text-gray-700">{r.label} — {r.rate}%</span>
-                                    <span className="text-xs text-green-600 font-bold">Saves {fmt$(r.monthlySavings)}/mo for borrower</span>
-                                  </div>
-                                  <div className="p-4 grid grid-cols-2 md:grid-cols-3 gap-3">
-                                    <div className="rounded-lg p-3 bg-gray-50 border border-gray-200 text-center">
-                                      <div className="text-xs text-gray-500">Price</div>
-                                      <div className="font-bold text-gray-800">{r.price.toFixed(3)}</div>
-                                    </div>
-                                    <div className="rounded-lg p-3 bg-green-50 border border-green-200 text-center">
-                                      <div className="text-xs text-gray-500">Lender Credit</div>
-                                      <div className="font-bold text-green-700">{fmt$(r.lenderCredit)}</div>
-                                    </div>
-                                    <div className="rounded-lg p-3 bg-blue-50 border border-blue-200 text-center">
-                                      <div className="text-xs text-gray-500">Est. Closing Costs</div>
-                                      <div className="font-bold text-blue-700">{fmt$(parseFloat(closingCostEst))}</div>
-                                    </div>
-                                    <div className={`rounded-lg p-3 border-2 text-center col-span-2 md:col-span-1 ${r.netCC<=0?'bg-green-100 border-green-400':'bg-amber-50 border-amber-300'}`}>
-                                      <div className="text-xs text-gray-500">Max Borrower Cash-to-Close</div>
-                                      <div className={`font-black text-lg ${r.netCC<=0?'text-green-700':'text-amber-700'}`}>{r.netCC<=0?'$0 — Lender Credit Covers All':fmt$(r.netCC)}</div>
-                                      <div className="text-xs text-gray-400 mt-0.5">{r.netCC<=0?'No cash needed — zero cost refi!':'Borrower brings this to closing'}</div>
-                                    </div>
-                                    <div className="rounded-lg p-3 bg-emerald-50 border border-emerald-200 text-center">
-                                      <div className="text-xs text-gray-500">Your Net (LPC)</div>
-                                      <div className="font-bold text-emerald-700 text-lg">{fmt$(r.lpcNet)}</div>
-                                    </div>
-                                    <div className="rounded-lg p-3 bg-indigo-50 border border-indigo-200 text-center">
-                                      <div className="text-xs text-gray-500">Your Net (BPC)</div>
-                                      <div className="font-bold text-indigo-700 text-lg">{fmt$(r.bpcNet)}</div>
-                                    </div>
-                                  </div>
-                                  <div className={`px-4 py-2.5 border-t text-xs font-semibold ${r.lpcNet>=r.bpcNet?'bg-emerald-50 text-emerald-800':'bg-indigo-50 text-indigo-800'}`}>
-                                    💡 {r.lpcNet>=r.bpcNet?'LPC':'BPC'} puts {fmt$(Math.abs(r.lpcNet-r.bpcNet))} more in your pocket on this option.
-                                    {r.netCC<=0?' Zero cost to borrower makes this easy to sell.':' Consider offering a higher rate to reduce borrower cash-to-close.'}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : <p className="text-gray-400 text-sm text-center py-6">Run eligibility analysis with at least one passing NTB option to see optimizer.</p>}
-                        </div>
-                      )}
-
-                      {tab==='rate_shop' && (
-                        <div>
-                          {!inp.existing_note_rate || !parseFloat(inp.existing_note_rate) ? (
-                            <p className="text-gray-400 text-sm text-center py-6">Enter existing note rate in Section 1 to see rate shopping analysis.</p>
-                          ) : (() => {
-                            const existingRate     = parseFloat(inp.existing_note_rate);
-                            const existingMIPFac   = parseFloat(inp.existing_mip_factor || 0.55);
-                            const existingCombined = existingRate + existingMIPFac;
-                            const maxNewRate       = parseFloat((existingCombined - 0.50 - 0.55).toFixed(3));
-                            const upb              = parseFloat(inp.existing_upb || 0);
-                            const existingPI       = parseFloat(inp.existing_monthly_pi || 0);
-                            const existingMIPmo    = parseFloat(inp.existing_monthly_mip || 0);
-                            const termMonths       = parseInt(inp.new_term_months || 360);
-                            const rates = [];
-                            for (let r = maxNewRate + 0.125; r >= maxNewRate - 1.25; r -= 0.125) {
-                              const rate       = parseFloat(r.toFixed(3));
-                              const newComb    = parseFloat((rate + 0.55).toFixed(3));
-                              const reduction  = parseFloat((existingCombined - newComb).toFixed(3));
-                              const newPI      = upb ? computeMonthlyPI(upb, rate, termMonths) : 0;
-                              const newMIPmo   = upb ? (upb * 0.55 / 100 / 12) : 0;
-                              const savings    = (existingPI + existingMIPmo) - (newPI + newMIPmo);
-                              const passes     = reduction >= 0.50;
-                              rates.push({ rate, newComb, reduction, newPI, newMIPmo, savings, passes });
-                            }
-                            return (
-                              <div>
-                                <div className="grid grid-cols-3 gap-3 mb-4 text-xs">
-                                  <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 text-center">
-                                    <div className="text-gray-500">Existing Combined</div>
-                                    <div className="font-black text-gray-800 text-lg">{existingCombined.toFixed(3)}%</div>
-                                    <div className="text-gray-400">{existingRate}% + {existingMIPFac}% MIP</div>
-                                  </div>
-                                  <div className="bg-red-50 rounded-xl p-3 border border-red-200 text-center">
-                                    <div className="text-gray-500">NTB Threshold</div>
-                                    <div className="font-black text-red-700 text-lg">−0.500%</div>
-                                    <div className="text-gray-400">Minimum required</div>
-                                  </div>
-                                  <div className="bg-green-50 rounded-xl p-3 border border-green-300 text-center">
-                                    <div className="text-gray-500">Max Rate to Pass</div>
-                                    <div className="font-black text-green-700 text-lg">{maxNewRate.toFixed(3)}%</div>
-                                    <div className="text-gray-400">At or below passes NTB</div>
-                                  </div>
-                                </div>
-                                <div className="overflow-x-auto">
-                                  <table className="w-full text-xs">
-                                    <thead><tr className="bg-gray-50 border-b border-gray-200">
-                                      {['New Rate','New Comb.','Reduction','New P&I','New MIP','Saves/mo','NTB'].map(h=>(
-                                        <th key={h} className="text-left px-2 py-2 font-semibold text-gray-600">{h}</th>
-                                      ))}
-                                    </tr></thead>
-                                    <tbody>
-                                      {rates.map((r,idx)=>(
-                                        <tr key={idx} className={`border-b border-gray-100 ${r.rate === maxNewRate?'bg-yellow-50 font-semibold':''}`}>
-                                          <td className="px-2 py-2 font-bold text-blue-700">{r.rate.toFixed(3)}%
-                                            {r.rate===maxNewRate && <span className="ml-1 text-yellow-600 text-xs">← threshold</span>}
-                                          </td>
-                                          <td className="px-2 py-2">{r.newComb.toFixed(3)}%</td>
-                                          <td className={`px-2 py-2 font-semibold ${r.reduction>=0.75?'text-green-700':r.reduction>=0.50?'text-blue-700':'text-red-600'}`}>{r.reduction.toFixed(3)}%</td>
-                                          <td className="px-2 py-2">{upb?fmt$(r.newPI):'—'}</td>
-                                          <td className="px-2 py-2">{upb?fmt$(r.newMIPmo):'—'}</td>
-                                          <td className={`px-2 py-2 font-semibold ${r.savings>0?'text-green-700':'text-red-600'}`}>{upb?fmt$(r.savings):'—'}</td>
-                                          <td className="px-2 py-2">
-                                            <span className={`font-bold px-1.5 py-0.5 rounded-full ${r.passes?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>{r.passes?'PASS ✓':'FAIL ✗'}</span>
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                                <p className="text-xs text-gray-400 mt-2">Rate ladder in 0.125% increments. Yellow row = NTB threshold. Enter loan balance in Section 1 to see payment columns.</p>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      )}
-
-                      {tab==='ntb_ws' && (
-                        <div>
-                          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
-                            <p className="font-bold text-blue-800 text-sm">📋 NTB Worksheet — HUD 4000.1 Required Documentation</p>
-                            <p className="text-xs text-blue-700 mt-1">This worksheet documents the Net Tangible Benefit calculation. Must be present in every FHA Streamline file.</p>
-                          </div>
-                          {ntb && ntb.length > 0 ? (
-                            <>
-                              {ntb.map(r=>(
-                                <div key={r.option_id} className="border border-gray-200 rounded-xl overflow-hidden mb-4">
-                                  <div className={`px-4 py-2.5 font-bold text-sm border-b flex items-center justify-between ${r.ntbPass?'bg-green-50 text-green-800':'bg-red-50 text-red-800'}`}>
-                                    <span>{r.label} — {r.note_rate}% Rate</span>
-                                    <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${r.ntbPass?'bg-green-200 text-green-800':'bg-red-200 text-red-800'}`}>{r.ntbPass?'✓ MEETS NTB':'✗ FAILS NTB'}</span>
-                                  </div>
-                                  <div className="p-4">
-                                    <div className="grid grid-cols-3 gap-3 mb-3 text-xs">
-                                      <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                                        <div className="text-gray-500 mb-1">Existing Combined</div>
-                                        <div className="font-black text-gray-800 text-base">{r.existingCombined}%</div>
-                                        <div className="text-gray-400">{inp.existing_note_rate}% + {inp.existing_mip_factor}%</div>
-                                      </div>
-                                      <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
-                                        <div className="text-gray-500 mb-1">New Combined</div>
-                                        <div className="font-black text-blue-800 text-base">{r.newCombined}%</div>
-                                        <div className="text-gray-400">{r.note_rate}% + 0.55%</div>
-                                      </div>
-                                      <div className={`rounded-lg p-3 border ${r.ntbPass?'bg-green-50 border-green-300':'bg-red-50 border-red-300'}`}>
-                                        <div className="text-gray-500 mb-1">Reduction (need ≥ 0.50%)</div>
-                                        <div className={`font-black text-base ${r.ntbPass?'text-green-700':'text-red-700'}`}>{r.combinedReduction}%</div>
-                                        <div className={`text-xs ${r.ntbPass?'text-green-600':'text-red-600'}`}>{r.ntbPass?'✓ Passes':'✗ Below threshold'}</div>
-                                      </div>
-                                    </div>
-                                    <table className="w-full text-xs">
-                                      <thead><tr className="bg-gray-50 border-b">
-                                        <th className="text-left px-2 py-1.5 text-gray-600">Item</th>
-                                        <th className="text-right px-2 py-1.5 text-gray-600">Existing</th>
-                                        <th className="text-right px-2 py-1.5 text-gray-600">Proposed</th>
-                                        <th className="text-right px-2 py-1.5 text-gray-600">Change</th>
-                                      </tr></thead>
-                                      <tbody>
-                                        {[
-                                          ['P&I Payment',      fmt$(r.existingPI),        fmt$(r.newPI),       fmt$(r.newPI-r.existingPI)],
-                                          ['MIP Payment',      fmt$(r.existingMIP),       fmt$(r.newMIP),      fmt$(r.newMIP-r.existingMIP)],
-                                          ['Total P&I+MIP',    fmt$(r.existingTotal),     fmt$(r.newTotal),    fmt$(r.newTotal-r.existingTotal)],
-                                          ['Monthly Savings',  '—',                       '—',                 fmt$(r.monthlySavings)],
-                                          ['UFMIP Refund',     '—',                       '—',                 fmt$(r.ufmipRefund)],
-                                          ['New UFMIP (1.75%)','—',                       fmt$(r.newUFMIP),    '—'],
-                                          ['Net UFMIP Cost',   '—',                       '—',                 fmt$(r.netUFMIP)],
-                                          ['Breakeven',        '—',                       '—',                 r.breakevenMonths<999?`${r.breakevenMonths} months`:'N/A'],
-                                        ].map(([label,existing,proposed,change])=>(
-                                          <tr key={label} className="border-b border-gray-100">
-                                            <td className="px-2 py-1.5 text-gray-700">{label}</td>
-                                            <td className="px-2 py-1.5 text-right text-gray-600">{existing}</td>
-                                            <td className="px-2 py-1.5 text-right text-gray-600">{proposed}</td>
-                                            <td className={`px-2 py-1.5 text-right font-semibold ${label==='Monthly Savings'?'text-green-700':label==='Net UFMIP Cost'?'text-orange-700':'text-gray-800'}`}>{change}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                </div>
-                              ))}
-                              <button onClick={()=>{const w=window.open('','_blank');w.document.write(generateNTBWorksheetHTML());w.document.close();}}
-                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl text-sm transition-all">
-                                🖨️ Print / Save NTB Worksheet as PDF
-                              </button>
-                            </>
-                          ) : <p className="text-gray-400 text-sm text-center py-6">Run eligibility & NTB analysis first.</p>}
-                        </div>
-                      )}
-
-                      {tab==='uw_ws' && (
-                        <div>
-                          <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-4">
-                            <p className="font-bold text-gray-800 text-sm">🏦 Underwriter Summary Worksheet</p>
-                            <p className="text-xs text-gray-600 mt-1">Complete file documentation showing all calculations, sources, and determinations for underwriter review.</p>
-                          </div>
-                          {eligibility ? (
-                            <>
-                              <button onClick={()=>{const w=window.open('','_blank');w.document.write(generateUWWorksheetHTML());w.document.close();}}
-                                className="w-full bg-gray-700 hover:bg-gray-800 text-white font-bold py-3 rounded-xl text-sm transition-all mb-4">
-                                🖨️ Print / Save Full UW Worksheet as PDF
-                              </button>
-                              <div className="space-y-3 text-xs">
-                                <div className="bg-white border border-gray-200 rounded-xl p-4">
-                                  <h4 className="font-bold text-gray-700 mb-2 text-sm">Eligibility Quick View</h4>
-                                  <div className="space-y-1">
-                                    {eligibility.rules.map(r=>(
-                                      <div key={r.id} className="flex items-center gap-2">
-                                        <span className={r.status==='PASS'?'text-green-600':r.status==='FAIL'?'text-red-600':'text-yellow-600'}>{r.status==='PASS'?'✓':r.status==='FAIL'?'✗':'⚠'}</span>
-                                        <span className="font-semibold text-gray-500 w-10">{r.id}</span>
-                                        <span className="text-gray-700 flex-1">{r.label}</span>
-                                        <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${r.status==='PASS'?'bg-green-100 text-green-700':r.status==='FAIL'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>{r.status}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                                <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
-                                  <p className="text-xs text-blue-800 font-semibold">Click "Print / Save Full UW Worksheet" above for complete PDF with all calculations, UFMIP refund, property tax, LO comp disclosure, and signature blocks.</p>
-                                </div>
-                              </div>
-                            </>
-                          ) : <p className="text-gray-400 text-sm text-center py-6">Run eligibility analysis first to generate UW worksheet.</p>}
-                        </div>
-                      )}
-
-                    </div>
-
-                    <div className="border-t border-gray-200 p-4 flex items-center justify-between bg-gray-50 flex-wrap gap-3">
-                      {scenarioId && (
-                        <DecisionRecordBanner recordId={savedRecordId} moduleName="FHA Streamline Intelligence™" onSave={handleSaveToRecord} saving={recordSaving}/>
-                      )}
-                      <div className="flex gap-3 ml-auto">
-                        <button onClick={save} disabled={saving||!eligibility}
-                          className="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white font-semibold px-5 py-2 rounded-lg text-sm transition-all">
-                          {saving?'Saving…':'💾 Save'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* RIGHT col */}
-              <div className="xl:col-span-4 space-y-4">
-
-                {/* Pricing Options */}
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
-                  <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <span className="bg-blue-100 text-blue-700 rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold">4</span>
-                    Pricing Options (up to 2)
-                  </h3>
-                  {pricing.map((opt,idx)=>(
-                    <div key={idx} className={`rounded-xl border-2 p-4 mb-3 ${idx===0?'border-blue-200 bg-blue-50':'border-gray-200 bg-gray-50'}`}>
-                      <div className="text-sm font-bold text-gray-700 mb-3">Option {String.fromCharCode(65+idx)}</div>
-                      <div className="grid grid-cols-2 gap-3">
-                        {[
-                          {label:'New Note Rate (%)',  key:'note_rate'},
-                          {label:'Price (e.g. 101.25)',key:'price'},
-                          {label:'Lender Credit ($)',  key:'lender_credit'},
-                          {label:'Origination ($)',    key:'origination'},
-                        ].map(f=>(
-                          <div key={f.key}>
-                            <label className="block text-xs text-gray-500 mb-1">{f.label}</label>
-                            <input type="number" step="any" value={opt[f.key]} onChange={e=>spr(idx,f.key,e.target.value)}
-                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"/>
-                          </div>
-                        ))}
-                        {/* Lender credit validation */}
-                        {opt.lender_credit && parseFloat(opt.lender_credit) > (parseFloat(inp.existing_upb||0) * 0.03) && parseFloat(inp.existing_upb||0) > 0 && (
-                          <div className="col-span-2 bg-yellow-50 border border-yellow-300 rounded-lg px-3 py-1.5">
-                            <p className="text-xs text-yellow-700">⚠️ Lender credit exceeds 3% of loan — verify pricing is correct</p>
-                          </div>
-                        )}
-                        {/* Suggest zero-cost price */}
-                        {opt.note_rate && parseFloat(closingCostEst) > 0 && (() => {
-                          const neededCredit = parseFloat(closingCostEst) || 3500;
-                          const upb = parseFloat(inp.existing_upb || selected?.loanAmount || 0);
-                          if (!upb) return null;
-                          const neededCreditPct = neededCredit / upb * 100;
-                          const suggestedPrice = (100 + neededCreditPct).toFixed(3);
-                          const currentCredit = parseFloat(opt.lender_credit || 0);
-                          const shortfall = neededCredit - currentCredit;
-                          if (shortfall <= 50) return null;
-                          return (
-                            <div className="col-span-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                              <p className="text-xs text-amber-700">💡 For zero borrower cost: price needs to be <strong>{suggestedPrice}</strong> (need {fmt$(neededCredit)} lender credit — currently {fmt$(shortfall)} short)</p>
-                              <button onClick={() => spr(idx, 'price', suggestedPrice)} className="text-xs font-bold text-amber-800 hover:text-amber-900 underline mt-0.5">Apply suggested price →</button>
-                            </div>
-                          );
-                        })()}
-                      </div>
+                    { label: 'Current payment', value: fmtDollar(existingTotalPmt), sub: 'P&I + MIP today' },
+                    { label: 'New payment',      value: fmtDollar(newTotalPmt),      sub: paymentSavings > 0 ? `saves ${fmtDollar(paymentSavings)}/mo` : 'check rate' },
+                    { label: 'Rate drops',       value: `${fmtPct(existingRateN)} → ${fmtPct(newRateN)}`, sub: `${fmtPct(combinedReduction, 3)} combined reduction` },
+                  ].map(({ label, value, sub }) => (
+                    <div key={label} style={{ background: 'rgba(255,255,255,0.12)', borderRadius: 8, padding: '12px 14px' }}>
+                      <div style={{ fontSize: 11, opacity: 0.65, marginBottom: 3 }}>{label}</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: '#f9c846' }}>{value}</div>
+                      <div style={{ fontSize: 11, opacity: 0.65, marginTop: 3 }}>{sub}</div>
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
 
-                {/* NTB Quick Summary */}
-                {ntb && ntb.length > 0 && (
-                  <div className="bg-white rounded-xl border border-gray-200 p-4">
-                    <h3 className="font-bold text-gray-800 mb-3 text-sm">NTB Quick Summary</h3>
-                    {ntb.map(r => {
-                      const badge = getBadge(r,ntb);
-                      return (
-                        <div key={r.option_id} className="flex items-center justify-between py-2 border-b last:border-0 border-gray-100">
-                          <div>
-                            <span className="font-semibold text-sm">{r.label}</span>
-                            <span className="text-gray-500 text-xs ml-2">{r.note_rate}%</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-600">{r.ntbPass?`Saves ${fmt$(r.monthlySavings)}/mo`:'Fails NTB'}</span>
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${badge.color}`}>{badge.label}</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+  const renderUFMIPCalculator = () => (
+    <div>
+      <div style={S.card}>
+        <div style={S.cardTitle}>🔢 UFMIP Refund — How It Works</div>
+        <div style={S.infoBox}>
+          <strong>FHA refunds a portion of the original UFMIP</strong> when refinancing within 36 months of endorsement.
+          The refund is applied as a credit against the new UFMIP — reducing the net amount added to the loan.
+          After 36 months: no refund. This calculation directly impacts your new loan amount, payment, and NTB test.
+        </div>
+      </div>
 
-                {/* LO Commission Calculator */}
-                <div className="bg-white rounded-xl border-2 border-emerald-200 p-5">
-                  <h3 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
-                    <span className="text-xl">💰</span> LO Commission Calculator
-                  </h3>
-                  <p className="text-xs text-gray-500 mb-4">LPC vs BPC — gross and net on this file. Updates live as you adjust comp settings.</p>
-                  <div className="grid grid-cols-2 gap-3 mb-4">
-                    {[
-                      {label:'LO Split %',       key:'lo_split',         suffix:'%',   color:'gray'},
-                      {label:'Processing Fee',    key:'processing_fee',   prefix:'$',  color:'gray'},
-                      {label:'LPC Rate %',        key:'lpc_rate',         suffix:'%',   color:'emerald', tip:'Lender pays you this % of loan'},
-                      {label:'BPC Points',        key:'bpc_points',       suffix:'pts', color:'blue',    tip:'Borrower pays origination points'},
-                      {label:'Admin Fee',         key:'admin_fee',        prefix:'$',  color:'gray'},
-                      {label:'Other Deductions',  key:'other_deductions', prefix:'$',  color:'gray'},
-                    ].map(f=>(
-                      <div key={f.key}>
-                        <label className={`block text-xs font-semibold mb-1 ${f.color==='emerald'?'text-emerald-700':f.color==='blue'?'text-blue-700':'text-gray-500'}`}>
-                          {f.label}{f.tip&&<span className="text-gray-400 font-normal ml-1">({f.tip})</span>}
-                        </label>
-                        <div className="relative">
-                          {f.prefix&&<span className="absolute left-3 top-2.5 text-gray-400 text-xs">{f.prefix}</span>}
-                          <input type="number" step="0.01" value={comp[f.key]} onChange={e=>sc(f.key,parseFloat(e.target.value)||0)}
-                            className={`w-full border rounded-lg py-2 text-sm focus:outline-none ${f.color==='emerald'?'border-emerald-300 bg-emerald-50 focus:ring-2 focus:ring-emerald-400':f.color==='blue'?'border-blue-300 bg-blue-50 focus:ring-2 focus:ring-blue-400':'border-gray-300 focus:ring-2 focus:ring-gray-300'} ${f.prefix?'pl-6 pr-3':'px-3'} ${f.suffix?'pr-8':'pr-3'}`}/>
-                          {f.suffix&&<span className="absolute right-3 top-2.5 text-gray-400 text-xs">{f.suffix}</span>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {commissionResult ? (
-                    <div className="space-y-3">
-                      {commissionResult.lpc && (
-                        <div className={`rounded-xl border-2 p-4 ${commissionResult.recommendation==='lpc'?'border-emerald-500 bg-emerald-50':'border-gray-200 bg-gray-50'}`}>
-                          <div className="flex items-center justify-between mb-3">
-                            <p className="font-bold text-emerald-800 text-sm">Lender Paid (LPC)</p>
-                            {commissionResult.recommendation==='lpc'&&<span className="text-xs font-bold bg-emerald-600 text-white px-2 py-0.5 rounded-full">⭐ Better for You</span>}
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            {[
-                              {l:'Gross Commission',              v:fmt$(commissionResult.lpc.gross),  sub:`${comp.lpc_rate}% of loan`},
-                              {l:`After ${comp.lo_split}% Split`, v:fmt$(commissionResult.lpc.split),  sub:'Your share'},
-                              {l:'Deductions',                    v:`- ${fmt$(commissionResult.lpc.deductions)}`, sub:'Fees', red:true},
-                              {l:'NET TO YOU',                    v:fmt$(commissionResult.lpc.net),    sub:`${commissionResult.lpc.effective_rate.toFixed(3)}% eff.`, big:true, green:commissionResult.recommendation==='lpc'},
-                            ].map(item=>(
-                              <div key={item.l} className={`rounded-lg p-2.5 border text-center ${item.big&&item.green?'bg-emerald-100 border-emerald-400':item.big?'bg-white border-gray-300':'bg-white border-emerald-200'}`}>
-                                <div className="text-gray-500">{item.l}</div>
-                                <div className={`font-black ${item.big?'text-lg':'text-sm'} ${item.red?'text-red-600':item.big&&item.green?'text-emerald-700':'text-gray-800'}`}>{item.v}</div>
-                                <div className="text-gray-400 text-xs">{item.sub}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {commissionResult.bpc && (
-                        <div className={`rounded-xl border-2 p-4 ${commissionResult.recommendation==='bpc'?'border-blue-500 bg-blue-50':'border-gray-200 bg-gray-50'}`}>
-                          <div className="flex items-center justify-between mb-3">
-                            <p className="font-bold text-blue-800 text-sm">Borrower Paid (BPC)</p>
-                            {commissionResult.recommendation==='bpc'&&<span className="text-xs font-bold bg-blue-600 text-white px-2 py-0.5 rounded-full">⭐ Better for You</span>}
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            {[
-                              {l:'Gross Commission',              v:fmt$(commissionResult.bpc.gross),  sub:`${comp.bpc_points} pt(s) origination`},
-                              {l:`After ${comp.lo_split}% Split`, v:fmt$(commissionResult.bpc.split),  sub:'Your share'},
-                              {l:'Deductions',                    v:`- ${fmt$(commissionResult.bpc.deductions)}`, sub:'Fees', red:true},
-                              {l:'NET TO YOU',                    v:fmt$(commissionResult.bpc.net),    sub:`${commissionResult.bpc.effective_rate.toFixed(3)}% eff.`, big:true, blue:commissionResult.recommendation==='bpc'},
-                            ].map(item=>(
-                              <div key={item.l} className={`rounded-lg p-2.5 border text-center ${item.big&&item.blue?'bg-blue-100 border-blue-400':item.big?'bg-white border-gray-300':'bg-white border-blue-200'}`}>
-                                <div className="text-gray-500">{item.l}</div>
-                                <div className={`font-black ${item.big?'text-lg':'text-sm'} ${item.red?'text-red-600':item.big&&item.blue?'text-blue-700':'text-gray-800'}`}>{item.v}</div>
-                                <div className="text-gray-400 text-xs">{item.sub}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {commissionResult.recommendation && (
-                        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-800">
-                          <p className="font-bold">{commissionResult.recommendation==='lpc'?'LPC':'BPC'} puts {fmt$(commissionResult.difference)} more in your pocket.</p>
-                          <p className="mt-1 text-amber-700">RESPA: you cannot receive both LPC and BPC on the same file.</p>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="text-center py-4 text-sm text-gray-400 border-2 border-dashed border-gray-200 rounded-xl">
-                      Select a scenario with a loan amount to see commission.
-                    </div>
-                  )}
+      <div style={S.card}>
+        <div style={S.cardTitle}>📊 UFMIP Refund Calculation</div>
+        {!endorsementDate && <div style={S.warningBox}>⚠️ Enter the Closing / Endorsement Date on Loan Snapshot to calculate the refund.</div>}
+        {endorsementDate && (
+          <>
+            <div style={S.grid3}>
+              {[
+                { label: 'Months Since Endorsement', value: `${monthsElapsed} months`, color: '#0f4c81' },
+                { label: 'UFMIP Refund Percentage',  value: `${(ufmipRefundPct * 100).toFixed(1)}%`, color: monthsElapsed < 36 ? '#166534' : '#8b1a1a' },
+                { label: 'Refund Eligible?',          value: monthsElapsed < 36 ? '✅ Yes' : '❌ No (>36 months)', color: monthsElapsed < 36 ? '#166534' : '#8b1a1a' },
+              ].map(({ label, value, color }) => (
+                <div key={label} style={{ background: '#f8fafc', borderRadius: 8, padding: '14px', textAlign: 'center', border: '1px solid #e0e7ef' }}>
+                  <div style={{ fontSize: 11, color: '#6b7a8d', fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color }}>{value}</div>
                 </div>
+              ))}
+            </div>
 
-                {/* FHA Rules Reference */}
-                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-                  <div className="font-semibold text-yellow-800 text-sm mb-2">📐 FHA Streamline Quick Rules</div>
-                  <div className="text-xs text-yellow-700 space-y-1">
-                    <div>• <strong>NTB:</strong> Combined rate reduction ≥ 0.50%</div>
-                    <div>• <strong>Seasoning:</strong> 210 days from closing + 6 payments</div>
-                    <div>• <strong>Payment history:</strong> 0x30 in last 12 months</div>
-                    <div>• <strong>UFMIP refund:</strong> Applied to new UFMIP (36-month window)</div>
-                    <div>• <strong>Max cash back:</strong> $500 at closing</div>
-                    <div>• <strong>No appraisal</strong> required</div>
-                    <div>• <strong>GA Assessment:</strong> 40% of FMV × millage</div>
-                    <div>• <strong>LPC vs BPC:</strong> Cannot do both on same file</div>
-                  </div>
+            {/* Refund timeline bar */}
+            {monthsElapsed < 36 && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7a8d', marginBottom: 6 }}>
+                  <span>Refund Eligibility Window</span>
+                  <span style={{ fontWeight: 700 }}>{monthsElapsed} of 36 months used</span>
+                </div>
+                <div style={{ height: 10, background: '#e0e7ef', borderRadius: 5, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${Math.min((monthsElapsed / 36) * 100, 100)}%`, background: monthsElapsed < 18 ? '#22c55e' : monthsElapsed < 30 ? '#f9c846' : '#ef4444', borderRadius: 5, transition: 'width 0.3s' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#9aa5b4', marginTop: 4 }}>
+                  <span>Month 0 (80% refund)</span><span style={{ color: '#8b1a1a', fontWeight: 700 }}>Month 36 (0% refund)</span>
                 </div>
               </div>
+            )}
+
+            {/* The math breakdown */}
+            <div style={{ marginTop: 20, background: '#0f4c81', borderRadius: 10, padding: 20, color: '#fff' }}>
+              <div style={{ fontSize: 12, opacity: 0.65, letterSpacing: '0.08em', marginBottom: 14 }}>UFMIP REFUND MATH</div>
+              {[
+                ['Original UFMIP Paid',   fmtDollar(origUFMIPAmt),   origUFMIPAmt > 0 ? '✓' : '⚠️ Enter on Snapshot'],
+                ['× Refund Percentage',   `${(ufmipRefundPct * 100).toFixed(1)}%`, ''],
+                ['= UFMIP Refund Credit', fmtDollar(ufmipRefundAmt), '← applied to new UFMIP'],
+                ['New Gross UFMIP (1.75% × UPB)', fmtDollar(newUFMIPGross), `1.75% × ${fmtDollar(upb)}`],
+                ['− Refund Credit',        fmtDollar(ufmipRefundAmt), ''],
+              ].map(([label, value, note]) => (
+                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+                  <div>
+                    <span style={{ fontSize: 13 }}>{label}</span>
+                    {note && <span style={{ fontSize: 11, opacity: 0.6, marginLeft: 8 }}>{note}</span>}
+                  </div>
+                  <span style={{ fontWeight: 700, fontSize: 14 }}>{value}</span>
+                </div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0 0' }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>= Net UFMIP (rolled into loan)</div>
+                  <div style={{ fontSize: 11, opacity: 0.65, marginTop: 2 }}>This is what actually gets added to your loan balance</div>
+                </div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: '#f9c846' }}>{fmtDollar(netUFMIP)}</div>
+              </div>
+            </div>
+
+            {/* New loan amount breakdown */}
+            <div style={{ marginTop: 16, background: '#eef4fb', borderRadius: 8, padding: 16, border: '1px solid #b8d0e8' }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#0f4c81', marginBottom: 12 }}>New Loan Amount Breakdown</div>
+              {[
+                ['Existing UPB', fmtDollar(upb)],
+                ['+ Net UFMIP (rolled in)', fmtDollar(netUFMIP)],
+              ].map(([label, value]) => (
+                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #d0dbe8', fontSize: 13 }}>
+                  <span style={{ color: '#6b7a8d' }}>{label}</span><span style={{ fontWeight: 600 }}>{value}</span>
+                </div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0 0', fontSize: 16, fontWeight: 800 }}>
+                <span>= New Loan Amount</span><span style={{ color: '#0f4c81' }}>{fmtDollar(newLoanAmt)}</span>
+              </div>
+              {newRateN > 0 && <div style={{ fontSize: 12, color: '#6b7a8d', marginTop: 8 }}>New P&I at {fmtPct(newRateN)} for {newTerm} months: <strong>{fmtDollar(newPIAmt)}/month</strong></div>}
             </div>
           </>
         )}
       </div>
-      <CanonicalSequenceBar currentModuleKey="FHA_STREAMLINE" scenarioId={scenarioId} recordId={savedRecordId} />
+
+      {/* Refund schedule table */}
+      <div style={S.card}>
+        <div style={S.cardTitle}>📅 HUD UFMIP Refund Schedule Reference</div>
+        <div style={S.infoBox}>Approximate refund percentages. Actual amounts per HUD Connection. No refund after month 36.</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead><tr style={{ background: '#f1f5f9' }}>
+              {['Month', 'Refund %', 'Month', 'Refund %', 'Month', 'Refund %'].map((h, i) => (
+                <th key={i} style={{ padding: '8px 10px', textAlign: 'left', fontWeight: 600, color: '#6b7a8d' }}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {[1, 7, 13, 19, 25, 31].map((start, row) => (
+                <tr key={row} style={{ borderBottom: '1px solid #f0f4f8' }}>
+                  {[start, start + 3, start + 6].map(mo => {
+                    const pct = UFMIP_REFUND(mo) * 100;
+                    const isCurrentMo = monthsElapsed === mo;
+                    return mo <= 36 ? (
+                      <React.Fragment key={mo}>
+                        <td style={{ padding: '8px 10px', fontWeight: isCurrentMo ? 700 : 400, color: isCurrentMo ? '#0f4c81' : '#1a1a2e' }}>
+                          {mo}{isCurrentMo ? ' ← you' : ''}
+                        </td>
+                        <td style={{ padding: '8px 10px', color: pct > 40 ? '#166534' : pct > 15 ? '#92400e' : '#8b1a1a', fontWeight: 600 }}>
+                          {pct.toFixed(1)}%
+                        </td>
+                      </React.Fragment>
+                    ) : (
+                      <React.Fragment key={mo}><td style={{ padding: '8px 10px', color: '#9aa5b4' }}>—</td><td style={{ padding: '8px 10px', color: '#9aa5b4' }}>0.0%</td></React.Fragment>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderRateOptions = () => {
+    const updateRO = (id, field, val) => setRateOptions(prev => prev.map(o => o.id === id ? { ...o, [field]: val } : o));
+    return (
+      <div>
+        <div style={S.card}>
+          <div style={S.cardTitle}>🏦 Rate Options — NTB Check Per Lender</div>
+          <div style={S.infoBox}>Compare up to 3 lender quotes. The combined rate reduction (rate + MIP) must be ≥ 0.50% vs your existing combined rate of <strong>{existingRateN > 0 ? fmtPct(existingCombined) : '—'}</strong>.</div>
+          {rateOptions.map((opt, i) => {
+            const rateN = parseFloat(opt.rate) || 0;
+            const optNewCombined = rateN + (NEW_ANNUAL_MIP * 100);
+            const optReduction   = existingCombined - optNewCombined;
+            const optNTBPass     = optReduction >= NTB_MIN_REDUCTION;
+            const optNewLoan     = upb + Math.max(0, upb * NEW_UFMIP_RATE - ufmipRefundAmt);
+            const optNewPI       = rateN > 0 && optNewLoan > 0 ? calcPI(optNewLoan, rateN, termMos) : 0;
+            const optSavings     = existingTotalPmt > 0 && optNewPI > 0 ? existingTotalPmt - (optNewPI + newMIPMonthly) : null;
+            return (
+              <div key={opt.id} style={{ border: `2px solid ${optNTBPass ? '#86efac' : rateN > 0 ? '#fca5a5' : '#e0e7ef'}`, borderRadius: 10, padding: 16, marginBottom: 14, background: optNTBPass ? '#f0fdf4' : rateN > 0 ? '#fdf0f0' : '#f8fafc' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#0f4c81', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{i + 1}</div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>Option {String.fromCharCode(65 + i)}</div>
+                  {rateN > 0 && <span style={{ fontSize: 12, fontWeight: 700, padding: '2px 10px', borderRadius: 10, background: optNTBPass ? '#f0fdf4' : '#fdf0f0', color: optNTBPass ? '#166534' : '#8b1a1a', border: `1px solid ${optNTBPass ? '#86efac' : '#fca5a5'}` }}>{optNTBPass ? '✅ Meets NTB' : '❌ Fails NTB'}</span>}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+                  <div><label style={S.label}>Lender Name</label><input style={S.input} value={opt.lender} onChange={e => updateRO(opt.id, 'lender', e.target.value)} placeholder={`Lender ${i + 1}`} /></div>
+                  <div><label style={S.label}>New Note Rate (%)</label><input style={S.input} type="number" step="0.001" value={opt.rate} onChange={e => updateRO(opt.id, 'rate', e.target.value)} placeholder="e.g. 6.500" /></div>
+                  <div><label style={S.label}>Price (par = 100)</label><input style={S.input} type="number" step="0.125" value={opt.price} onChange={e => updateRO(opt.id, 'price', e.target.value)} placeholder="e.g. 101.25" /></div>
+                  <div><label style={S.label}>Lender Credit ($)</label><input style={S.input} type="number" value={opt.lenderCredit} onChange={e => updateRO(opt.id, 'lenderCredit', e.target.value)} placeholder="e.g. 1500" /></div>
+                </div>
+                {rateN > 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                    {[
+                      { label: 'New Combined', value: fmtPct(optNewCombined), color: '#0f4c81' },
+                      { label: 'Combined Reduction', value: fmtPct(optReduction), color: optNTBPass ? '#166534' : '#8b1a1a' },
+                      { label: 'New P&I', value: optNewPI > 0 ? fmtDollar(optNewPI) : '—', color: '#0f4c81' },
+                      { label: 'Monthly Savings', value: optSavings !== null ? fmtDollar(optSavings) : '—', color: optSavings > 0 ? '#166534' : '#8b1a1a' },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} style={{ background: 'rgba(0,0,0,0.04)', borderRadius: 6, padding: '8px', textAlign: 'center' }}>
+                        <div style={{ fontSize: 10, color: '#6b7a8d', fontWeight: 600, marginBottom: 2 }}>{label}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const renderPricing = () => (
+    <div>
+      <div style={S.card}>
+        <div style={S.cardTitle}>💰 LO Commission Calculator — LPC vs BPC</div>
+        <div style={S.infoBox}>RESPA: You cannot receive both LPC and BPC on the same file. Loan amount used: <strong>{fmtDollar(upb)}</strong> (existing UPB).</div>
+        <div style={S.grid3}>
+          <div><label style={S.label}>LO Split (%)</label><input style={S.input} type="number" value={compLOSplit} onChange={e => setCompLOSplit(e.target.value)} placeholder="70" /></div>
+          <div><label style={S.label}>Processing Fee ($)</label><input style={S.input} type="number" value={compProcessingFee} onChange={e => setCompProcessingFee(e.target.value)} placeholder="395" /></div>
+          <div><label style={S.label}>Admin Fee ($)</label><input style={S.input} type="number" value={compAdminFee} onChange={e => setCompAdminFee(e.target.value)} placeholder="0" /></div>
+          <div><label style={S.label}>LPC Rate % (Lender Paid)</label><input style={{ ...S.input, borderColor: '#86efac', background: '#f0fdf4' }} type="number" step="0.01" value={compLPCRate} onChange={e => setCompLPCRate(e.target.value)} placeholder="2.75" /></div>
+          <div><label style={S.label}>BPC Points (Borrower Paid)</label><input style={{ ...S.input, borderColor: '#b8d0e8', background: '#eef4fb' }} type="number" step="0.25" value={compBPCPoints} onChange={e => setCompBPCPoints(e.target.value)} placeholder="1.0" /></div>
+          <div><label style={S.label}>Other Deductions ($)</label><input style={S.input} type="number" value={compOtherDeductions} onChange={e => setCompOtherDeductions(e.target.value)} placeholder="0" /></div>
+        </div>
+
+        {upb > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 20 }}>
+            {/* LPC */}
+            <div style={{ border: `2px solid ${compRec === 'LPC' ? '#22c55e' : '#e0e7ef'}`, borderRadius: 10, padding: 16, background: compRec === 'LPC' ? '#f0fdf4' : '#f8fafc' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: '#166534' }}>Lender Paid (LPC)</div>
+                {compRec === 'LPC' && <span style={{ fontSize: 11, background: '#22c55e', color: '#fff', padding: '2px 8px', borderRadius: 10, fontWeight: 700 }}>⭐ Better for You</span>}
+              </div>
+              {[['Gross Commission', fmtDollar(lpcGross), `${compLPCRate}% of ${fmtDollar(upb)}`], [`After ${compLOSplit}% Split`, fmtDollar(lpcGross * parseFloat(compLOSplit) / 100), 'Your share'], ['Deductions', `− ${fmtDollar(compDeduct)}`, 'Fees'], ['NET TO YOU', fmtDollar(lpcNet), `${lpcEffRate.toFixed(3)}% eff`]].map(([k, v, s], i) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: i < 3 ? '1px solid #e0e7ef' : 'none', fontWeight: i === 3 ? 800 : 400, fontSize: i === 3 ? 16 : 13 }}>
+                  <div><div>{k}</div><div style={{ fontSize: 10, color: '#9aa5b4' }}>{s}</div></div>
+                  <span style={{ color: i === 2 ? '#8b1a1a' : i === 3 ? '#166534' : '#1a1a2e' }}>{v}</span>
+                </div>
+              ))}
+            </div>
+            {/* BPC */}
+            <div style={{ border: `2px solid ${compRec === 'BPC' ? '#3b82f6' : '#e0e7ef'}`, borderRadius: 10, padding: 16, background: compRec === 'BPC' ? '#eef4fb' : '#f8fafc' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: '#1a4a7e' }}>Borrower Paid (BPC)</div>
+                {compRec === 'BPC' && <span style={{ fontSize: 11, background: '#3b82f6', color: '#fff', padding: '2px 8px', borderRadius: 10, fontWeight: 700 }}>⭐ Better for You</span>}
+              </div>
+              {[['Gross Commission', fmtDollar(bpcGross), `${compBPCPoints} pt(s) origination`], [`After ${compLOSplit}% Split`, fmtDollar(bpcGross * parseFloat(compLOSplit) / 100), 'Your share'], ['Deductions', `− ${fmtDollar(compDeduct)}`, 'Fees'], ['NET TO YOU', fmtDollar(bpcNet), `${bpcEffRate.toFixed(3)}% eff`]].map(([k, v, s], i) => (
+                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: i < 3 ? '1px solid #e0e7ef' : 'none', fontWeight: i === 3 ? 800 : 400, fontSize: i === 3 ? 16 : 13 }}>
+                  <div><div>{k}</div><div style={{ fontSize: 10, color: '#9aa5b4' }}>{s}</div></div>
+                  <span style={{ color: i === 2 ? '#8b1a1a' : i === 3 ? '#1a4a7e' : '#1a1a2e' }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {upb > 0 && (
+          <div style={{ ...S.warningBox, marginTop: 14 }}>
+            <strong>{compRec} puts {fmtDollar(Math.abs(lpcNet - bpcNet))} more in your pocket.</strong>{' '}
+            RESPA: you cannot receive both LPC and BPC on the same file.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderNTBWorksheet = () => (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <button style={{ ...S.btn, ...S.btnPrimary }} onClick={() => window.print()}>🖨️ Print NTB Worksheet</button>
+      </div>
+      <div style={{ ...S.card, fontFamily: 'Georgia, "Times New Roman", serif' }}>
+        <div style={{ textAlign: 'center', marginBottom: 22, borderBottom: '2px solid #0f4c81', paddingBottom: 16 }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: '#0f4c81' }}>NET TANGIBLE BENEFIT WORKSHEET</div>
+          <div style={{ fontSize: 14, color: '#5a6a7e', marginTop: 4 }}>FHA Streamline Refinance</div>
+          <div style={{ fontSize: 11, color: '#9aa5b4', marginTop: 2 }}>Prepared by LoanBeacons™ · For Lender File Documentation · Generated: {new Date().toLocaleDateString()}</div>
+        </div>
+        {[['Borrower Name', borrowerName || '___________________________'], ['FHA Case Number', caseNumber || '___________________________'], ['Property Address', propertyAddress || '___________________________'], ['Endorsement Date', endorsementDate || '___________________________']].map(([k, v]) => (
+          <div key={k} style={{ display: 'flex', borderBottom: '1px solid #e0e7ef', padding: '7px 0' }}>
+            <span style={{ width: 180, fontSize: 12, fontWeight: 700, color: '#5a6a7e', flexShrink: 0 }}>{k}:</span>
+            <span style={{ fontSize: 13 }}>{v}</span>
+          </div>
+        ))}
+        <div style={{ marginTop: 20 }}>
+          {[
+            { title: 'EXISTING LOAN', rows: [['Note Rate', fmtPct(existingRateN)], ['Annual MIP Factor', fmtPct(mipFactorN)], ['Combined Rate', fmtPct(existingCombined)], ['P&I Payment', fmtDollar(existingPIAmt)], ['Monthly MIP', fmtDollar(existingMIPAmt)], ['Total Payment', fmtDollar(existingTotalPmt)], ['Outstanding Balance', fmtDollar(upb)], ['Original UFMIP Paid', fmtDollar(origUFMIPAmt)]] },
+            { title: 'PROPOSED FHA STREAMLINE', rows: [['New Note Rate', fmtPct(newRateN)], ['New Annual MIP Factor', fmtPct(NEW_ANNUAL_MIP * 100)], ['New Combined Rate', fmtPct(newCombined)], ['UFMIP Refund Credit', `${(ufmipRefundPct * 100).toFixed(1)}% = ${fmtDollar(ufmipRefundAmt)}`], ['Net UFMIP (rolled in)', fmtDollar(netUFMIP)], ['New Loan Amount', fmtDollar(newLoanAmt)], ['New P&I Payment', fmtDollar(newPIAmt)], ['New Monthly MIP', fmtDollar(newMIPMonthly)], ['New Total Payment', fmtDollar(newTotalPmt)]] },
+          ].map(section => (
+            <div key={section.title} style={{ marginBottom: 16 }}>
+              <div style={{ background: '#0f4c81', color: '#fff', fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 4, marginBottom: 6, letterSpacing: '0.08em' }}>{section.title}</div>
+              {section.rows.map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', borderBottom: '1px solid #e0e7ef', padding: '7px 4px' }}>
+                  <span style={{ width: 220, fontSize: 12, fontWeight: 600, color: '#5a6a7e', flexShrink: 0 }}>{k}:</span>
+                  <span style={{ fontSize: 13 }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div style={{ background: '#0f4c81', color: '#fff', fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 4, marginBottom: 6, letterSpacing: '0.08em' }}>NET TANGIBLE BENEFIT DETERMINATION</div>
+        {[
+          ['Combined Rate Reduction', fmtPct(combinedReduction), ntbCombinedPass ? 'PASS ✅' : 'FAIL ❌', `Need ≥ ${NTB_MIN_REDUCTION}%`],
+          ['Monthly Payment Reduction', fmtDollar(paymentSavings), ntbPaymentPass ? 'PASS ✅' : 'REVIEW ⚠️', ''],
+          ['Recoupment Period', isFinite(recoupMos) ? `${recoupMos} months` : 'N/A', '', ''],
+          ['Net Tangible Benefit', '', ntbPass ? 'SATISFIED ✅' : 'NOT MET ❌', ''],
+        ].map(([k, v, r, note]) => (
+          <div key={k} style={{ display: 'flex', borderBottom: '1px solid #e0e7ef', padding: '7px 4px', alignItems: 'center' }}>
+            <span style={{ width: 220, fontSize: 12, fontWeight: 600, color: '#5a6a7e', flexShrink: 0 }}>{k}:</span>
+            <span style={{ flex: 1, fontSize: 13 }}>{v}{note && <span style={{ fontSize: 11, color: '#9aa5b4', marginLeft: 6 }}>{note}</span>}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: r.includes('✅') ? '#166534' : r.includes('❌') ? '#8b1a1a' : '#92400e' }}>{r}</span>
+          </div>
+        ))}
+        <div style={{ borderTop: '2px solid #0f4c81', paddingTop: 20, marginTop: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 24 }}>
+            {['Loan Officer Signature', 'NMLS ID', 'Date'].map(label => (
+              <div key={label}><div style={{ borderBottom: '1px solid #1a1a2e', height: 32, marginBottom: 5 }} /><div style={{ fontSize: 11, color: '#6b7a8d' }}>{label}</div></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderUWWorksheet = () => (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <button style={{ ...S.btn, ...S.btnPrimary }} onClick={() => window.print()}>🖨️ Print UW Worksheet</button>
+      </div>
+      <div style={{ ...S.card, fontFamily: 'Georgia, serif' }}>
+        <div style={{ textAlign: 'center', marginBottom: 20, borderBottom: '2px solid #0f4c81', paddingBottom: 14 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#0f4c81' }}>FHA STREAMLINE UNDERWRITING WORKSHEET</div>
+          <div style={{ fontSize: 13, color: '#6b7a8d' }}>For Internal Lender File — LoanBeacons™</div>
+          <div style={{ fontSize: 11, color: '#9aa5b4', marginTop: 2 }}>Generated: {new Date().toLocaleDateString()}</div>
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 13, color: '#0f4c81', marginBottom: 8, letterSpacing: '0.05em' }}>LOAN SUMMARY</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 20 }}>
+          {[['Borrower', borrowerName || '—'], ['FHA Case #', caseNumber || '—'], ['Property', propertyAddress?.split(',')[0] || '—'], ['Existing Rate', fmtPct(existingRateN)], ['New Rate', fmtPct(newRateN)], ['Combined Reduction', fmtPct(combinedReduction)], ['Current P&I+MIP', fmtDollar(existingTotalPmt)], ['New P&I+MIP', fmtDollar(newTotalPmt)], ['Monthly Savings', fmtDollar(paymentSavings)], ['Net UFMIP', fmtDollar(netUFMIP)], ['New Loan Amt', fmtDollar(newLoanAmt)], ['NTB Status', ntbPass ? 'SATISFIED ✅' : existingRateN > 0 ? 'REVIEW ❌' : 'Pending']].map(([label, val]) => (
+            <div key={label} style={{ background: '#f8fafc', borderRadius: 6, padding: '10px 12px', border: '1px solid #e0e7ef' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7a8d', letterSpacing: '0.04em', marginBottom: 3 }}>{label}</div>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{val}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 13, color: '#0f4c81', marginBottom: 8, letterSpacing: '0.05em' }}>UNDERWRITING CHECKLIST</div>
+        {[
+          { item: 'FHA-insured loan confirmed',                             done: isFHAInsured },
+          { item: 'NTB satisfied — combined rate reduction ≥ 0.50%',       done: ntbCombinedPass },
+          { item: 'Monthly payment confirmed lower',                        done: ntbPaymentPass },
+          { item: '210-day seasoning satisfied',                            done: seasoningPass },
+          { item: 'Payment history verified — 0x30 last 6 months',         done: latesLast6 === 0 },
+          { item: 'UFMIP refund calculated and applied to new loan',        done: origUFMIPAmt > 0 && endorsementDate !== '' },
+          { item: 'No appraisal required — streamline confirmed',           done: true },
+          { item: 'No income verification required — streamline confirmed', done: true },
+          { item: 'Not in forbearance or loss mitigation',                  done: !inForbearance },
+          { item: 'FHA case number confirmed in FHA Connection',            done: !!caseNumber },
+        ].map((row, i) => (
+          <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 4px', borderBottom: '1px solid #f0f4f8', alignItems: 'center' }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>{row.done ? '✅' : '⏳'}</span>
+            <span style={{ fontSize: 12 }}>{row.item}</span>
+          </div>
+        ))}
+        <div style={{ borderTop: '2px solid #0f4c81', paddingTop: 18, marginTop: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 24 }}>
+            {['Loan Officer / NMLS ID', 'Underwriter / NMLS ID', 'Date'].map(label => (
+              <div key={label}><div style={{ borderBottom: '1px solid #1a1a2e', height: 32, marginBottom: 5 }} /><div style={{ fontSize: 10, color: '#6b7a8d' }}>{label}</div></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderDocChecklist = () => {
+    const total   = DOC_ITEMS.length;
+    const checked = Object.values(checkedDocs).filter(Boolean).length;
+    const pct     = Math.round((checked / total) * 100);
+    return (
+      <div>
+        <div style={S.card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <div style={S.cardTitle}>✔️ FHA Streamline Document Checklist</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#0f4c81' }}>{checked} / {total} collected</div>
+          </div>
+          <div style={S.infoBox}>FHA Streamline is credit non-qualifying — no income docs, no appraisal. Payment history and UFMIP docs are critical.</div>
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7a8d', marginBottom: 5 }}><span>Collection Progress</span><span>{pct}%</span></div>
+            <div style={{ height: 8, background: '#e0e7ef', borderRadius: 4, overflow: 'hidden' }}><div style={{ height: '100%', width: `${pct}%`, background: pct === 100 ? '#22c55e' : '#0f4c81', borderRadius: 4, transition: 'width 0.3s' }} /></div>
+          </div>
+          {DOC_ITEMS.map((item, i) => {
+            const isChecked = !!checkedDocs[item.id];
+            return (
+              <div key={item.id} onClick={() => setCheckedDocs(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
+                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 8, marginBottom: 8, cursor: 'pointer', transition: 'all 0.15s', background: isChecked ? '#f0fdf4' : '#f8fafc', border: `1px solid ${isChecked ? '#86efac' : '#e0e7ef'}` }}>
+                <div style={{ width: 20, height: 20, borderRadius: 4, flexShrink: 0, background: isChecked ? '#22c55e' : '#fff', border: `2px solid ${isChecked ? '#22c55e' : '#d0dbe8'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 700 }}>{isChecked ? '✓' : ''}</div>
+                <span style={{ fontSize: 14, flex: 1, textDecoration: isChecked ? 'line-through' : 'none', color: isChecked ? '#5a7a6e' : '#1a1a2e' }}>{item.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const renderPropertyTax = () => (
+    <div>
+      <div style={S.card}>
+        <div style={S.cardTitle}>🏠 Property Tax Calculator</div>
+        <div style={S.infoBox}>Georgia assessment = 40% of FMV × millage rate. Always verify with county tax assessor before closing.</div>
+        <div style={S.grid3}>
+          <div>
+            <label style={S.label}>State</label>
+            <select style={S.input} value={taxState} onChange={e => setTaxState(e.target.value)}>
+              <option value="GA">Georgia</option>
+              <option value="FL">Florida</option>
+              <option value="NC">North Carolina</option>
+              <option value="SC">South Carolina</option>
+              <option value="TN">Tennessee</option>
+              <option value="TX">Texas</option>
+              <option value="AL">Alabama</option>
+            </select>
+          </div>
+          {taxState === 'GA' && (
+            <div>
+              <label style={S.label}>GA County</label>
+              <select style={S.input} value={taxCounty} onChange={e => setTaxCounty(e.target.value)}>
+                <option value="">— Select County —</option>
+                {Object.keys(GA_COUNTIES).sort().map(c => <option key={c} value={c}>{c} ({GA_COUNTIES[c].millage} mills)</option>)}
+              </select>
+            </div>
+          )}
+          {taxState === 'GA' && (
+            <div>
+              <label style={S.label}>City Millage (if inside city limits)</label>
+              <input style={S.input} type="number" value={taxCityMills} onChange={e => setTaxCityMills(e.target.value)} placeholder="e.g. 10 or 12" />
+            </div>
+          )}
+          <div>
+            <label style={S.label}>Fair Market Value ($)</label>
+            <input style={S.input} type="number" value={taxFMV} onChange={e => setTaxFMV(e.target.value)} placeholder={estimatedValue || 'e.g. 312000'} />
+          </div>
+        </div>
+        <button style={{ ...S.btn, ...S.btnPrimary, marginTop: 12 }} onClick={runTaxCalc}>📊 Calculate Property Tax</button>
+        {taxResult && (
+          <div style={{ marginTop: 20, background: '#0f4c81', borderRadius: 10, padding: 20, color: '#fff' }}>
+            <div style={{ fontSize: 11, opacity: 0.65, letterSpacing: '0.08em', marginBottom: 14 }}>PROPERTY TAX RESULT</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+              {[
+                { label: 'Annual Tax', value: fmtDollar(taxResult.annual), sub: `Due: ${taxResult.due}` },
+                { label: 'Monthly Tax', value: fmtDollar(taxResult.monthly), sub: 'For escrow estimate' },
+                { label: taxResult.assessed ? 'Assessed Value (40%)' : 'FMV Used', value: fmtDollar(taxResult.assessed || taxResult.fmv), sub: taxResult.totalMill ? `${taxResult.totalMill.toFixed(2)} total mills` : taxResult.note },
+              ].map(({ label, value, sub }) => (
+                <div key={label} style={{ background: 'rgba(255,255,255,0.12)', borderRadius: 8, padding: '14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 11, opacity: 0.65, marginBottom: 4 }}>{label}</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: '#f9c846' }}>{value}</div>
+                  <div style={{ fontSize: 11, opacity: 0.65, marginTop: 4 }}>{sub}</div>
+                </div>
+              ))}
+            </div>
+            {taxResult.note && <div style={{ marginTop: 12, fontSize: 12, opacity: 0.75, background: 'rgba(255,255,255,0.08)', borderRadius: 6, padding: '8px 12px' }}>ℹ️ {taxResult.note}</div>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const tabRenderers = {
+    'snapshot':      renderSnapshot,
+    'eligibility':   renderEligibility,
+    'ntb':           renderNTBTest,
+    'ufmip':         renderUFMIPCalculator,
+    'rate-options':  renderRateOptions,
+    'pricing':       renderPricing,
+    'ntb-worksheet': renderNTBWorksheet,
+    'uw-worksheet':  renderUWWorksheet,
+    'doc-checklist': renderDocChecklist,
+    'property-tax':  renderPropertyTax,
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────────────────────────────────────
+  return (
+    <div style={S.container}>
+
+      {/* ── Header ── */}
+      <div style={S.header}>
+        <div style={S.headerTop}>
+          <div>
+            <div style={{ fontSize: 11, opacity: 0.65, marginBottom: 3, letterSpacing: '0.08em' }}>MODULE 10 OF 27</div>
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: '-0.01em' }}>FHA Streamline</h1>
+            <div style={{ fontSize: 13, opacity: 0.8, marginTop: 3 }}>FHA Streamline Refinance Intelligence</div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+            <span style={S.badge}>📋 FHA STREAMLINE</span>
+            {ntbPass          && <span style={{ ...S.badge, ...S.badgeGreen }}>✅ NTB SATISFIED</span>}
+            {eligStatus === 'INELIGIBLE' && <span style={{ ...S.badge, ...S.badgeRed }}>❌ INELIGIBLE</span>}
+            {eligStatus === 'NEEDS_INFO' && <span style={{ ...S.badge, ...S.badgeAmber }}>⚠️ NEEDS REVIEW</span>}
+            {monthsElapsed > 0 && monthsElapsed < 36 && <span style={{ ...S.badge, ...S.badgeAmber }}>🔄 {(ufmipRefundPct * 100).toFixed(0)}% UFMIP REFUND</span>}
+          </div>
+        </div>
+        <div style={S.scenarioRow}>
+          <span style={{ fontSize: 12, opacity: 0.75 }}>Load Scenario:</span>
+          <select style={S.headerSelect} value={selectedScenId} onChange={e => handleScenarioSelect(e.target.value)}>
+            <option value="">— Select a scenario —</option>
+            {scenarios.map(s => (
+              <option key={s.id} value={s.id}>
+                {s.borrowerName || s.borrower_name || ((s.firstName || '') + ' ' + (s.lastName || '')).trim() || 'Unnamed'} · {s.propertyAddress?.split(',')[0] || s.streetAddress || 'No address'}
+              </option>
+            ))}
+          </select>
+          {loadingScenarios && <span style={{ fontSize: 12, opacity: 0.65 }}>Loading...</span>}
+          {borrowerName && <span style={{ fontSize: 12, opacity: 0.85 }}>📋 {borrowerName}</span>}
+          <button
+            onClick={handleSave}
+            style={{ padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: saveFlash ? '#22c55e' : 'rgba(255,255,255,0.2)', color: saveFlash ? '#fff' : 'rgba(255,255,255,0.9)', transition: 'all 0.3s', display: 'flex', alignItems: 'center', gap: 5 }}>
+            {saveFlash ? '✅ Saved!' : '💾 Save'}
+          </button>
+          {savedAt && !saveFlash && (
+            <span style={{ fontSize: 11, opacity: 0.55 }}>Last saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          )}
+        </div>
+      </div>
+
+      {/* ── Tab Bar ── */}
+      <div style={S.tabBar}>
+        {TABS.map(t => (
+          <button key={t.id} style={S.tab(activeTab === t.id)} onClick={() => { handleSave(); setActiveTab(t.id); }}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* ── Tab Content ── */}
+      {tabRenderers[activeTab]?.()}
+
+      {/* ── Decision Record Banner ── */}
+      <DecisionRecordBanner
+        recordId={drRecordId}
+        moduleName="FHA Streamline"
+        onSave={handleSave}
+      />
+
+      {/* ── Canonical Bar ── */}
+      <div style={S.canonicalBar}>
+        {canonicalExpanded && (
+          <div style={{ background: '#0a2d54', padding: '10px 16px', maxWidth: 1100, margin: '0 auto' }}>
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', textAlign: 'center', marginBottom: 8, letterSpacing: '0.1em' }}>CANONICAL SEQUENCE™ — 27 MODULES</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center' }}>
+              {MODULES.map(m => (
+                <button key={m.id} onClick={() => navigate(m.path)} title={m.label}
+                  style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', cursor: 'pointer', background: m.id === CURRENT_MODULE ? '#f9c846' : 'rgba(255,255,255,0.1)', color: m.id === CURRENT_MODULE ? '#000' : 'rgba(255,255,255,0.65)', fontWeight: m.id === CURRENT_MODULE ? 700 : 400 }}>
+                  {m.id}. {m.label.split(' ')[0]}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div style={S.canonicalMain}>
+          <button style={{ ...S.btn, background: 'rgba(255,255,255,0.1)', color: '#fff', fontSize: 12, padding: '6px 12px', opacity: prevMod ? 1 : 0.4 }} onClick={() => prevMod && navigate(prevMod.path)} disabled={!prevMod}>
+            ← {prevMod?.label || ''}
+          </button>
+          <div style={{ display: 'flex', gap: 4, flex: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
+            {MODULES.map(m => <div key={m.id} title={m.label} style={S.dot(m.id === CURRENT_MODULE)} onClick={() => navigate(m.path)}>{m.id === CURRENT_MODULE ? m.id : ''}</div>)}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button style={{ ...S.btn, background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.55)', padding: '4px 8px', fontSize: 11 }} onClick={() => setCanonicalExpanded(!canonicalExpanded)}>
+              {canonicalExpanded ? '▼' : '▲'} Map
+            </button>
+            <button style={{ ...S.btn, background: 'rgba(255,255,255,0.1)', color: '#fff', fontSize: 12, padding: '6px 12px', opacity: nextMod ? 1 : 0.4 }} onClick={() => nextMod && navigate(nextMod.path)} disabled={!nextMod}>
+              {nextMod?.label || ''} →
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
