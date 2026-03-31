@@ -83,7 +83,7 @@ const DOC_ITEMS = [
 ];
 
 const S = {
-  container: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', maxWidth: 1100, margin: '0 auto', padding: '24px 20px 110px', color: '#1a1a2e', minHeight: '100vh' },
+  container: { fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', maxWidth: 1100, margin: '0 auto', padding: '24px 20px 160px', color: '#1a1a2e', minHeight: '100vh' },
   header: { background: 'linear-gradient(135deg, #0d3b6e 0%, #154a8a 100%)', borderRadius: 12, padding: '20px 24px', marginBottom: 20, color: '#fff' },
   headerTop: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 },
   badge: { display: 'inline-block', background: 'rgba(255,255,255,0.15)', borderRadius: 6, padding: '3px 10px', fontSize: 11, fontWeight: 600, letterSpacing: '0.05em' },
@@ -148,6 +148,17 @@ export default function VAIRRRL() {
   const [cashOutType, setCashOutType]                     = useState('typeI');
   const [cashOutAmount, setCashOutAmount]                 = useState('');
   const [cashOutAppraisalValue, setCashOutAppraisalValue] = useState('');
+  const [veteranCashToClose, setVeteranCashToClose]       = useState('');
+
+  // ── Closing Cost Estimator (single source of truth)
+  const [ccMode, setCcMode]           = useState('itemized'); // 'itemized' | 'lump'
+  const [ccTitle, setCcTitle]         = useState('850');
+  const [ccTitleIns, setCcTitleIns]   = useState('650');
+  const [ccRecording, setCcRecording] = useState('125');
+  const [ccOrigination, setCcOrigination] = useState('0');
+  const [ccProcessing, setCcProcessing]   = useState('895');
+  const [ccUnderwriting, setCcUnderwriting] = useState('0');
+  const [ccOther, setCcOther]         = useState('0');
 
   // ── Net Commission Calculator
   const [commissionPct, setCommissionPct]         = useState('');
@@ -160,6 +171,17 @@ export default function VAIRRRL() {
     { id: 2, label: 'Scenario B', rate: '', bps: '', loanAmt: '' },
     { id: 3, label: 'Scenario C', rate: '', bps: '', loanAmt: '' },
   ]);
+
+  // ── Pricing & Comp Tab State (passed as props to VAIRRRLPricingCommission)
+  const [pcPricingRate, setPcPricingRate]           = useState('');
+  const [pcLenderCreditPct, setPcLenderCreditPct]   = useState('');
+  const [pcCompType, setPcCompType]                 = useState('BPC');
+  const [pcCompBps, setPcCompBps]                   = useState('150');
+  const [pcSplitMode, setPcSplitMode]               = useState('pct');
+  const [pcCompanySplitPct, setPcCompanySplitPct]   = useState('30');
+  const [pcCompanyFlatFee, setPcCompanyFlatFee]     = useState('0');
+  const [pcPurchaseLoanAmt, setPcPurchaseLoanAmt]   = useState('');
+  const [pcPurchaseCompBps, setPcPurchaseCompBps]   = useState('150');
   const [pdfFiles, setPdfFiles]                   = useState({ coe: null, mortgage: null, note: null });
   const [isDragging, setIsDragging]               = useState({ coe: false, mortgage: false, note: false });
   const [isExtracting, setIsExtracting]           = useState(false);
@@ -169,9 +191,101 @@ export default function VAIRRRL() {
   const mortgageRef = useRef(null);
   const noteRef     = useRef(null);
 
+  // ── Save / Restore State ─────────────────────────────────────────────────
+  const [savedAt, setSavedAt] = useState(null);
+  const [saveFlash, setSaveFlash] = useState(false);
+
+  const getSaveKey = () => {
+    const params = new URLSearchParams(window.location.search);
+    const sid = params.get('scenarioId') || selectedScenId || 'default';
+    return `lb_va_irrrl_${sid}`;
+  };
+
+  const getStateSnapshot = () => ({
+    veteranName, vaLoanNumber, currentRatePct, currentPI, remainingBalance, remainingTerm,
+    propertyAddress, fundingFeeExempt, newRatePct, newLoanAmount, newTerm, closingCosts,
+    priorIRRRL, priorIRRRLDate, priorIRRRLLender, rateOptions, checkedDocs,
+    cashOutType, cashOutAmount, cashOutAppraisalValue, veteranCashToClose,
+    ccMode, ccTitle, ccTitleIns, ccRecording, ccOrigination, ccProcessing, ccUnderwriting, ccOther,
+    commissionPct, commissionBps, brokerSplitPct, processingFee, originationCosts, compScenarios,
+    pcPricingRate, pcLenderCreditPct, pcCompType, pcCompBps, pcSplitMode,
+    pcCompanySplitPct, pcCompanyFlatFee, pcPurchaseLoanAmt, pcPurchaseCompBps,
+  });
+
+  const handleSave = () => {
+    try {
+      const key = getSaveKey();
+      const snapshot = { ...getStateSnapshot(), savedAt: new Date().toISOString() };
+      localStorage.setItem(key, JSON.stringify(snapshot));
+      setSavedAt(new Date());
+      setSaveFlash(true);
+      setTimeout(() => setSaveFlash(false), 2000);
+    } catch (e) { console.warn('Save failed:', e); }
+  };
+
+  const restoreFromStorage = (key) => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      if (d.veteranName       !== undefined) setVeteranName(d.veteranName);
+      if (d.vaLoanNumber      !== undefined) setVaLoanNumber(d.vaLoanNumber);
+      if (d.currentRatePct    !== undefined) setCurrentRatePct(d.currentRatePct);
+      if (d.currentPI         !== undefined) setCurrentPI(d.currentPI);
+      if (d.remainingBalance  !== undefined) setRemainingBalance(d.remainingBalance);
+      if (d.remainingTerm     !== undefined) setRemainingTerm(d.remainingTerm);
+      if (d.propertyAddress   !== undefined) setPropertyAddress(d.propertyAddress);
+      if (d.fundingFeeExempt  !== undefined) setFundingFeeExempt(d.fundingFeeExempt);
+      if (d.newRatePct        !== undefined) setNewRatePct(d.newRatePct);
+      if (d.newLoanAmount     !== undefined) setNewLoanAmount(d.newLoanAmount);
+      if (d.newTerm           !== undefined) setNewTerm(d.newTerm);
+      if (d.closingCosts      !== undefined) setClosingCosts(d.closingCosts);
+      if (d.priorIRRRL        !== undefined) setPriorIRRRL(d.priorIRRRL);
+      if (d.priorIRRRLDate    !== undefined) setPriorIRRRLDate(d.priorIRRRLDate);
+      if (d.priorIRRRLLender  !== undefined) setPriorIRRRLLender(d.priorIRRRLLender);
+      if (d.rateOptions       !== undefined) setRateOptions(d.rateOptions);
+      if (d.checkedDocs       !== undefined) setCheckedDocs(d.checkedDocs);
+      if (d.cashOutType       !== undefined) setCashOutType(d.cashOutType);
+      if (d.cashOutAmount     !== undefined) setCashOutAmount(d.cashOutAmount);
+      if (d.cashOutAppraisalValue !== undefined) setCashOutAppraisalValue(d.cashOutAppraisalValue);
+      if (d.veteranCashToClose    !== undefined) setVeteranCashToClose(d.veteranCashToClose);
+      if (d.ccMode            !== undefined) setCcMode(d.ccMode);
+      if (d.ccTitle           !== undefined) setCcTitle(d.ccTitle);
+      if (d.ccTitleIns        !== undefined) setCcTitleIns(d.ccTitleIns);
+      if (d.ccRecording       !== undefined) setCcRecording(d.ccRecording);
+      if (d.ccOrigination     !== undefined) setCcOrigination(d.ccOrigination);
+      if (d.ccProcessing      !== undefined) setCcProcessing(d.ccProcessing);
+      if (d.ccUnderwriting    !== undefined) setCcUnderwriting(d.ccUnderwriting);
+      if (d.ccOther           !== undefined) setCcOther(d.ccOther);
+      if (d.commissionPct     !== undefined) setCommissionPct(d.commissionPct);
+      if (d.commissionBps     !== undefined) setCommissionBps(d.commissionBps);
+      if (d.brokerSplitPct    !== undefined) setBrokerSplitPct(d.brokerSplitPct);
+      if (d.processingFee     !== undefined) setProcessingFee(d.processingFee);
+      if (d.originationCosts  !== undefined) setOriginationCosts(d.originationCosts);
+      if (d.compScenarios     !== undefined) setCompScenarios(d.compScenarios);
+      if (d.pcPricingRate     !== undefined) setPcPricingRate(d.pcPricingRate);
+      if (d.pcLenderCreditPct !== undefined) setPcLenderCreditPct(d.pcLenderCreditPct);
+      if (d.pcCompType        !== undefined) setPcCompType(d.pcCompType);
+      if (d.pcCompBps         !== undefined) setPcCompBps(d.pcCompBps);
+      if (d.pcSplitMode       !== undefined) setPcSplitMode(d.pcSplitMode);
+      if (d.pcCompanySplitPct !== undefined) setPcCompanySplitPct(d.pcCompanySplitPct);
+      if (d.pcCompanyFlatFee  !== undefined) setPcCompanyFlatFee(d.pcCompanyFlatFee);
+      if (d.pcPurchaseLoanAmt !== undefined) setPcPurchaseLoanAmt(d.pcPurchaseLoanAmt);
+      if (d.pcPurchaseCompBps !== undefined) setPcPurchaseCompBps(d.pcPurchaseCompBps);
+      if (d.savedAt) setSavedAt(new Date(d.savedAt));
+      return true;
+    } catch (e) { return false; }
+  };
+
   useEffect(() => {
     const load = async () => {
       setLoadingScenarios(true);
+
+      // ── Restore saved state first ──
+      const params0 = new URLSearchParams(window.location.search);
+      const sid0 = params0.get('scenarioId') || 'default';
+      restoreFromStorage(`lb_va_irrrl_${sid0}`);
+
       try {
         const params = new URLSearchParams(window.location.search);
         const sid = params.get('scenarioId');
@@ -265,6 +379,12 @@ export default function VAIRRRL() {
     } finally { setIsExtracting(false); }
   };
 
+  // ── Closing Cost Total (single source of truth)
+  const ccItemizedTotal = [ccTitle, ccTitleIns, ccRecording, ccOrigination, ccProcessing, ccUnderwriting, ccOther]
+    .reduce((sum, v) => sum + (parseFloat(v) || 0), 0)
+    + (fundingFeeExempt ? 0 : (parseFloat(newLoanAmount || remainingBalance) || 0) * 0.005);
+  const effectiveClosingCosts = ccMode === 'itemized' ? ccItemizedTotal : (parseFloat(closingCosts) || 0);
+
   const curRateDec   = parseFloat(currentRatePct) / 100 || 0;
   const newRateDec   = parseFloat(newRatePct) / 100 || 0;
   const curPIAmt     = parseFloat(currentPI) || 0;
@@ -272,7 +392,15 @@ export default function VAIRRRL() {
   const remTermMos   = parseInt(remainingTerm) || 360;
   const newLoanAmt   = parseFloat(newLoanAmount) || remBal;
   const newTermMos   = parseInt(newTerm) || 360;
-  const costsAmt     = parseFloat(closingCosts) || 0;
+  const costsAmt     = effectiveClosingCosts;
+
+  // ── Adjusted recoupment (accounts for veteran cash to close) ─────────────
+  const _vtCash      = parseFloat(veteranCashToClose) || 0;
+  const _rolledIn    = Math.max(0, costsAmt - _vtCash);
+  const _adjLoan     = remBal + _rolledIn;
+  const _adjNewPI    = newRateDec > 0 && _adjLoan > 0 ? calcPI(_adjLoan, newRateDec, parseInt(newTerm) || 360) : 0;
+  const _adjSavings  = parseFloat(currentPI) > 0 ? parseFloat(currentPI) - _adjNewPI : 0;
+  const _adjRecoup   = _adjSavings > 0 ? (_rolledIn > 0 ? _rolledIn / _adjSavings : 0) : (_rolledIn === 0 ? 0 : Infinity);
   const rateReduction  = curRateDec - newRateDec;
   const newPICalc      = calcPI(newLoanAmt, newRateDec, newTermMos);
   const paymentSavings = curPIAmt - newPICalc;
@@ -387,32 +515,225 @@ export default function VAIRRRL() {
           </div>
         </div>
       </div>
+
+      {/* ── Closing Cost Estimator — single source of truth ── */}
+      <div style={{ ...S.card, border: '2px solid #0d3b6e' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, paddingBottom: 10, borderBottom: '1px solid #f0f4f8' }}>
+          <div>
+            <div style={S.cardTitle}>💵 Closing Cost Estimator</div>
+            <div style={{ fontSize: 12, color: '#6b7a8d', marginTop: -10 }}>
+              This total flows into the Benefit Test, Pricing &amp; Comp, NTB Worksheet, and Net Commission automatically.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {['itemized', 'lump'].map(mode => (
+              <button key={mode} onClick={() => setCcMode(mode)} style={{ ...S.btn, fontSize: 12, padding: '6px 14px', background: ccMode === mode ? '#0d3b6e' : '#e9eef5', color: ccMode === mode ? '#fff' : '#1a1a2e' }}>
+                {mode === 'itemized' ? '📋 Itemized' : '🔢 Lump Sum'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {ccMode === 'itemized' ? (
+          <div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 14 }}>
+              {/* Title & Settlement */}
+              <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0d3b6e', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6 }}>TITLE &amp; SETTLEMENT</div>
+              <div>
+                <label style={S.label}>Title/Settlement Fee ($)</label>
+                <input style={S.input} type="number" value={ccTitle} onChange={e => setCcTitle(e.target.value)} placeholder="850" />
+              </div>
+              <div>
+                <label style={S.label}>Lender's Title Insurance ($)</label>
+                <input style={S.input} type="number" value={ccTitleIns} onChange={e => setCcTitleIns(e.target.value)} placeholder="650" />
+              </div>
+              <div>
+                <label style={S.label}>Recording Fees ($)</label>
+                <input style={S.input} type="number" value={ccRecording} onChange={e => setCcRecording(e.target.value)} placeholder="125" />
+              </div>
+
+              {/* Lender Fees */}
+              <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0d3b6e', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6, marginTop: 4 }}>LENDER FEES</div>
+              <div>
+                <label style={S.label}>Origination Fee ($)</label>
+                <input style={S.input} type="number" value={ccOrigination} onChange={e => setCcOrigination(e.target.value)} placeholder="0" />
+              </div>
+              <div>
+                <label style={S.label}>Processing Fee ($)</label>
+                <input style={S.input} type="number" value={ccProcessing} onChange={e => setCcProcessing(e.target.value)} placeholder="895" />
+              </div>
+              <div>
+                <label style={S.label}>Underwriting / Admin Fee ($)</label>
+                <input style={S.input} type="number" value={ccUnderwriting} onChange={e => setCcUnderwriting(e.target.value)} placeholder="0" />
+              </div>
+
+              {/* VA & Other */}
+              <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0d3b6e', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6, marginTop: 4 }}>VA &amp; OTHER</div>
+              <div>
+                <label style={S.label}>VA Funding Fee ($)</label>
+                <input style={{ ...S.inputRO, color: fundingFeeExempt ? '#166534' : '#92400e' }}
+                  value={fundingFeeExempt === true ? '$0.00 — EXEMPT' : fundingFeeExempt === false ? fmtDollar((parseFloat(newLoanAmount || remainingBalance) || 0) * 0.005) : 'Set exemption status above'}
+                  readOnly />
+                <div style={{ fontSize: 11, color: '#6b7a8d', marginTop: 3 }}>Auto-calculated from exemption status</div>
+              </div>
+              <div>
+                <label style={S.label}>Other Costs ($) <span style={{ fontWeight: 400, color: '#9aa5b4' }}>prepaid, escrow, etc.</span></label>
+                <input style={S.input} type="number" value={ccOther} onChange={e => setCcOther(e.target.value)} placeholder="0" />
+              </div>
+            </div>
+
+            {/* Itemized Total */}
+            <div style={{ background: '#0d3b6e', borderRadius: 8, padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', marginBottom: 2 }}>TOTAL CLOSING COSTS</div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>Used by all tabs automatically</div>
+              </div>
+              <div style={{ fontSize: 28, fontWeight: 800, color: '#f9c846' }}>{fmtDollar(ccItemizedTotal)}</div>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ ...S.infoBox, marginBottom: 14 }}>
+              Enter your total closing costs as a single number. Switch to Itemized mode for a line-by-line breakdown.
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'end' }}>
+              <div>
+                <label style={S.label}>Total Closing Costs ($)</label>
+                <input style={{ ...S.input, fontSize: 16, fontWeight: 700 }} type="number"
+                  value={closingCosts} onChange={e => setClosingCosts(e.target.value)} placeholder="e.g. 3500" />
+              </div>
+              <div style={{ background: '#0d3b6e', borderRadius: 8, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)' }}>TOTAL</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: '#f9c846' }}>{fmtDollar(parseFloat(closingCosts) || 0)}</div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 
   const renderBenefitTest = () => {
-    const hasData = curRateDec > 0 && newRateDec > 0;
+    const hasData  = curRateDec > 0 && newRateDec > 0;
+    const vtCash   = parseFloat(veteranCashToClose) || 0;
+    const rolledIn = Math.max(0, costsAmt - vtCash);
+    const adjLoan  = remBal + rolledIn;
+    const adjNewPI = newRateDec > 0 && adjLoan > 0 ? calcPI(adjLoan, newRateDec, newTermMos) : newPICalc;
+    const adjSavings = curPIAmt > 0 ? curPIAmt - adjNewPI : 0;
+    const adjRecoup  = adjSavings > 0 ? (rolledIn > 0 ? rolledIn / adjSavings : 0) : (rolledIn === 0 ? 0 : Infinity);
+    const adjRecoupPass = adjRecoup <= 36;
+    const ntbOk     = rateTestPass && adjSavings > 0;
+
+    // ── Quick-Apply Presets ──────────────────────────────────────────────────
+    // Preset A: Roll All In
+    const presetA_cash    = 0;
+    const presetA_loan    = remBal + costsAmt;
+    const presetA_PI      = newRateDec > 0 ? calcPI(presetA_loan, newRateDec, newTermMos) : 0;
+    const presetA_savings = curPIAmt > 0 ? curPIAmt - presetA_PI : 0;
+    const presetA_recoup  = presetA_savings > 0 ? costsAmt / presetA_savings : Infinity;
+
+    // Preset B: Min Cash for NTB Compliance (36-month recoup)
+    const presetB_maxRoll  = presetA_savings > 0 ? Math.min(presetA_savings * 36, costsAmt) : 0;
+    const presetB_cash     = Math.max(0, costsAmt - presetB_maxRoll);
+    const presetB_loan     = remBal + presetB_maxRoll;
+    const presetB_PI       = newRateDec > 0 ? calcPI(presetB_loan, newRateDec, newTermMos) : 0;
+    const presetB_savings  = curPIAmt > 0 ? curPIAmt - presetB_PI : 0;
+    const presetB_recoup   = presetB_savings > 0 && presetB_maxRoll > 0 ? presetB_maxRoll / presetB_savings : 0;
+
+    // Preset C: Pay All Costs (zero rolled in)
+    const presetC_cash     = costsAmt;
+    const presetC_loan     = remBal;
+    const presetC_PI       = newRateDec > 0 ? calcPI(presetC_loan, newRateDec, newTermMos) : 0;
+    const presetC_savings  = curPIAmt > 0 ? curPIAmt - presetC_PI : 0;
+    const presetC_recoup   = 0;
+
+    // ── Same-Payment Preset — only meaningful if different from Roll All In
+    const maxLoanSamePayment = curPIAmt > 0 && newRateDec > 0
+      ? curPIAmt / (newRateDec / 12) * (1 - Math.pow(1 + newRateDec / 12, -newTermMos))
+      : 0;
+    const samePayMaxRoll  = Math.max(0, Math.min(costsAmt, maxLoanSamePayment - remBal));
+    const samePayCash     = Math.max(0, costsAmt - samePayMaxRoll);
+    const samePayDifferent = samePayCash > 50; // only show if meaningfully different from roll-all-in
+
+    // ── Rate needed for 36-month recoup at current costs ────────────────────
+    const minSavingsNeeded = costsAmt > 0 ? costsAmt / 36 : 0;
+    const findRateForSavings = (targetSavings) => {
+      if (!curPIAmt || !remBal || !newTermMos) return null;
+      let lo = 0.001, hi = curRateDec * 100;
+      for (let i = 0; i < 50; i++) {
+        const mid = (lo + hi) / 2;
+        const pi  = calcPI(remBal + costsAmt, mid / 100, newTermMos);
+        if (curPIAmt - pi > targetSavings) lo = mid;
+        else hi = mid;
+      }
+      return Math.min((lo + hi) / 2, curRateDec * 100 - 0.5);
+    };
+    const rateForCompliance = minSavingsNeeded > 0 ? findRateForSavings(minSavingsNeeded) : null;
+
     return (
       <div>
+
+        {/* ══ SECTION 1 — New Loan Parameters ══════════════════════════════ */}
         <div style={S.card}>
           <div style={S.cardTitle}>🎯 New Loan Parameters</div>
           <div style={S.grid3}>
-            <div><label style={S.label}>New Note Rate (%)</label><input style={S.input} type="number" step="0.001" value={newRatePct} onChange={e => setNewRatePct(e.target.value)} placeholder="e.g. 6.000" /></div>
-            <div><label style={S.label}>New Loan Amount ($)</label><input style={S.input} type="number" value={newLoanAmount} onChange={e => setNewLoanAmount(e.target.value)} placeholder={remainingBalance || 'e.g. 285000'} /></div>
-            <div><label style={S.label}>New Term (months)</label><input style={S.input} type="number" value={newTerm} onChange={e => setNewTerm(e.target.value)} placeholder="360" /></div>
-            <div style={{ gridColumn: '1 / -1' }}><label style={S.label}>Estimated Closing Costs ($) — used for recoupment calculation</label><input style={S.input} type="number" value={closingCosts} onChange={e => setClosingCosts(e.target.value)} placeholder="e.g. 3500" /></div>
+            <div>
+              <label style={S.label}>New Note Rate (%)</label>
+              <input style={S.input} type="number" step="0.001" value={newRatePct}
+                onChange={e => setNewRatePct(e.target.value)} placeholder="e.g. 6.000" />
+              {curRateDec > 0 && newRateDec > 0 && (
+                <div style={{ fontSize: 11, marginTop: 4, fontWeight: 600, color: rateReduction >= 0.005 ? '#166534' : '#8b1a1a' }}>
+                  {rateReduction > 0 ? `↓ ${fmtPct(rateReduction * 100)} reduction` : '↑ Rate increased — NTB will fail'}
+                </div>
+              )}
+            </div>
+            <div>
+              <label style={S.label}>New Term (months)</label>
+              <input style={S.input} type="number" value={newTerm}
+                onChange={e => setNewTerm(e.target.value)} placeholder="360" />
+            </div>
+            <div>
+              <label style={S.label}>Total Closing Costs ($) <span style={{ fontWeight: 400, color: '#9aa5b4' }}>— from Loan Snapshot</span></label>
+              <input style={{ ...S.inputRO, color: costsAmt > 0 ? '#0d3b6e' : '#6b7a8d' }}
+                value={costsAmt > 0 ? fmtDollar(costsAmt) : 'Enter costs on Loan Snapshot tab'} readOnly />
+            </div>
           </div>
         </div>
+
+        {/* ══ SECTION 2 — Benefit Test Results ═════════════════════════════ */}
         <div style={S.card}>
           <div style={S.cardTitle}>📊 Benefit Test Results</div>
           {[
-            { label: 'Rate Reduction ≥ 0.50%', pass: rateTestPass, detail: hasData ? `${fmtPct(curRateDec * 100)} → ${fmtPct(newRateDec * 100)} = ${fmtPct(rateReduction * 100)} reduction` : 'Enter current and new rates above', rule: 'VA requires minimum 0.50% (50 bps) rate reduction for fixed-to-fixed IRRRL.' },
-            { label: 'Lower Monthly P&I Payment', pass: paymentTestPass, detail: curPIAmt > 0 && newPICalc > 0 ? `${fmtDollar(curPIAmt)} → ${fmtDollar(newPICalc)} — saves ${fmtDollar(paymentSavings)}/mo` : 'Enter current P&I on Loan Snapshot tab', rule: 'New P&I must be lower than existing P&I.' },
-            { label: 'Recoupment of Costs ≤ 36 Months', pass: recoupTestPass, detail: costsAmt > 0 && paymentSavings > 0 ? `${recoupMos === Infinity ? '∞' : recoupMos.toFixed(1)} months to recoup ${fmtDollar(costsAmt)} in closing costs` : costsAmt === 0 ? 'Enter closing costs above' : 'Payment must increase to calculate', rule: 'VA Circular 26-18-13: lenders must document cost recoupment ≤ 36 months.' },
+            {
+              label: 'Rate Reduction ≥ 0.50%',
+              pass: rateTestPass,
+              detail: hasData
+                ? `${fmtPct(curRateDec * 100)} → ${fmtPct(newRateDec * 100)} = ${fmtPct(rateReduction * 100)} reduction`
+                : 'Enter current and new rates above',
+              rule: 'VA requires minimum 0.50% (50 bps) rate reduction for fixed-to-fixed IRRRL.',
+            },
+            {
+              label: 'Lower Monthly P&I Payment',
+              pass: adjSavings > 0,
+              detail: curPIAmt > 0 && adjNewPI > 0
+                ? `${fmtDollar(curPIAmt)} → ${fmtDollar(adjNewPI)} — saves ${fmtDollar(adjSavings)}/mo`
+                : 'Enter current P&I on Loan Snapshot tab',
+              rule: 'New P&I must be lower than existing P&I.',
+            },
+            {
+              label: 'Recoupment of Costs ≤ 36 Months',
+              pass: adjRecoupPass,
+              detail: rolledIn === 0
+                ? '✅ No costs rolled into loan — recoupment is instant'
+                : adjSavings > 0
+                  ? `${adjRecoup === Infinity ? '∞' : adjRecoup.toFixed(1)} months to recoup ${fmtDollar(rolledIn)} rolled in`
+                  : 'Payment must decrease to calculate',
+              rule: 'VA Circular 26-18-13: recoupment applies only to costs rolled into the loan.',
+            },
           ].map((test, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 14, padding: '14px 0', borderBottom: i < 2 ? '1px solid #f0f4f8' : 'none' }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 700, flexShrink: 0, background: !hasData ? '#f1f5f9' : test.pass ? '#f0fdf4' : '#fdf0f0', color: !hasData ? '#6b7a8d' : test.pass ? '#166534' : '#8b1a1a' }}>
-                {!hasData ? '—' : test.pass ? '✅ PASS' : '❌ FAIL'}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 700, flexShrink: 0, background: !hasData ? '#f1f5f9' : test.pass ? '#f0fdf4' : i === 2 ? '#fffbeb' : '#fdf0f0', color: !hasData ? '#6b7a8d' : test.pass ? '#166534' : i === 2 ? '#92400e' : '#8b1a1a' }}>
+                {!hasData ? '—' : test.pass ? '✅ PASS' : i === 2 ? '⚠️ REVIEW' : '❌ FAIL'}
               </span>
               <div>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{test.label}</div>
@@ -421,18 +742,184 @@ export default function VAIRRRL() {
               </div>
             </div>
           ))}
-          {curRateDec > 0 && newRateDec > 0 && curPIAmt > 0 && (
-            <div style={{ marginTop: 18, padding: '16px 18px', borderRadius: 8, background: benefitTestPass ? '#f0fdf4' : '#fdf0f0', border: `2px solid ${benefitTestPass ? '#86efac' : '#fca5a5'}` }}>
-              <div style={{ fontWeight: 800, fontSize: 16, color: benefitTestPass ? '#166534' : '#8b1a1a' }}>{benefitTestPass ? '✅ Net Tangible Benefit — SATISFIED' : '❌ Net Tangible Benefit — NOT MET'}</div>
-              <div style={{ fontSize: 13, marginTop: 6, color: '#374151', lineHeight: 1.5 }}>
-                {benefitTestPass ? `This IRRRL reduces the veteran's rate by ${fmtPct(rateReduction * 100)} and saves ${fmtDollar(paymentSavings)}/month. The loan qualifies for VA IRRRL processing.` : `Rate reduction of ${fmtPct(rateReduction * 100)} does not meet the 0.50% minimum${!paymentTestPass ? ', and the monthly payment does not decrease' : ''}. Restructure the loan terms or select a lower rate.`}
+          {hasData && curPIAmt > 0 && (
+            <div style={{ marginTop: 16, padding: '14px 16px', borderRadius: 8, background: ntbOk ? '#f0fdf4' : '#fdf0f0', border: `2px solid ${ntbOk ? '#86efac' : '#fca5a5'}` }}>
+              <div style={{ fontWeight: 800, fontSize: 15, color: ntbOk ? '#166534' : '#8b1a1a' }}>
+                {ntbOk ? '✅ Net Tangible Benefit — SATISFIED' : '❌ Net Tangible Benefit — NOT MET'}
+              </div>
+              <div style={{ fontSize: 13, marginTop: 4, color: '#374151', lineHeight: 1.5 }}>
+                {ntbOk
+                  ? `Rate drops ${fmtPct(rateReduction * 100)} · saves ${fmtDollar(adjSavings)}/mo · ${adjRecoupPass ? `recouped in ${adjRecoup === 0 ? 'closing' : adjRecoup.toFixed(0) + ' months'}` : `recoupment ${adjRecoup.toFixed(0)} months — see structure builder below`}`
+                  : `Rate reduction of ${fmtPct(rateReduction * 100)} does not meet the 0.50% minimum. Lower the rate or restructure.`}
               </div>
             </div>
           )}
         </div>
+
+        {/* ══ SECTION 3 — Loan Structure Builder ═══════════════════════════ */}
+        {hasData && curPIAmt > 0 && costsAmt > 0 && (
+          <div style={S.card}>
+            <div style={S.cardTitle}>🏗️ Loan Structure Builder</div>
+            <div style={S.infoBox}>
+              Choose how much the veteran pays at closing. The more they bring, the less rolls into the loan — improving both payment savings and recoupment. Use the quick-apply buttons or enter a custom amount.
+            </div>
+
+            {/* Quick-Apply Presets */}
+            <div style={{ display: 'grid', gridTemplateColumns: samePayDifferent ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr', gap: 10, marginBottom: 16 }}>
+              {[
+                {
+                  label: 'Roll All In',
+                  sub: 'Veteran pays $0',
+                  cash: presetA_cash,
+                  recoup: presetA_recoup,
+                  ok: presetA_recoup <= 36,
+                },
+                ...(samePayDifferent ? [{
+                  label: 'Same Payment',
+                  sub: `Veteran pays ${fmtDollar(samePayCash)}`,
+                  cash: samePayCash,
+                  recoup: presetB_recoup,
+                  ok: true,
+                }] : []),
+                {
+                  label: 'NTB Compliant',
+                  sub: `Veteran pays ${fmtDollar(presetB_cash)}`,
+                  cash: presetB_cash,
+                  recoup: presetB_recoup,
+                  ok: true,
+                },
+                {
+                  label: 'Pay All Costs',
+                  sub: `Veteran pays ${fmtDollar(presetC_cash)}`,
+                  cash: presetC_cash,
+                  recoup: 0,
+                  ok: true,
+                },
+              ].map((preset) => {
+                const isActive = Math.abs(vtCash - preset.cash) < 1;
+                return (
+                  <button
+                    key={preset.label}
+                    onClick={() => setVeteranCashToClose(String(preset.cash.toFixed(2)))}
+                    style={{
+                      border: `2px solid ${isActive ? '#0d3b6e' : preset.ok ? '#86efac' : '#f9c846'}`,
+                      borderRadius: 8, padding: '10px 12px', cursor: 'pointer', textAlign: 'left',
+                      background: isActive ? '#0d3b6e' : preset.ok ? '#f0fdf4' : '#fffbeb',
+                      color: isActive ? '#fff' : '#1a1a2e', transition: 'all 0.15s',
+                    }}
+                  >
+                    <div style={{ fontSize: 12, fontWeight: 700 }}>{preset.label}</div>
+                    <div style={{ fontSize: 11, opacity: 0.75, marginTop: 2 }}>{preset.sub}</div>
+                    <div style={{ fontSize: 11, fontWeight: 600, marginTop: 4, color: isActive ? '#f9c846' : preset.ok ? '#166534' : '#92400e' }}>
+                      {preset.recoup === 0 ? 'Instant recoup ✅' : preset.ok ? `${preset.recoup.toFixed(0)} mo recoup ✅` : `${preset.recoup.toFixed(0)} mo ⚠️`}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Custom Cash Input */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 16 }}>
+              <div>
+                <label style={S.label}>Veteran Cash to Close ($) <span style={{ fontWeight: 400, color: '#9aa5b4' }}>— or enter custom</span></label>
+                <input style={S.input} type="number" value={veteranCashToClose}
+                  onChange={e => setVeteranCashToClose(e.target.value)} placeholder="0" />
+              </div>
+              <div>
+                <label style={S.label}>Costs Rolled into Loan ($)</label>
+                <input style={{ ...S.inputRO, color: rolledIn > 0 ? '#92400e' : '#166534' }}
+                  value={fmtDollar(rolledIn)} readOnly />
+              </div>
+              <div>
+                <label style={S.label}>New Loan Amount ($)</label>
+                <input style={S.inputRO} value={fmtDollar(adjLoan)} readOnly />
+              </div>
+            </div>
+
+            {/* Live Results Row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
+              {[
+                { label: 'New P&I', value: adjNewPI > 0 ? fmtDollar(adjNewPI) : '—', color: '#0d3b6e', bg: '#eef4fb' },
+                { label: 'Monthly Savings', value: adjSavings > 0 ? fmtDollar(adjSavings) : '—', color: adjSavings > 0 ? '#166534' : '#6b7a8d', bg: '#f0fdf4' },
+                { label: 'Recoupment', value: adjRecoup === 0 ? 'Instant' : adjRecoup === Infinity ? '∞' : `${adjRecoup.toFixed(1)} mo`, color: adjRecoupPass ? '#166534' : '#92400e', bg: adjRecoupPass ? '#f0fdf4' : '#fffbeb' },
+                { label: 'NTB Status', value: ntbOk ? '✅ PASS' : '❌ FAIL', color: ntbOk ? '#166534' : '#8b1a1a', bg: ntbOk ? '#f0fdf4' : '#fdf0f0' },
+              ].map(({ label, value, color, bg }) => (
+                <div key={label} style={{ background: bg, borderRadius: 8, padding: '12px 14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 11, color: '#6b7a8d', fontWeight: 600, marginBottom: 4 }}>{label}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color }}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Recoupment Bar */}
+            {rolledIn > 0 && adjSavings > 0 && (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7a8d', marginBottom: 6 }}>
+                  <span>Recoupment Period</span>
+                  <span style={{ fontWeight: 700, color: adjRecoupPass ? '#166534' : '#92400e' }}>
+                    {adjRecoup.toFixed(1)} months {adjRecoupPass ? '✅' : `— ${(adjRecoup - 36).toFixed(1)} over limit`}
+                  </span>
+                </div>
+                <div style={{ height: 12, background: '#e0e7ef', borderRadius: 6, overflow: 'hidden', position: 'relative' }}>
+                  <div style={{ height: '100%', width: `${Math.min((adjRecoup / 48) * 100, 100)}%`, background: adjRecoupPass ? '#22c55e' : '#ef4444', borderRadius: 6, transition: 'width 0.3s' }} />
+                  <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${(36 / 48) * 100}%`, width: 2, background: '#0d3b6e' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#9aa5b4', marginTop: 4 }}>
+                  <span>0 mo</span>
+                  <span style={{ color: '#0d3b6e', fontWeight: 700 }}>36 mo VA limit</span>
+                  <span>48 mo</span>
+                </div>
+              </div>
+            )}
+
+            {/* Rate Fix Tip — only when recoup fails and all costs rolled in */}
+            {!adjRecoupPass && rolledIn > 0 && rateForCompliance && rateForCompliance > 0 && (
+              <div style={{ marginTop: 14, padding: '12px 14px', background: '#eef4fb', borderRadius: 8, border: '1px solid #b8d0e8', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                <div style={{ fontSize: 13, color: '#1a4a7e' }}>
+                  💡 To pass recoupment without veteran cash, you need a rate of <strong>≤ {rateForCompliance.toFixed(3)}%</strong> — a {fmtPct(curRateDec * 100 - rateForCompliance)}% reduction from today's rate.
+                </div>
+                <button style={{ ...S.btn, ...S.btnPrimary, fontSize: 12, padding: '7px 14px', whiteSpace: 'nowrap' }}
+                  onClick={() => setNewRatePct(rateForCompliance.toFixed(3))}>
+                  Apply {rateForCompliance.toFixed(3)}%
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ══ SECTION 4 — Veteran Summary Card ════════════════════════════ */}
+        {hasData && curPIAmt > 0 && adjNewPI > 0 && (
+          <div style={{ background: 'linear-gradient(135deg, #0d3b6e 0%, #154a8a 100%)', borderRadius: 10, padding: '20px 24px', color: '#fff' }}>
+            <div style={{ fontSize: 10, opacity: 0.6, letterSpacing: '0.1em', marginBottom: 4 }}>FOR THE VETERAN — PLAIN ENGLISH</div>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>
+              Here's what this refinance means for you{veteranName ? `, ${veteranName.split(',')[0]}` : ''}:
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+              {[
+                { label: 'Current payment', value: fmtDollar(curPIAmt), sub: 'P&I per month today' },
+                { label: 'New payment', value: fmtDollar(adjNewPI), sub: adjSavings > 0 ? `saves ${fmtDollar(adjSavings)}/mo` : 'same as current' },
+                { label: 'Cash at closing', value: vtCash > 0 ? fmtDollar(vtCash) : '$0.00', sub: vtCash > 0 ? 'one-time payment' : 'nothing out of pocket' },
+                { label: 'Break-even', value: adjRecoup === 0 ? 'Immediate' : adjRecoup === Infinity ? 'N/A' : `${adjRecoup.toFixed(0)} months`, sub: adjRecoup > 0 && adjRecoup !== Infinity ? `~${(adjRecoup / 12).toFixed(1)} years` : '' },
+              ].map(({ label, value, sub }) => (
+                <div key={label} style={{ background: 'rgba(255,255,255,0.12)', borderRadius: 8, padding: '12px 14px' }}>
+                  <div style={{ fontSize: 11, opacity: 0.65, marginBottom: 3 }}>{label}</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: '#f9c846' }}>{value}</div>
+                  <div style={{ fontSize: 11, opacity: 0.65, marginTop: 3 }}>{sub}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 8, padding: '12px 16px', fontSize: 13, lineHeight: 1.7, color: 'rgba(255,255,255,0.9)' }}>
+              {adjSavings > 0
+                ? `Your rate drops from ${fmtPct(curRateDec * 100)} to ${fmtPct(newRateDec * 100)} — saving you ${fmtDollar(adjSavings)} every month.${vtCash > 0 ? ` You bring ${fmtDollar(vtCash)} to closing.` : ' You bring nothing to closing.'}${adjRecoup > 0 && adjRecoup !== Infinity ? ` Your break-even point is ${adjRecoup.toFixed(0)} months — after that, every month is pure savings.` : adjRecoup === 0 ? ' Since you are paying your closing costs out of pocket, you start saving immediately.' : ''}`
+                : `Your rate drops from ${fmtPct(curRateDec * 100)} to ${fmtPct(newRateDec * 100)}. Adjust the structure above to find the right balance for your situation.`
+              }
+            </div>
+          </div>
+        )}
       </div>
     );
   };
+
 
   const renderIRRRLFlag = () => (
     <div>
@@ -556,7 +1043,15 @@ export default function VAIRRRL() {
         <div style={{ marginTop: 20 }}>
           {[
             { title: 'EXISTING LOAN', rows: [['Current Note Rate', curRateDec ? fmtPct(curRateDec * 100) : '________%'], ['Current P&I Payment', curPIAmt ? fmtDollar(curPIAmt) : '$__________'], ['Remaining Balance', remBal ? fmtDollar(remBal) : '$__________'], ['Remaining Term', remTermMos ? `${remTermMos} months` : '________ months']] },
-            { title: 'PROPOSED VA IRRRL', rows: [['New Note Rate', newRateDec ? fmtPct(newRateDec * 100) : '________%'], ['New Loan Amount', newLoanAmt ? fmtDollar(newLoanAmt) : '$__________'], ['New P&I Payment', newPICalc ? fmtDollar(newPICalc) : '$__________'], ['New Term', newTermMos ? `${newTermMos} months` : '________ months'], ['Estimated Closing Costs', costsAmt ? fmtDollar(costsAmt) : '$__________'], ['VA Funding Fee', fundingFeeExempt !== null ? (fundingFeeExempt ? '$0.00 (Service-Connected Exempt)' : fmtDollar(fundingFeeAmt)) : '$__________']] },
+            { title: 'PROPOSED VA IRRRL', rows: [
+              ['New Note Rate',           newRateDec ? fmtPct(newRateDec * 100) : '________%'],
+              ['New Loan Amount',         _adjLoan > 0 ? fmtDollar(_adjLoan) : '$__________'],
+              ['New P&I Payment',         _adjNewPI > 0 ? fmtDollar(_adjNewPI) : '$__________'],
+              ['New Term',                newTermMos ? `${newTermMos} months` : '________ months'],
+              ['Veteran Cash to Close',   _vtCash > 0 ? fmtDollar(_vtCash) : '$0.00 (all costs rolled in)'],
+              ['Costs Rolled into Loan',  fmtDollar(_rolledIn)],
+              ['VA Funding Fee',          fundingFeeExempt !== null ? (fundingFeeExempt ? '$0.00 (Service-Connected Exempt)' : fmtDollar(fundingFeeAmt)) : '$__________'],
+            ]},
           ].map(section => (
             <div key={section.title} style={{ marginBottom: 16 }}>
               <div style={{ background: '#0d3b6e', color: '#fff', fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 4, marginBottom: 6, letterSpacing: '0.08em' }}>{section.title}</div>
@@ -570,7 +1065,7 @@ export default function VAIRRRL() {
           ))}
         </div>
         <div style={{ background: '#0d3b6e', color: '#fff', fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 4, marginBottom: 6, letterSpacing: '0.08em' }}>NET TANGIBLE BENEFIT DETERMINATION</div>
-        {[['Rate Reduction', fmtPct(rateReduction * 100), rateTestPass ? 'PASS ✅' : 'FAIL ❌'], ['Monthly Payment Savings', paymentSavings ? fmtDollar(paymentSavings) : '—', paymentTestPass ? 'PASS ✅' : 'FAIL ❌'], ['Recoupment Period', recoupMos === Infinity ? 'N/A' : `${recoupMos.toFixed(1)} months`, recoupTestPass ? 'PASS ✅' : 'REVIEW ⚠️'], ['Net Tangible Benefit', '', benefitTestPass ? 'SATISFIED ✅' : 'NOT MET ❌']].map(([k, v, r]) => (
+        {[['Rate Reduction', fmtPct(rateReduction * 100), rateTestPass ? 'PASS ✅' : 'FAIL ❌'], ['Monthly Payment Savings', _adjSavings ? fmtDollar(_adjSavings) : '—', _adjSavings > 0 ? 'PASS ✅' : 'FAIL ❌'], ['Recoupment Period', _adjRecoup === Infinity ? 'N/A' : `${_adjRecoup.toFixed(1)} months`, _adjRecoup <= 36 ? 'PASS ✅' : 'REVIEW ⚠️'], ['Net Tangible Benefit', '', (rateTestPass && _adjSavings > 0) ? 'SATISFIED ✅' : 'NOT MET ❌']].map(([k, v, r]) => (
           <div key={k} style={{ display: 'flex', borderBottom: '1px solid #e0e7ef', padding: '7px 4px', alignItems: 'center' }}>
             <span style={{ width: 220, fontSize: 12, fontWeight: 600, color: '#5a6a7e', flexShrink: 0 }}>{k}:</span>
             <span style={{ flex: 1, fontSize: 13 }}>{v}</span>
@@ -639,7 +1134,7 @@ export default function VAIRRRL() {
         </div>
         <div style={{ fontWeight: 700, fontSize: 13, color: '#0d3b6e', marginBottom: 8, letterSpacing: '0.05em' }}>LOAN SUMMARY</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 20 }}>
-          {[['Veteran', veteranName || '—'], ['VA Loan #', vaLoanNumber || '—'], ['Property', propertyAddress?.split(',')[0] || '—'], ['Current Rate', curRateDec ? fmtPct(curRateDec * 100) : '—'], ['New Rate', newRateDec ? fmtPct(newRateDec * 100) : '—'], ['Rate Reduction', rateReduction ? fmtPct(rateReduction * 100) : '—'], ['Current P&I', fmtDollar(curPIAmt)], ['New P&I', fmtDollar(newPICalc)], ['Monthly Savings', fmtDollar(paymentSavings)], ['Funding Fee', fundingFeeExempt !== null ? (fundingFeeExempt ? 'EXEMPT 🎖️' : fmtDollar(fundingFeeAmt)) : '—'], ['New Loan Amt', fmtDollar(newLoanAmt)], ['NTB Status', benefitTestPass ? 'SATISFIED ✅' : curRateDec > 0 ? 'NOT MET ❌' : 'Pending']].map(([label, val]) => (
+          {[['Veteran', veteranName || '—'], ['VA Loan #', vaLoanNumber || '—'], ['Property', propertyAddress?.split(',')[0] || '—'], ['Current Rate', curRateDec ? fmtPct(curRateDec * 100) : '—'], ['New Rate', newRateDec ? fmtPct(newRateDec * 100) : '—'], ['Rate Reduction', rateReduction ? fmtPct(rateReduction * 100) : '—'], ['Current P&I', fmtDollar(curPIAmt)], ['New P&I', fmtDollar(_adjNewPI || newPICalc)], ['Monthly Savings', fmtDollar(_adjSavings)], ['Funding Fee', fundingFeeExempt !== null ? (fundingFeeExempt ? 'EXEMPT 🎖️' : fmtDollar(fundingFeeAmt)) : '—'], ['New Loan Amt', fmtDollar(_adjLoan || newLoanAmt)], ['NTB Status', benefitTestPass ? 'SATISFIED ✅' : curRateDec > 0 ? 'NOT MET ❌' : 'Pending']].map(([label, val]) => (
             <div key={label} style={{ background: '#f8fafc', borderRadius: 6, padding: '10px 12px', border: '1px solid #e0e7ef' }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7a8d', letterSpacing: '0.04em', marginBottom: 3 }}>{label}</div>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{val}</div>
@@ -846,7 +1341,7 @@ export default function VAIRRRL() {
           </div>
           <div>
             <div style={{ fontSize: 10, opacity: 0.65, letterSpacing: '0.08em', marginBottom: 2 }}>MONTHLY SAVINGS</div>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>{paymentSavings > 0 ? fmtDollar(paymentSavings) : '—'}</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{_adjSavings > 0 ? fmtDollar(_adjSavings) : '—'}</div>
             <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>Veteran's P&I reduction</div>
           </div>
         </div>
@@ -1087,6 +1582,26 @@ export default function VAIRRRL() {
         newRate={newRatePct} newPI={newPICalc}
         fundingFeeStatus={fundingFeeExempt === true ? 'exempt' : fundingFeeExempt === false ? 'not_exempt' : 'unknown'}
         veteranName={veteranName} propertyAddress={propertyAddress} remainingTerm={remTermMos}
+        initTitleSettlement={ccTitle}
+        initTitleInsurance={ccTitleIns}
+        initRecordingFees={ccRecording}
+        initOrigFee={ccOrigination}
+        initProcFee={ccProcessing}
+        initAdminFee={ccUnderwriting}
+        initOtherCosts={ccOther}
+        snapshotTotal={ccItemizedTotal}
+        ntbRecoupMos={_adjRecoup}
+        ntbPaymentSavings={_adjSavings}
+        ntbCostsAmt={_rolledIn}
+        pricingRate={pcPricingRate}          onPricingRateChange={setPcPricingRate}
+        lenderCreditPct={pcLenderCreditPct}  onLenderCreditPctChange={setPcLenderCreditPct}
+        compType={pcCompType}                onCompTypeChange={setPcCompType}
+        compBps={pcCompBps}                  onCompBpsChange={setPcCompBps}
+        splitMode={pcSplitMode}              onSplitModeChange={setPcSplitMode}
+        companySplitPct={pcCompanySplitPct}  onCompanySplitPctChange={setPcCompanySplitPct}
+        companyFlatFee={pcCompanyFlatFee}    onCompanyFlatFeeChange={setPcCompanyFlatFee}
+        purchaseLoanAmt={pcPurchaseLoanAmt}  onPurchaseLoanAmtChange={setPcPurchaseLoanAmt}
+        purchaseCompBps={pcPurchaseCompBps}  onPurchaseCompBpsChange={setPcPurchaseCompBps}
       />
     ),
   };
@@ -1119,11 +1634,27 @@ export default function VAIRRRL() {
           </select>
           {loadingScenarios && <span style={{ fontSize: 12, opacity: 0.65 }}>Loading...</span>}
           {veteranName && <span style={{ fontSize: 12, opacity: 0.85 }}>🎖️ {veteranName}</span>}
+          <button
+            onClick={handleSave}
+            style={{
+              padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+              background: saveFlash ? '#22c55e' : 'rgba(255,255,255,0.2)',
+              color: saveFlash ? '#fff' : 'rgba(255,255,255,0.9)',
+              transition: 'all 0.3s', display: 'flex', alignItems: 'center', gap: 5,
+            }}
+          >
+            {saveFlash ? '✅ Saved!' : '💾 Save'}
+          </button>
+          {savedAt && !saveFlash && (
+            <span style={{ fontSize: 11, opacity: 0.55 }}>
+              Last saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
         </div>
       </div>
 
       <div style={S.tabBar}>
-        {TABS.map(t => <button key={t.id} style={S.tab(activeTab === t.id)} onClick={() => setActiveTab(t.id)}>{t.label}</button>)}
+        {TABS.map(t => <button key={t.id} style={S.tab(activeTab === t.id)} onClick={() => { handleSave(); setActiveTab(t.id); }}>{t.label}</button>)}
       </div>
 
       {tabRenderers[activeTab]?.()}
