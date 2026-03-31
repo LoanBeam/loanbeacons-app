@@ -1,6 +1,6 @@
-// VAIRRRL.jsx v3.3 — VA Interest Rate Reduction Refinance Loan (IRRRL)
-// LoanBeacons™ Module 11 of 27 | Gen2 Cloud Function pattern | 9-tab layout
-// Updated: March 2026 — v3.3: Three-zone multi-doc upload (COE, Mortgage Statement, VA Note)
+// VAIRRRL.jsx v3.4 — VA Interest Rate Reduction Refinance Loan (IRRRL)
+// LoanBeacons™ Module 11 of 27 | Gen2 Cloud Function pattern | 10-tab layout
+// Updated: March 2026 — v3.4: Net Commission Calculator tab added
 
 import React, { useState, useEffect, useRef } from 'react';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -65,7 +65,8 @@ const TABS = [
   { id: 'ntb-worksheet', label: 'NTB Worksheet' },
   { id: 'uw-worksheet',  label: 'UW Worksheet' },
   { id: 'doc-checklist', label: 'Doc Checklist' },
-  { id: 'cash-out',      label: 'Cash-Out' },
+  { id: 'cash-out',          label: 'Cash-Out' },
+  { id: 'net-commission',    label: 'Net Commission' },
 ];
 
 const DOC_ITEMS = [
@@ -148,7 +149,17 @@ export default function VAIRRRL() {
   const [cashOutAmount, setCashOutAmount]                 = useState('');
   const [cashOutAppraisalValue, setCashOutAppraisalValue] = useState('');
 
-  // ── PDF Extraction — THREE ZONE STATE
+  // ── Net Commission Calculator
+  const [commissionPct, setCommissionPct]         = useState('');
+  const [commissionBps, setCommissionBps]         = useState('');
+  const [brokerSplitPct, setBrokerSplitPct]       = useState('');
+  const [processingFee, setProcessingFee]         = useState('');
+  const [originationCosts, setOriginationCosts]   = useState('');
+  const [compScenarios, setCompScenarios]         = useState([
+    { id: 1, label: 'Scenario A', rate: '', bps: '', loanAmt: '' },
+    { id: 2, label: 'Scenario B', rate: '', bps: '', loanAmt: '' },
+    { id: 3, label: 'Scenario C', rate: '', bps: '', loanAmt: '' },
+  ]);
   const [pdfFiles, setPdfFiles]                   = useState({ coe: null, mortgage: null, note: null });
   const [isDragging, setIsDragging]               = useState({ coe: false, mortgage: false, note: false });
   const [isExtracting, setIsExtracting]           = useState(false);
@@ -743,6 +754,322 @@ export default function VAIRRRL() {
     );
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderNetCommission = () => {
+    const baseLoan    = newLoanAmt || remBal || 0;
+    const currentRate = curRateDec ? (curRateDec * 100).toFixed(3) : null;
+    const proposedRate = newRateDec ? (newRateDec * 100).toFixed(3) : null;
+    const ntbPass     = benefitTestPass;
+
+    // Sync % ↔ bps
+    const handlePctChange = (val) => {
+      setCommissionPct(val);
+      if (val !== '' && !isNaN(val)) setCommissionBps(String((parseFloat(val) * 100).toFixed(1)));
+      else setCommissionBps('');
+    };
+    const handleBpsChange = (val) => {
+      setCommissionBps(val);
+      if (val !== '' && !isNaN(val)) setCommissionPct(String((parseFloat(val) / 100).toFixed(3)));
+      else setCommissionPct('');
+    };
+
+    const pct            = parseFloat(commissionPct) / 100 || 0;
+    const grossComm      = baseLoan * pct;
+    const brokerCut      = grossComm * (parseFloat(brokerSplitPct) / 100 || 0);
+    const loGross        = grossComm - brokerCut; // what LO gets before flat fees
+    const procFee        = parseFloat(processingFee) || 0;
+    const origCosts      = parseFloat(originationCosts) || 0;
+    const totalDeduct    = brokerCut + procFee + origCosts;
+    const netComm        = grossComm - totalDeduct;
+    const effectiveYield = baseLoan > 0 ? (netComm / baseLoan) * 100 : 0;
+    const hasData        = baseLoan > 0 && pct > 0;
+
+    // Recoupment impact — if comp rolled into loan
+    const recoupImpact = paymentSavings > 0 ? grossComm / paymentSavings : null;
+    const recoupWithComp = recoupMos === Infinity ? null : recoupMos;
+    const recoupTotal = recoupWithComp !== null && recoupImpact !== null ? recoupWithComp + recoupImpact : null;
+    const recoupOk = recoupTotal !== null ? recoupTotal <= 36 : null;
+
+    const updateScenario = (id, field, val) =>
+      setCompScenarios(prev => prev.map(s => s.id === id ? { ...s, [field]: val } : s));
+
+    const scenarioCalc = (s) => {
+      const loan    = parseFloat(s.loanAmt) || baseLoan;
+      const bpsVal  = parseFloat(s.bps) || 0;
+      const ratePct = parseFloat(s.rate) || 0;
+      const gross   = loan * (bpsVal / 10000);
+      const broker  = gross * (parseFloat(brokerSplitPct) / 100 || 0);
+      const net     = gross - broker - procFee - origCosts;
+      const yld     = loan > 0 ? (net / loan) * 100 : 0;
+      // NTB check per scenario
+      const scenRateReduction = currentRate ? (parseFloat(currentRate) - ratePct) / 100 : null;
+      const scenNewPI = ratePct > 0 && loan > 0 ? calcPI(loan, ratePct / 100, newTermMos) : null;
+      const scenSavings = curPIAmt > 0 && scenNewPI ? curPIAmt - scenNewPI : null;
+      const scenNTB = scenRateReduction !== null && scenSavings !== null
+        ? scenRateReduction >= 0.005 && scenSavings > 0
+        : null;
+      return { loan, gross, net, yld, ratePct, scenNTB, scenNewPI, scenSavings };
+    };
+
+    return (
+      <div>
+
+        {/* ── Loan Context Banner ── */}
+        <div style={{
+          background: 'linear-gradient(135deg, #0d3b6e 0%, #154a8a 100%)',
+          borderRadius: 10, padding: '16px 20px', marginBottom: 16, color: '#fff',
+          display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'center',
+        }}>
+          <div>
+            <div style={{ fontSize: 10, opacity: 0.65, letterSpacing: '0.08em', marginBottom: 2 }}>LOAN AMOUNT</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{baseLoan ? fmtDollar(baseLoan) : '—'}</div>
+            <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>Pull from Loan Snapshot / Benefit Test</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, opacity: 0.65, letterSpacing: '0.08em', marginBottom: 2 }}>CURRENT RATE</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{currentRate ? `${currentRate}%` : '—'}</div>
+            <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>Veteran's existing rate</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, opacity: 0.65, letterSpacing: '0.08em', marginBottom: 2 }}>PROPOSED RATE</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{proposedRate ? `${proposedRate}%` : '—'}</div>
+            <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>From Benefit Test tab</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, opacity: 0.65, letterSpacing: '0.08em', marginBottom: 2 }}>NTB STATUS</div>
+            <div style={{ fontSize: 16, fontWeight: 800 }}>
+              {curRateDec > 0 && newRateDec > 0
+                ? ntbPass ? '✅ SATISFIED' : '❌ NOT MET'
+                : '⏳ Pending'}
+            </div>
+            <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>Net Tangible Benefit test</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, opacity: 0.65, letterSpacing: '0.08em', marginBottom: 2 }}>MONTHLY SAVINGS</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{paymentSavings > 0 ? fmtDollar(paymentSavings) : '—'}</div>
+            <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>Veteran's P&I reduction</div>
+          </div>
+        </div>
+
+        {/* ── Compensation Structure ── */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>💰 Lender-Paid Compensation (YSP)</div>
+          <div style={S.infoBox}>
+            <strong>How this works:</strong> Your compensation is paid by the lender as Yield Spread Premium (YSP) — the higher the rate you lock for the veteran, the more bps the lender pays you. Enter your comp as either % or basis points (bps) — both fields sync automatically. 1% = 100 bps.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: 14 }}>
+            <div>
+              <label style={S.label}>New Loan Amount ($) <span style={{ fontWeight: 400, color: '#9aa5b4' }}>— auto-pulled from Benefit Test</span></label>
+              <input style={{ ...S.inputRO, fontSize: 16, fontWeight: 800, color: '#0d3b6e' }}
+                value={baseLoan ? `$${baseLoan.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'Enter loan amount on Benefit Test tab'} readOnly />
+            </div>
+            <div>
+              <label style={S.label}>My Comp Rate (%) <span style={{ fontWeight: 400, color: '#9aa5b4' }}>— type either field</span></label>
+              <input style={{ ...S.input, fontSize: 15, fontWeight: 700 }} type="number" step="0.001" min="0" max="5"
+                value={commissionPct} onChange={e => handlePctChange(e.target.value)} placeholder="e.g. 1.500" />
+              <div style={{ fontSize: 11, color: '#6b7a8d', marginTop: 4 }}>Percentage of loan amount I earn</div>
+            </div>
+            <div>
+              <label style={S.label}>My Comp (Basis Points)</label>
+              <input style={{ ...S.input, fontSize: 15, fontWeight: 700 }} type="number" step="1" min="0" max="500"
+                value={commissionBps} onChange={e => handleBpsChange(e.target.value)} placeholder="e.g. 150" />
+              <div style={{ fontSize: 11, color: '#6b7a8d', marginTop: 4 }}>100 bps = 1% of loan amount</div>
+            </div>
+          </div>
+          {commissionBps && (
+            <div style={{ marginTop: 12, padding: '10px 14px', background: '#eef4fb', borderRadius: 8, fontSize: 13, color: '#1a4a7e' }}>
+              💡 At <strong>{commissionBps} bps</strong> on a <strong>{fmtDollar(baseLoan)}</strong> loan, your gross compensation is <strong>{fmtDollar(grossComm)}</strong> — before your broker's portion and flat fees.
+            </div>
+          )}
+        </div>
+
+        {/* ── Deductions ── */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>📉 Cost Deductions</div>
+          <div style={S.grid3}>
+            <div>
+              <label style={S.label}>Company Portion (% of gross) <span style={{ fontWeight: 400, color: '#9aa5b4' }}>— what your broker keeps</span></label>
+              <input style={S.input} type="number" step="0.1" min="0" max="100"
+                value={brokerSplitPct} onChange={e => setBrokerSplitPct(e.target.value)} placeholder="e.g. 30" />
+              <div style={{ fontSize: 11, marginTop: 4, color: brokerCut > 0 ? '#8b1a1a' : '#6b7a8d', fontWeight: brokerCut > 0 ? 600 : 400 }}>
+                {brokerCut > 0 ? `= ${fmtDollar(brokerCut)} goes to company · You keep ${fmtDollar(loGross)} before flat fees` : 'e.g. enter 30 if broker takes 30% of your gross comp'}
+              </div>
+            </div>
+            <div>
+              <label style={S.label}>Processing Fee ($) <span style={{ fontWeight: 400, color: '#9aa5b4' }}>— flat deduction</span></label>
+              <input style={S.input} type="number" min="0"
+                value={processingFee} onChange={e => setProcessingFee(e.target.value)} placeholder="e.g. 595" />
+              <div style={{ fontSize: 11, color: '#6b7a8d', marginTop: 4 }}>Charged per file by processor</div>
+            </div>
+            <div>
+              <label style={S.label}>Origination Costs ($) <span style={{ fontWeight: 400, color: '#9aa5b4' }}>— flat deduction</span></label>
+              <input style={S.input} type="number" min="0"
+                value={originationCosts} onChange={e => setOriginationCosts(e.target.value)} placeholder="e.g. 250" />
+              <div style={{ fontSize: 11, color: '#6b7a8d', marginTop: 4 }}>E&O, compliance, other origination costs</div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Commission Summary ── */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>📊 My Commission Summary</div>
+          {!hasData ? (
+            <div style={S.infoBox}>Enter your compensation rate above to see your full commission breakdown.</div>
+          ) : (
+            <div>
+              {/* 4 Summary Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+                {[
+                  { label: 'Gross Commission', sub: `${commissionPct}% of ${fmtDollar(baseLoan)}`, value: fmtDollar(grossComm), color: '#0d3b6e', bg: '#eef4fb' },
+                  { label: 'Company Portion', sub: `${brokerSplitPct || 0}% — goes to broker`, value: fmtDollar(brokerCut), color: '#8b1a1a', bg: '#fdf0f0' },
+                  { label: 'My Net Commission', sub: 'After all deductions', value: fmtDollar(netComm), color: netComm > 0 ? '#166534' : '#8b1a1a', bg: netComm > 0 ? '#f0fdf4' : '#fdf0f0' },
+                  { label: 'Effective Yield', sub: 'Net as % of loan', value: `${effectiveYield.toFixed(3)}%`, color: '#92400e', bg: '#fffbeb' },
+                ].map(({ label, sub, value, color, bg }) => (
+                  <div key={label} style={{ background: bg, borderRadius: 8, padding: '14px 16px', border: `1px solid ${color}22` }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7a8d', letterSpacing: '0.04em', marginBottom: 2 }}>{label.toUpperCase()}</div>
+                    <div style={{ fontSize: 11, color: '#9aa5b4', marginBottom: 6 }}>{sub}</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Waterfall */}
+              <div style={{ background: '#f8fafc', borderRadius: 8, padding: '14px 16px', border: '1px solid #e0e7ef', marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: '#0d3b6e' }}>Commission Waterfall</div>
+                {[
+                  { label: 'Gross Commission (YSP)',      detail: `${commissionBps} bps × ${fmtDollar(baseLoan)}`,            amt: grossComm,  deduct: false },
+                  { label: 'Company Portion',             detail: `${brokerSplitPct || 0}% of gross — what broker keeps`,     amt: brokerCut,  deduct: true  },
+                  { label: 'Processing Fee',              detail: 'Flat fee per file',                                         amt: procFee,    deduct: true  },
+                  { label: 'Origination Costs',           detail: 'E&O, compliance, other',                                   amt: origCosts,  deduct: true  },
+                ].map(({ label, detail, amt, deduct }) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #e0e7ef' }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{label}</div>
+                      <div style={{ fontSize: 11, color: '#6b7a8d' }}>{detail}</div>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: deduct ? '#8b1a1a' : '#0d3b6e' }}>
+                      {deduct ? '−' : '+'}{fmtDollar(amt)}
+                    </div>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0 0', marginTop: 4 }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: '#0d3b6e' }}>My Net Commission</div>
+                    <div style={{ fontSize: 11, color: '#6b7a8d' }}>What I take home on this loan</div>
+                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: netComm > 0 ? '#166534' : '#8b1a1a' }}>{fmtDollar(netComm)}</div>
+                </div>
+              </div>
+
+              {/* Recoupment Impact Warning */}
+              {paymentSavings > 0 && grossComm > 0 && (
+                <div style={{
+                  padding: '14px 16px', borderRadius: 8, marginBottom: 0,
+                  background: recoupOk === false ? '#fdf0f0' : recoupOk === true ? '#f0fdf4' : '#fffbeb',
+                  border: `1px solid ${recoupOk === false ? '#fca5a5' : recoupOk === true ? '#86efac' : '#f9c846'}`,
+                }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+                    {recoupOk === false ? '⚠️ Recoupment Impact — Check NTB' : recoupOk === true ? '✅ Recoupment OK with Comp Rolled In' : '📐 Recoupment Impact'}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.6 }}>
+                    If your compensation is rolled into the loan, it adds approximately <strong>{recoupImpact !== null ? `${recoupImpact.toFixed(1)} months`  : '—'}</strong> to the veteran's recoupment period.
+                    Combined with closing costs, total recoupment would be approximately <strong>{recoupTotal !== null ? `${recoupTotal.toFixed(1)} months` : '—'}</strong>.
+                    {recoupOk === false && ' This exceeds the 36-month VA limit — consider a lower comp rate or ensure costs are minimal.'}
+                    {recoupOk === true  && ' Still within the 36-month VA recoupment requirement.'}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Scenario Comparison ── */}
+        <div style={S.card}>
+          <div style={S.cardTitle}>🔄 Rate vs. Comp Scenario Comparison</div>
+          <div style={S.infoBox}>
+            <strong>The core IRRRL tradeoff:</strong> A higher rate means more bps from the lender — but it risks failing the veteran's NTB test. Use this table to find the pricing that maximizes your net commission while keeping the veteran's NTB satisfied. Flat deductions above apply to all scenarios.
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: '#f1f5f9' }}>
+                  {['', 'Label', 'Veteran Rate (%)', 'My Comp (bps)', 'Loan Amt ($)', 'Veteran New P&I', 'Veteran Savings', 'NTB', 'My Gross', 'My Net', 'Eff. Yield'].map(h => (
+                    <th key={h} style={{ padding: '9px 8px', textAlign: 'left', fontWeight: 600, color: '#6b7a8d', whiteSpace: 'nowrap', fontSize: 11 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {compScenarios.map((s) => {
+                  const calc   = scenarioCalc(s);
+                  const filledScenarios = compScenarios.filter(x => parseFloat(x.bps) > 0);
+                  const isBest = filledScenarios.length > 1 && calc.net > 0 && calc.scenNTB !== false &&
+                    filledScenarios.every(other => {
+                      if (other.id === s.id) return true;
+                      const oc = scenarioCalc(other);
+                      return oc.net <= calc.net || oc.scenNTB === false;
+                    });
+                  return (
+                    <tr key={s.id} style={{ borderBottom: '1px solid #f0f4f8', background: isBest ? '#f0fdf4' : calc.scenNTB === false ? '#fff8f8' : 'transparent' }}>
+                      <td style={{ padding: '8px 8px', whiteSpace: 'nowrap' }}>
+                        {isBest && <span style={{ fontSize: 10, background: '#f0fdf4', color: '#166534', padding: '2px 6px', borderRadius: 8, fontWeight: 700 }}>★ Best</span>}
+                        {calc.scenNTB === false && !isBest && <span style={{ fontSize: 10, background: '#fdf0f0', color: '#8b1a1a', padding: '2px 6px', borderRadius: 8, fontWeight: 700 }}>NTB ❌</span>}
+                      </td>
+                      <td style={{ padding: '8px 8px' }}>
+                        <input style={{ ...S.input, width: 90 }} value={s.label}
+                          onChange={e => updateScenario(s.id, 'label', e.target.value)} placeholder={`Option ${s.id}`} />
+                      </td>
+                      <td style={{ padding: '8px 8px' }}>
+                        <input style={{ ...S.input, width: 72, borderColor: calc.scenNTB === false ? '#fca5a5' : '#d0dbe8' }}
+                          type="number" step="0.001" value={s.rate}
+                          onChange={e => updateScenario(s.id, 'rate', e.target.value)} placeholder={proposedRate || '6.000'} />
+                        {currentRate && s.rate && (
+                          <div style={{ fontSize: 10, color: parseFloat(currentRate) - parseFloat(s.rate) >= 0.5 ? '#166534' : '#8b1a1a', marginTop: 2 }}>
+                            {(parseFloat(currentRate) - parseFloat(s.rate)).toFixed(3)}% reduction
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: '8px 8px' }}>
+                        <input style={{ ...S.input, width: 64 }} type="number" step="1" value={s.bps}
+                          onChange={e => updateScenario(s.id, 'bps', e.target.value)} placeholder="150" />
+                        {s.bps && <div style={{ fontSize: 10, color: '#6b7a8d', marginTop: 2 }}>{(parseFloat(s.bps) / 100).toFixed(2)}%</div>}
+                      </td>
+                      <td style={{ padding: '8px 8px' }}>
+                        <input style={{ ...S.input, width: 90 }} type="number" value={s.loanAmt}
+                          onChange={e => updateScenario(s.id, 'loanAmt', e.target.value)}
+                          placeholder={baseLoan ? String(Math.round(baseLoan)) : '285000'} />
+                      </td>
+                      <td style={{ padding: '8px 8px', fontWeight: 600, color: '#1a1a2e' }}>
+                        {calc.scenNewPI ? fmtDollar(calc.scenNewPI) : '—'}
+                      </td>
+                      <td style={{ padding: '8px 8px', fontWeight: 600, color: calc.scenSavings > 0 ? '#166534' : '#8b1a1a' }}>
+                        {calc.scenSavings !== null ? (calc.scenSavings > 0 ? `+${fmtDollar(calc.scenSavings)}` : fmtDollar(calc.scenSavings)) : '—'}
+                      </td>
+                      <td style={{ padding: '8px 8px', fontWeight: 700 }}>
+                        {calc.scenNTB === null ? '—' : calc.scenNTB ? '✅' : '❌'}
+                      </td>
+                      <td style={{ padding: '8px 8px', fontWeight: 600, color: '#0d3b6e' }}>
+                        {calc.gross > 0 ? fmtDollar(calc.gross) : '—'}
+                      </td>
+                      <td style={{ padding: '8px 8px', fontWeight: 700, color: calc.net > 0 ? '#166534' : '#6b7a8d' }}>
+                        {calc.net > 0 ? fmtDollar(calc.net) : '—'}
+                      </td>
+                      <td style={{ padding: '8px 8px', color: '#92400e', fontWeight: 600 }}>
+                        {calc.yld > 0 ? `${calc.yld.toFixed(3)}%` : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 11, color: '#6b7a8d', marginTop: 10, fontStyle: 'italic' }}>
+            ★ Best = highest net commission with NTB satisfied · NTB ❌ = rate reduction insufficient — do not price the veteran at this rate
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const tabRenderers = {
     'snapshot':      renderSnapshot,
     'benefit-test':  renderBenefitTest,
@@ -753,6 +1080,7 @@ export default function VAIRRRL() {
     'uw-worksheet':  renderUWWorksheet,
     'cash-out':      renderCashOut,
     'doc-checklist': renderDocChecklist,
+    'net-commission': renderNetCommission,
     'pricing': () => (
       <VAIRRRLPricingCommission
         loanAmount={newLoanAmt} currentRate={currentRatePct} currentPI={currentPI}
