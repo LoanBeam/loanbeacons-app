@@ -23,7 +23,9 @@ const MODULE_LABELS = {
   DISCLOSURE_INTEL:      { num: 14, label: 'Disclosure Intelligence', route: '/disclosure-intel'          },
   COMPLIANCE_INTEL:      { num: 15, label: 'Compliance Intelligence', route: '/compliance-intel'           },
   FLOOD_INTEL:           { num: 16, label: 'Flood Intelligence',      route: '/flood-intel'                },
-  REHAB_INTEL:           { num: 17, label: 'Rehab Intelligence™',     route: '/rehab-intelligence'                },
+  REHAB_INTEL:           { num: 17, label: 'Rehab Intelligence™',     route: '/rehab-intelligence'  },
+  FHA_STREAMLINE:        { num: 18, label: 'FHA Streamline',          route: '/fha-streamline'      },
+  VA_IRRRL:              { num: 19, label: 'VA IRRRL',                route: '/va-irrrl'            },
 };
 
 const SEVERITY_CONFIG = {
@@ -571,7 +573,7 @@ export default function DecisionRecordDetail() {
               <div className="flex-1">
                 <h3 className="text-slate-900 font-black text-lg mb-1">All Modules Complete!</h3>
                 <p className="text-slate-600 text-sm leading-relaxed mb-4">
-                  This Decision Record has reached 100% completeness. All 17 module findings are logged. 
+                  This Decision Record has reached 100% completeness. All 19 module findings are logged. 
                   You can now lock and sign the record to create a tamper-evident audit trail.
                 </p>
                 <div className="flex gap-3">
@@ -621,7 +623,7 @@ export default function DecisionRecordDetail() {
             <div className="flex items-center gap-6 text-right shrink-0">
               <div>
                 <div className="text-slate-400 text-xs uppercase tracking-widest mb-1">Modules</div>
-                <div className="text-white font-black font-mono text-xl">{moduleCount}<span className="text-slate-500 text-sm font-normal"> / 17</span></div>
+                <div className="text-white font-black font-mono text-xl">{moduleCount}<span className="text-slate-500 text-sm font-normal"> / 19</span></div>
               </div>
               <div>
                 <div className="text-slate-400 text-xs uppercase tracking-widest mb-1">Complete</div>
@@ -683,7 +685,7 @@ export default function DecisionRecordDetail() {
             <ScoreRing score={completeness_pct} />
             <div>
               <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">Completeness</div>
-              <div className="text-sm font-semibold text-slate-700">{moduleCount} / 17 modules</div>
+              <div className="text-sm font-semibold text-slate-700">{moduleCount} / 19 modules</div>
               <div className="text-xs text-slate-400 mt-1">{(evidence || []).length} evidence items</div>
               <div className="text-xs text-slate-400">{riskFlags.length} risk flags</div>
             </div>
@@ -761,7 +763,7 @@ export default function DecisionRecordDetail() {
 
         {/* ── Module Findings ── */}
         <div id="modules">
-          <Section title="Module Findings" badge={`${moduleCount} / 17`} badgeColor={moduleCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}>
+          <Section title="Module Findings" badge={`${moduleCount} / 19`} badgeColor={moduleCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}>
             <ModuleFindingsGrid moduleVersionTags={moduleVersionTags} evidence={evidence} />
           </Section>
         </div>

@@ -39,6 +39,10 @@ export const MODULE_KEYS = {
   PIGGYBACK_OPTIMIZER:     'PIGGYBACK_OPTIMIZER',      // Module 19
   BANK_STATEMENT_INTEL:    'BANK_STATEMENT_INTEL',     // Module 20
 
+  // ── Refinance Intelligence ─────────────────────────────────
+  FHA_STREAMLINE:          'FHA_STREAMLINE',            // Module 10
+  VA_IRRRL:                'VA_IRRRL',                  // Module 11
+
   // ── System / Infrastructure ────────────────────────────────
   AE_SHARE_SERVICE:        'AE_SHARE_SERVICE',         // Module 21
   SUBMISSION_PACKAGE:      'SUBMISSION_PACKAGE',       // Module 22
@@ -72,6 +76,8 @@ export const LIVE_MODULE_KEYS = [
   MODULE_KEYS.INTELLIGENT_CHECKLIST,
   MODULE_KEYS.PIGGYBACK_OPTIMIZER,
   MODULE_KEYS.BANK_STATEMENT_INTEL,
+  MODULE_KEYS.FHA_STREAMLINE,
+  MODULE_KEYS.VA_IRRRL,
 ];
 
 // ─────────────────────────────────────────────────────────────

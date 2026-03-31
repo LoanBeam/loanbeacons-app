@@ -8,6 +8,9 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { app } from '../firebase/config';
 import VAIRRRLPricingCommission from './VAIRRRLPricingCommission';
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import { MODULE_KEYS } from '../constants/decisionRecordConstants';
 
 const functions = getFunctions(app);
 const auth = getAuth(app);
@@ -195,6 +198,10 @@ export default function VAIRRRL() {
   const [savedAt, setSavedAt] = useState(null);
   const [saveFlash, setSaveFlash] = useState(false);
 
+  // ── Decision Record (Option B — auto-log on Save) ────────────────────────
+  const [drRecordId, setDrRecordId] = useState(null);
+  const { reportFindings } = useDecisionRecord(selectedScenId);
+
   const getSaveKey = () => {
     const params = new URLSearchParams(window.location.search);
     const sid = params.get('scenarioId') || selectedScenId || 'default';
@@ -212,7 +219,8 @@ export default function VAIRRRL() {
     pcCompanySplitPct, pcCompanyFlatFee, pcPurchaseLoanAmt, pcPurchaseCompBps,
   });
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    // ── 1. localStorage save (unchanged)
     try {
       const key = getSaveKey();
       const snapshot = { ...getStateSnapshot(), savedAt: new Date().toISOString() };
@@ -221,6 +229,41 @@ export default function VAIRRRL() {
       setSaveFlash(true);
       setTimeout(() => setSaveFlash(false), 2000);
     } catch (e) { console.warn('Save failed:', e); }
+
+    // ── 2. Decision Record auto-log (Option B)
+    if (selectedScenId) {
+      try {
+        const findings = {
+          veteranName:           veteranName || null,
+          vaLoanNumber:          vaLoanNumber || null,
+          propertyAddress:       propertyAddress || null,
+          currentNotePct:        parseFloat(currentRatePct) || null,
+          currentPIPayment:      parseFloat(currentPI) || null,
+          remainingBalance:      remBal || null,
+          remainingTermMonths:   remTermMos || null,
+          newNotePct:            parseFloat(newRatePct) || null,
+          newLoanAmount:         newLoanAmt || null,
+          newTermMonths:         newTermMos || null,
+          newPIPayment:          newPICalc > 0 ? +newPICalc.toFixed(2) : null,
+          rateReduction:         rateReduction > 0 ? +rateReduction.toFixed(5) : null,
+          paymentSavingsMonthly: paymentSavings > 0 ? +paymentSavings.toFixed(2) : null,
+          recoupmentMonths:      isFinite(recoupMos) ? +recoupMos.toFixed(1) : null,
+          rateTestPass,
+          paymentTestPass,
+          ntbSatisfied:          benefitTestPass,
+          fundingFeeExempt:      fundingFeeExempt,
+          fundingFeeAmount:      +fundingFeeAmt.toFixed(2),
+          totalClosingCosts:     +costsAmt.toFixed(2),
+          priorIRRRL,
+          priorIRRRLDate:        priorIRRRL ? priorIRRRLDate : null,
+          docsChecked:           Object.values(checkedDocs).filter(Boolean).length,
+          totalDocs:             DOC_ITEMS.length,
+          savedAt:               new Date().toISOString(),
+        };
+        const rid = await reportFindings(MODULE_KEYS.VA_IRRRL, findings, [], [], '3.4.0');
+        if (rid) setDrRecordId(rid);
+      } catch (e) { console.warn('[DR] reportFindings failed:', e); }
+    }
   };
 
   const restoreFromStorage = (key) => {
@@ -1658,6 +1701,12 @@ export default function VAIRRRL() {
       </div>
 
       {tabRenderers[activeTab]?.()}
+
+      <DecisionRecordBanner
+        recordId={drRecordId}
+        moduleName="VA IRRRL"
+        onSave={handleSave}
+      />
 
       <div style={S.canonicalBar}>
         {canonicalExpanded && (
