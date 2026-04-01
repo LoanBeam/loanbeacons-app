@@ -467,60 +467,40 @@ export default function FHAStreamline() {
   };
 
   const handleExtractAll = async () => {
-    const docs = uploadedDocs.filter(Boolean);
-    if (docs.length === 0) return;
-    setExtracting(true); setExtractionError(null); setExtractionLog([]);
-
-    const functions = getFunctions();
-    const extractFn = httpsCallable(functions, 'extractFHADocument', { timeout: 120000 });
-
-    const log = [];
-    let merged = {};
-
+  const docs = uploadedDocs.filter(Boolean);
+  if (docs.length === 0) return;
+  setExtracting(true); setExtractionError(null); setExtractionLog([]);
+  const functions = getFunctions();
+  const extractFn = httpsCallable(functions, 'extractFHADocument', { timeout: 120000 });
+  try {
+    const documents = [];
     for (let i = 0; i < docs.length; i++) {
       const file = docs[i];
-      log.push({ name: file.name, status: 'extracting', data: null });
-      setExtractionLog([...log]);
-      try {
-        const base64Data = await toBase64(file);
-        if (!base64Data) throw new Error('Could not read file — base64 conversion failed');
-
-        const mediaType = file.type === 'application/pdf' ? 'application/pdf' : 
-                         file.type.startsWith('image/') ? file.type : 'application/pdf';
-
-        console.log(`Extracting doc ${i+1}: ${file.name} (${base64Data.length} chars base64, type: ${mediaType})`);
-
-        const result = await extractFn({
-          base64Data,
-          mediaType,
-          documentType: 'fha_mortgage',
-        });
-
-        console.log(`Doc ${i+1} result:`, result.data);
-        const parsed = result.data?.data || {};
-        merged = {
-          ...merged,
-          ...Object.fromEntries(
-            Object.entries(parsed).filter(([,v]) => v !== null && v !== undefined && v !== '')
-          )
-        };
-        log[i] = { name: file.name, status: 'done', data: parsed };
-        setExtractionLog([...log]);
-      } catch (err) {
-        console.error(`Doc ${i+1} extraction error:`, err);
-        log[i] = { name: file.name, status: 'error', error: err.message };
-        setExtractionLog([...log]);
-      }
+      const base64 = await toBase64(file);
+      if (!base64) throw new Error(`Could not read file: ${file.name}`);
+      const mediaType = file.type === 'application/pdf' ? 'application/pdf' :
+                        file.type.startsWith('image/') ? file.type : 'application/pdf';
+      const label = i === 0 ? 'closing_disclosure' : i === 1 ? 'mortgage_statement' : 'payment_history';
+      documents.push({ label, base64, mediaType });
     }
-
-    if (Object.keys(merged).length > 0) {
-      setExtractionResult(merged);
-      applyParsed(merged);
+    console.log(`Sending ${documents.length} docs to extractFHADocument in single multi-doc call`);
+    const result = await extractFn({ documents });
+    console.log('Extraction result:', result.data);
+    const parsed = result.data?.data || {};
+    if (Object.keys(parsed).length > 0) {
+      setExtractionResult(parsed);
+      applyParsed(parsed);
+      setExtractionLog(docs.map(f => ({ name: f.name, status: 'done', data: parsed })));
     } else {
-      setExtractionError('No data could be extracted. Check console for details. Fill in fields manually.');
+      setExtractionError('No data could be extracted. Fill in fields manually.');
     }
-    setExtracting(false);
-  };
+  } catch (err) {
+    console.error('Extraction error:', err);
+    setExtractionError(err.message || 'Extraction failed. Fill in fields manually.');
+    setExtractionLog([]);
+  }
+  setExtracting(false);
+};
 
   // Run property tax
   const runTaxCalc = () => {

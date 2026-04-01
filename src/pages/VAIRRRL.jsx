@@ -28,6 +28,26 @@ const calcPI = (principal, annualRateDecimal, termMonths) => {
   return (principal * r * Math.pow(1 + r, termMonths)) / (Math.pow(1 + r, termMonths) - 1);
 };
 
+const GA_COUNTIES = {
+  'Bibb':     { millage: 34.49, due: 'Dec 20', note: 'City of Macon adds ~12 mills' },
+  'Cherokee': { millage: 23.24, due: 'Nov 15', note: 'Low rate county' },
+  'Clayton':  { millage: 33.55, due: 'Oct 20', note: 'City of Jonesboro adds additional mills' },
+  'Cobb':     { millage: 22.55, due: 'Oct 1',  note: 'One of lowest rates in metro Atlanta' },
+  'DeKalb':   { millage: 38.98, due: 'Oct 20', note: 'Unincorporated DeKalb — cities vary' },
+  'Douglas':  { millage: 28.76, due: 'Oct 20', note: 'City of Douglasville adds ~7 mills' },
+  'Fayette':  { millage: 22.19, due: 'Dec 1',  note: 'Peachtree City ~28 mills total' },
+  'Forsyth':  { millage: 21.07, due: 'Nov 15', note: 'Rapidly growing — rate stable' },
+  'Fulton':   { millage: 41.64, due: 'Oct 20', note: 'City of Atlanta adds ~12 mills' },
+  'Gwinnett': { millage: 27.76, due: 'Oct 20', note: 'City of Lawrenceville ~35 mills' },
+  'Hall':     { millage: 28.04, due: 'Nov 15', note: 'City of Gainesville adds ~4 mills' },
+  'Henry':    { millage: 31.40, due: 'Oct 20', note: 'McDonough city adds additional mills' },
+  'Houston':  { millage: 21.58, due: 'Oct 15', note: 'Warner Robins city ~26 mills total' },
+  'Newton':   { millage: 31.12, due: 'Nov 15', note: 'City of Covington adds additional mills' },
+  'Paulding': { millage: 26.57, due: 'Oct 20', note: 'Dallas city rate higher' },
+  'Rockdale': { millage: 32.90, due: 'Oct 20', note: 'City of Conyers adds additional mills' },
+  'Walton':   { millage: 28.97, due: 'Nov 15', note: 'City of Monroe adds additional mills' },
+};
+
 const MODULES = [
   { id: 1,  label: 'Scenario Creator',       path: '/scenario-creator' },
   { id: 2,  label: 'Qualifying Intel',        path: '/qualifying-intel' },
@@ -163,6 +183,24 @@ export default function VAIRRRL() {
   const [ccUnderwriting, setCcUnderwriting] = useState('0');
   const [ccOther, setCcOther]         = useState('0');
 
+  // ── Required Services (Section C)
+  const [ccCreditReport,     setCcCreditReport]     = useState('45');
+  const [ccFloodDet,         setCcFloodDet]         = useState('20');
+  const [ccTaxMonitor,       setCcTaxMonitor]       = useState('85');
+  const [ccMERS,             setCcMERS]             = useState('15');
+  const [ccPayoffFee,        setCcPayoffFee]        = useState('30');
+  const [ccPerDiemDays,      setCcPerDiemDays]      = useState('15');
+  const [ccHOIPremiumAnnual, setCcHOIPremiumAnnual] = useState('');
+  const [ccHOIMonthly,       setCcHOIMonthly]       = useState('');
+  const [ccTaxMonthsRes,     setCcTaxMonthsRes]     = useState('3');
+  const [ccHOIMonthsRes,     setCcHOIMonthsRes]     = useState('3');
+  const [taxState,      setTaxState]      = useState('GA');
+  const [taxCounty,     setTaxCounty]     = useState('');
+  const [taxCityMills,  setTaxCityMills]  = useState('');
+  const [taxFMV,        setTaxFMV]        = useState('');
+  const [taxResult,     setTaxResult]     = useState(null);
+
+
   // ── Net Commission Calculator
   const [commissionPct, setCommissionPct]         = useState('');
   const [commissionBps, setCommissionBps]         = useState('');
@@ -217,6 +255,10 @@ export default function VAIRRRL() {
     commissionPct, commissionBps, brokerSplitPct, processingFee, originationCosts, compScenarios,
     pcPricingRate, pcLenderCreditPct, pcCompType, pcCompBps, pcSplitMode,
     pcCompanySplitPct, pcCompanyFlatFee, pcPurchaseLoanAmt, pcPurchaseCompBps,
+    ccCreditReport, ccFloodDet, ccTaxMonitor, ccMERS, ccPayoffFee,
+    ccPerDiemDays, ccHOIPremiumAnnual, ccHOIMonthly,
+    ccTaxMonthsRes, ccHOIMonthsRes,
+    taxState, taxCounty, taxCityMills, taxFMV,
   });
 
   const handleSave = async () => {
@@ -300,6 +342,20 @@ export default function VAIRRRL() {
       if (d.ccProcessing      !== undefined) setCcProcessing(d.ccProcessing);
       if (d.ccUnderwriting    !== undefined) setCcUnderwriting(d.ccUnderwriting);
       if (d.ccOther           !== undefined) setCcOther(d.ccOther);
+      if (d.ccCreditReport !== undefined) setCcCreditReport(d.ccCreditReport);
+      if (d.ccFloodDet !== undefined) setCcFloodDet(d.ccFloodDet);
+      if (d.ccTaxMonitor !== undefined) setCcTaxMonitor(d.ccTaxMonitor);
+      if (d.ccMERS !== undefined) setCcMERS(d.ccMERS);
+      if (d.ccPayoffFee !== undefined) setCcPayoffFee(d.ccPayoffFee);
+      if (d.ccPerDiemDays !== undefined) setCcPerDiemDays(d.ccPerDiemDays);
+      if (d.ccHOIPremiumAnnual !== undefined) setCcHOIPremiumAnnual(d.ccHOIPremiumAnnual);
+      if (d.ccHOIMonthly !== undefined) setCcHOIMonthly(d.ccHOIMonthly);
+      if (d.ccTaxMonthsRes !== undefined) setCcTaxMonthsRes(d.ccTaxMonthsRes);
+      if (d.ccHOIMonthsRes !== undefined) setCcHOIMonthsRes(d.ccHOIMonthsRes);
+      if (d.taxState !== undefined) setTaxState(d.taxState);
+      if (d.taxCounty !== undefined) setTaxCounty(d.taxCounty);
+      if (d.taxCityMills !== undefined) setTaxCityMills(d.taxCityMills);
+      if (d.taxFMV !== undefined) setTaxFMV(d.taxFMV);
       if (d.commissionPct     !== undefined) setCommissionPct(d.commissionPct);
       if (d.commissionBps     !== undefined) setCommissionBps(d.commissionBps);
       if (d.brokerSplitPct    !== undefined) setBrokerSplitPct(d.brokerSplitPct);
@@ -422,10 +478,25 @@ export default function VAIRRRL() {
     } finally { setIsExtracting(false); }
   };
 
+  // ── New CC computed (use state vars to avoid ordering dependency)
+  const _loanForCalc       = parseFloat(newLoanAmount) || parseFloat(remainingBalance) || 0;
+  const _rateDecForCalc    = parseFloat(newRatePct) / 100 || 0;
+  const perDiemDailyRate   = _loanForCalc > 0 && _rateDecForCalc > 0 ? (_loanForCalc * _rateDecForCalc) / 365 : 0;
+  const ccPerDiemTotal     = perDiemDailyRate * (parseInt(ccPerDiemDays) || 15);
+  const ccReqServicesTotal = [ccCreditReport, ccFloodDet, ccTaxMonitor, ccMERS, ccPayoffFee]
+    .reduce((sum, v) => sum + (parseFloat(v) || 0), 0);
+  const ccPrepaidsTotal    = ccPerDiemTotal + (parseFloat(ccHOIPremiumAnnual) || 0);
+  const taxMonthlyEst      = taxResult?.monthly || 0;
+  const hoiMonthlyEst      = parseFloat(ccHOIMonthly) || 0;
+  const ccTaxReserve       = taxMonthlyEst * (parseInt(ccTaxMonthsRes) || 3);
+  const ccHOIReserve       = hoiMonthlyEst * (parseInt(ccHOIMonthsRes) || 3);
+  const ccEscrowTotal      = ccTaxReserve + ccHOIReserve;
+
   // ── Closing Cost Total (single source of truth)
   const ccItemizedTotal = [ccTitle, ccTitleIns, ccRecording, ccOrigination, ccProcessing, ccUnderwriting, ccOther]
     .reduce((sum, v) => sum + (parseFloat(v) || 0), 0)
-    + (fundingFeeExempt ? 0 : (parseFloat(newLoanAmount || remainingBalance) || 0) * 0.005);
+    + (fundingFeeExempt ? 0 : (parseFloat(newLoanAmount || remainingBalance) || 0) * 0.005)
+    + ccReqServicesTotal + ccPrepaidsTotal + ccEscrowTotal;
   const effectiveClosingCosts = ccMode === 'itemized' ? ccItemizedTotal : (parseFloat(closingCosts) || 0);
 
   const curRateDec   = parseFloat(currentRatePct) / 100 || 0;
@@ -463,6 +534,21 @@ export default function VAIRRRL() {
   const updateRO = (id, field, val) => setRateOptions(prev => prev.map(o => o.id === id ? { ...o, [field]: val } : o));
   const removeRO = (id) => setRateOptions(prev => prev.filter(o => o.id !== id));
   const navigate = (path) => { window.location.href = path; };
+
+  const runTaxCalc = () => {
+    const fmv = parseFloat(taxFMV) || 0;
+    if (!fmv) return;
+    if (taxState === 'GA' && GA_COUNTIES[taxCounty]) {
+      const data = GA_COUNTIES[taxCounty];
+      const totalMill = data.millage + (parseFloat(taxCityMills) || 0);
+      const assessed = fmv * 0.40;
+      const annual = assessed * (totalMill / 1000);
+      setTaxResult({ fmv, assessed, totalMill, annual, monthly: annual / 12, due: data.due, note: data.note });
+    } else {
+      const annual = fmv * 0.011;
+      setTaxResult({ fmv, assessed: null, annual, monthly: annual / 12, due: 'Check county', note: 'National avg (~1.1%)' });
+    }
+  };
 
   // ── SNAPSHOT TAB with THREE UPLOAD ZONES
   const renderSnapshot = () => (
@@ -623,15 +709,74 @@ export default function VAIRRRL() {
                 <label style={S.label}>Other Costs ($) <span style={{ fontWeight: 400, color: '#9aa5b4' }}>prepaid, escrow, etc.</span></label>
                 <input style={S.input} type="number" value={ccOther} onChange={e => setCcOther(e.target.value)} placeholder="0" />
               </div>
-            </div>
 
+              {/* Required Services */}
+              <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0d3b6e', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6, marginTop: 4 }}>REQUIRED SERVICES (Section C)</div>
+              <div><label style={S.label}>Credit Report ($)</label><input style={S.input} type="number" value={ccCreditReport} onChange={e => setCcCreditReport(e.target.value)} placeholder="45" /></div>
+              <div><label style={S.label}>Flood Determination ($)</label><input style={S.input} type="number" value={ccFloodDet} onChange={e => setCcFloodDet(e.target.value)} placeholder="20" /></div>
+              <div><label style={S.label}>Tax Monitoring ($)</label><input style={S.input} type="number" value={ccTaxMonitor} onChange={e => setCcTaxMonitor(e.target.value)} placeholder="85" /></div>
+              <div><label style={S.label}>MERS Registration ($)</label><input style={S.input} type="number" value={ccMERS} onChange={e => setCcMERS(e.target.value)} placeholder="15" /></div>
+              <div><label style={S.label}>Payoff Statement Fee ($)</label><input style={S.input} type="number" value={ccPayoffFee} onChange={e => setCcPayoffFee(e.target.value)} placeholder="30" /></div>
+              {/* Prepaids */}
+              <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0d3b6e', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6, marginTop: 4 }}>PREPAIDS (Section F)</div>
+              <div><label style={S.label}>Per Diem Days</label><input style={S.input} type="number" value={ccPerDiemDays} onChange={e => setCcPerDiemDays(e.target.value)} placeholder="15" /></div>
+              <div><label style={S.label}>Per Diem Interest ($)</label><input style={S.inputRO} value={ccPerDiemTotal > 0 ? fmtDollar(ccPerDiemTotal) : '—'} readOnly /></div>
+              <div><label style={S.label}>HOI Annual Premium ($)</label><input style={S.input} type="number" value={ccHOIPremiumAnnual} onChange={e => setCcHOIPremiumAnnual(e.target.value)} placeholder="e.g. 1200" /></div>
+              {/* Escrow Setup */}
+              <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0d3b6e', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6, marginTop: 4 }}>INITIAL ESCROW SETUP (Section G)</div>
+              <div><label style={S.label}>Property Tax Monthly ($)</label><input style={S.inputRO} value={taxMonthlyEst > 0 ? fmtDollar(taxMonthlyEst) : ''} readOnly placeholder="Run tax calc below" /></div>
+              <div><label style={S.label}>Tax Reserve Months</label><input style={S.input} type="number" value={ccTaxMonthsRes} onChange={e => setCcTaxMonthsRes(e.target.value)} placeholder="3" /></div>
+              <div><label style={S.label}>Tax Reserve Total ($)</label><input style={S.inputRO} value={ccTaxReserve > 0 ? fmtDollar(ccTaxReserve) : '—'} readOnly /></div>
+              <div><label style={S.label}>HOI Monthly ($)</label><input style={S.input} type="number" value={ccHOIMonthly} onChange={e => setCcHOIMonthly(e.target.value)} placeholder="e.g. 100" /></div>
+              <div><label style={S.label}>HOI Reserve Months</label><input style={S.input} type="number" value={ccHOIMonthsRes} onChange={e => setCcHOIMonthsRes(e.target.value)} placeholder="3" /></div>
+              <div><label style={S.label}>HOI Reserve Total ($)</label><input style={S.inputRO} value={ccHOIReserve > 0 ? fmtDollar(ccHOIReserve) : '—'} readOnly /></div>
+            </div>
+            {/* Section subtotals */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 14 }}>
+              {[
+                { label: 'Title+Lender+VA', value: [ccTitle,ccTitleIns,ccRecording,ccOrigination,ccProcessing,ccUnderwriting,ccOther].reduce((s,v)=>s+(parseFloat(v)||0),0)+(fundingFeeExempt?0:(_loanForCalc||0)*0.005) },
+                { label: 'Required Svcs',   value: ccReqServicesTotal },
+                { label: 'Prepaids',        value: ccPrepaidsTotal },
+                { label: 'Escrow Setup',    value: ccEscrowTotal },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ background: '#eef4fb', borderRadius: 6, padding: '10px 12px', textAlign: 'center', border: '1px solid #b8d0e8' }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7a8d', marginBottom: 4 }}>{label}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#0d3b6e' }}>{fmtDollar(value)}</div>
+                </div>
+              ))}
+            </div>
             {/* Itemized Total */}
             <div style={{ background: '#0d3b6e', borderRadius: 8, padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', marginBottom: 2 }}>TOTAL CLOSING COSTS</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>Used by all tabs automatically</div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', marginBottom: 2 }}>TOTAL CLOSING COSTS (Cash to Close)</div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>Title + Lender + VA + Services + Prepaids + Escrow</div>
               </div>
               <div style={{ fontSize: 28, fontWeight: 800, color: '#f9c846' }}>{fmtDollar(ccItemizedTotal)}</div>
+            </div>
+            {/* Property Tax Escrow Estimate */}
+            <div style={{ marginTop: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid #e0e7ef', padding: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#0d3b6e', marginBottom: 10 }}>🏠 Property Tax — Escrow Estimate</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
+                <div><label style={S.label}>State</label><select style={S.input} value={taxState} onChange={e => setTaxState(e.target.value)}><option value="GA">Georgia</option><option value="FL">Florida</option><option value="NC">North Carolina</option><option value="SC">South Carolina</option><option value="TN">Tennessee</option><option value="TX">Texas</option><option value="AL">Alabama</option></select></div>
+                {taxState === 'GA' && <div><label style={S.label}>GA County</label><select style={S.input} value={taxCounty} onChange={e => setTaxCounty(e.target.value)}><option value="">— Select —</option>{Object.keys(GA_COUNTIES).sort().map(c => <option key={c} value={c}>{c} ({GA_COUNTIES[c].millage}m)</option>)}</select></div>}
+                {taxState === 'GA' && <div><label style={S.label}>City Millage</label><input style={S.input} type="number" value={taxCityMills} onChange={e => setTaxCityMills(e.target.value)} placeholder="e.g. 12" /></div>}
+                <div><label style={S.label}>FMV ($)</label><input style={S.input} type="number" value={taxFMV} onChange={e => setTaxFMV(e.target.value)} placeholder="e.g. 295000" /></div>
+              </div>
+              <button style={{ ...S.btn, ...S.btnPrimary, fontSize: 12 }} onClick={runTaxCalc}>📊 Calculate → Auto-fills Escrow</button>
+              {taxResult && (
+                <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
+                  {[
+                    { label: 'Annual', value: fmtDollar(taxResult.annual) },
+                    { label: 'Monthly', value: fmtDollar(taxResult.monthly) },
+                    { label: (parseInt(ccTaxMonthsRes)||3)+'-Mo Reserve', value: fmtDollar(ccTaxReserve) },
+                  ].map(({ label, value }) => (
+                    <div key={label} style={{ background: '#eef4fb', borderRadius: 6, padding: '6px 10px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, color: '#6b7a8d', fontWeight: 600 }}>{label}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: '#0d3b6e' }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ) : (

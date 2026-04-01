@@ -224,6 +224,22 @@ export default function FHAStreamline() {
   const [ccOther,       setCcOther]       = useState('0');
   const [ccLumpSum,     setCcLumpSum]     = useState('');
 
+  // ── Required Services (Section C — lender-mandated)
+  const [ccCreditReport,     setCcCreditReport]     = useState('45');
+  const [ccFloodDet,         setCcFloodDet]         = useState('20');
+  const [ccTaxMonitor,       setCcTaxMonitor]       = useState('85');
+  const [ccMERS,             setCcMERS]             = useState('15');
+
+  // ── Prepaids (Section F)
+  const [ccPerDiemDays,      setCcPerDiemDays]      = useState('15');
+  const [ccHOIPremiumAnnual, setCcHOIPremiumAnnual] = useState('');
+  const [ccHOIMonthly,       setCcHOIMonthly]       = useState('');
+
+  // ── Initial Escrow Setup (Section G)
+  const [ccTaxMonthsRes,     setCcTaxMonthsRes]     = useState('3');
+  const [ccHOIMonthsRes,     setCcHOIMonthsRes]     = useState('3');
+  const [ccMIPMonthsRes,     setCcMIPMonthsRes]     = useState('1');
+
   // ── Pricing & Comp
   const [compLOSplit,        setCompLOSplit]        = useState('70');
   const [compLPCRate,        setCompLPCRate]        = useState('2.75');
@@ -252,6 +268,87 @@ export default function FHAStreamline() {
   // ── Doc Checklist
   const [checkedDocs, setCheckedDocs] = useState({});
 
+  // ── localStorage: restore on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('fha_streamline_state');
+      if (saved) {
+        const s = JSON.parse(saved);
+        if (s.borrowerName)      setBorrowerName(s.borrowerName);
+        if (s.propertyAddress)   setPropertyAddress(s.propertyAddress);
+        if (s.caseNumber)        setCaseNumber(s.caseNumber);
+        if (s.endorsementDate)   setEndorsementDate(s.endorsementDate);
+        if (s.existingUPB)       setExistingUPB(s.existingUPB);
+        if (s.existingRate)      setExistingRate(s.existingRate);
+        if (s.existingPI)        setExistingPI(s.existingPI);
+        if (s.existingMIP)       setExistingMIP(s.existingMIP);
+        if (s.existingMIPFactor) setExistingMIPFactor(s.existingMIPFactor);
+        if (s.originalUFMIP)     setOriginalUFMIP(s.originalUFMIP);
+        if (s.estimatedValue)    setEstimatedValue(s.estimatedValue);
+        if (s.newRate)           setNewRate(s.newRate);
+        if (s.newTerm)           setNewTerm(s.newTerm);
+        if (s.isFHAInsured      !== undefined) setIsFHAInsured(s.isFHAInsured);
+        if (s.isDelinquent      !== undefined) setIsDelinquent(s.isDelinquent);
+        if (s.latesLast6        !== undefined) setLatesLast6(s.latesLast6);
+        if (s.latesMo7to12      !== undefined) setLatesMo7to12(s.latesMo7to12);
+        if (s.occupancy)         setOccupancy(s.occupancy);
+        if (s.inForbearance     !== undefined) setInForbearance(s.inForbearance);
+        if (s.borrowerRemoved   !== undefined) setBorrowerRemoved(s.borrowerRemoved);
+        if (s.titleChanged      !== undefined) setTitleChanged(s.titleChanged);
+        if (s.rateOptions)       setRateOptions(s.rateOptions);
+        if (s.ccMode)            setCcMode(s.ccMode);
+        if (s.ccTitle)           setCcTitle(s.ccTitle);
+        if (s.ccTitleIns)        setCcTitleIns(s.ccTitleIns);
+        if (s.ccRecording)       setCcRecording(s.ccRecording);
+        if (s.ccOrigination)     setCcOrigination(s.ccOrigination);
+        if (s.ccProcessing)      setCcProcessing(s.ccProcessing);
+        if (s.ccUnderwriting)    setCcUnderwriting(s.ccUnderwriting);
+        if (s.ccOther)           setCcOther(s.ccOther);
+        if (s.ccLumpSum)         setCcLumpSum(s.ccLumpSum);
+        if (s.compLOSplit)       setCompLOSplit(s.compLOSplit);
+        if (s.compLPCRate)       setCompLPCRate(s.compLPCRate);
+        if (s.compBPCPoints)     setCompBPCPoints(s.compBPCPoints);
+        if (s.compProcessingFee) setCompProcessingFee(s.compProcessingFee);
+        if (s.compAdminFee)      setCompAdminFee(s.compAdminFee);
+        if (s.compOtherDeductions) setCompOtherDeductions(s.compOtherDeductions);
+        if (s.taxState)          setTaxState(s.taxState);
+        if (s.taxCounty)         setTaxCounty(s.taxCounty);
+        if (s.taxCityMills)      setTaxCityMills(s.taxCityMills);
+        if (s.taxFMV)            setTaxFMV(s.taxFMV);
+        if (s.checkedDocs)       setCheckedDocs(s.checkedDocs);
+      }
+    } catch (e) { console.warn('FHA localStorage restore failed:', e); }
+  }, []);
+
+  // ── localStorage: save on every state change
+  useEffect(() => {
+    try {
+      localStorage.setItem('fha_streamline_state', JSON.stringify({
+        borrowerName, propertyAddress, caseNumber, endorsementDate,
+        existingUPB, existingRate, existingPI, existingMIP, existingMIPFactor,
+        originalUFMIP, estimatedValue, newRate, newTerm,
+        isFHAInsured, isDelinquent, latesLast6, latesMo7to12,
+        occupancy, inForbearance, borrowerRemoved, titleChanged,
+        rateOptions, ccMode, ccTitle, ccTitleIns, ccRecording,
+        ccOrigination, ccProcessing, ccUnderwriting, ccOther, ccLumpSum,
+        compLOSplit, compLPCRate, compBPCPoints, compProcessingFee,
+        compAdminFee, compOtherDeductions,
+        taxState, taxCounty, taxCityMills, taxFMV, checkedDocs,
+      }));
+    } catch (e) { console.warn('FHA localStorage save failed:', e); }
+  }, [
+    borrowerName, propertyAddress, caseNumber, endorsementDate,
+    existingUPB, existingRate, existingPI, existingMIP, existingMIPFactor,
+    originalUFMIP, estimatedValue, newRate, newTerm,
+    isFHAInsured, isDelinquent, latesLast6, latesMo7to12,
+    occupancy, inForbearance, borrowerRemoved, titleChanged,
+    rateOptions, ccMode, ccTitle, ccTitleIns, ccRecording,
+    ccOrigination, ccProcessing, ccUnderwriting, ccOther, ccLumpSum,
+    compLOSplit, compLPCRate, compBPCPoints, compProcessingFee,
+    compAdminFee, compOtherDeductions,
+    taxState, taxCounty, taxCityMills, taxFMV, checkedDocs,
+  ]);
+
   // ─────────────────────────────────────────────────────────────────────────────
   // COMPUTED VALUES (real-time, no "Run" button)
   // ─────────────────────────────────────────────────────────────────────────────
@@ -275,14 +372,26 @@ export default function FHAStreamline() {
   const newLoanAmt     = upb + netUFMIP;                               // FIXED: was just upb
 
   // ── Closing costs
-  const ccItemizedTotal = [ccTitle, ccTitleIns, ccRecording, ccOrigination, ccProcessing, ccUnderwriting, ccOther]
+  const perDiemDailyRate   = newLoanAmt > 0 && newRateN > 0 ? (newLoanAmt * (newRateN / 100)) / 365 : 0;
+  const ccPerDiemTotal     = perDiemDailyRate * (parseInt(ccPerDiemDays) || 15);
+  const ccReqServicesTotal = [ccCreditReport, ccFloodDet, ccTaxMonitor, ccMERS]
     .reduce((sum, v) => sum + (parseFloat(v) || 0), 0);
+  const ccPrepaidsTotal    = ccPerDiemTotal + (parseFloat(ccHOIPremiumAnnual) || 0);
+  const taxMonthlyEst      = taxResult?.monthly || 0;
+  const hoiMonthlyEst      = parseFloat(ccHOIMonthly) || 0;
+  const ccTaxReserve       = taxMonthlyEst  * (parseInt(ccTaxMonthsRes) || 3);
+  const ccHOIReserve       = hoiMonthlyEst  * (parseInt(ccHOIMonthsRes) || 3);
+  const ccMIPReserve       = ((newLoanAmt * NEW_ANNUAL_MIP) / 12) * (parseInt(ccMIPMonthsRes) || 1);
+  const ccEscrowTotal      = ccTaxReserve + ccHOIReserve + ccMIPReserve;
+ const ccItemizedTotal = [ccTitle, ccTitleIns, ccRecording, ccOrigination, ccProcessing, ccUnderwriting, ccOther]
+    .reduce((sum, v) => sum + (parseFloat(v) || 0), 0)
+    + ccReqServicesTotal + ccPrepaidsTotal + ccEscrowTotal;
   const effectiveCC = ccMode === 'itemized' ? ccItemizedTotal : (parseFloat(ccLumpSum) || 0);
 
   // ── New payment (FIXED: calcPI on newLoanAmt, not raw upb)
   const newPIAmt      = newRateN > 0 && newLoanAmt > 0 ? calcPI(newLoanAmt, newRateN, termMos) : 0;
   const newMIPMonthly = (newLoanAmt * NEW_ANNUAL_MIP) / 12;
-
+  
   // ── NTB combined rate test
   const existingCombined  = existingRateN + mipFactorN;
   const newCombined       = newRateN + (NEW_ANNUAL_MIP * 100); // 0.0055 → 0.55%
@@ -351,6 +460,9 @@ export default function FHAStreamline() {
     ccMode, ccTitle, ccTitleIns, ccRecording, ccOrigination, ccProcessing, ccUnderwriting, ccOther, ccLumpSum,
     compLOSplit, compLPCRate, compBPCPoints, compProcessingFee, compAdminFee, compOtherDeductions,
     taxState, taxCounty, taxCityMills, taxFMV,
+    ccCreditReport, ccFloodDet, ccTaxMonitor, ccMERS,
+    ccPerDiemDays, ccHOIPremiumAnnual, ccHOIMonthly,
+    ccTaxMonthsRes, ccHOIMonthsRes, ccMIPMonthsRes,
   });
 
   const restoreFromStorage = (key) => {
@@ -547,7 +659,7 @@ export default function FHAStreamline() {
       );
       const extractFn = httpsCallable(functions, 'extractFHADocument');
       const result    = await extractFn({ documents });
-      const d = result.data || {};
+      const d = result.data?.data || {};
       if (d.borrowerName || d.borrower_name) setBorrowerName(d.borrowerName || d.borrower_name);
       if (d.existingUPB || d.existing_upb)   setExistingUPB(String(d.existingUPB || d.existing_upb));
       if (d.existingRate || d.existing_note_rate) setExistingRate(String(d.existingRate || d.existing_note_rate));
@@ -713,10 +825,106 @@ export default function FHAStreamline() {
               <div><label style={S.label}>Processing Fee ($)</label><input style={S.input} type="number" value={ccProcessing} onChange={e => setCcProcessing(e.target.value)} placeholder="895" /></div>
               <div><label style={S.label}>Underwriting / Admin Fee ($)</label><input style={S.input} type="number" value={ccUnderwriting} onChange={e => setCcUnderwriting(e.target.value)} placeholder="0" /></div>
               <div><label style={S.label}>Other Costs ($)</label><input style={S.input} type="number" value={ccOther} onChange={e => setCcOther(e.target.value)} placeholder="0" /></div>
+
+              <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0f4c81', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6, marginTop: 4 }}>REQUIRED SERVICES (Section C)</div>
+              <div><label style={S.label}>Credit Report ($)</label><input style={S.input} type="number" value={ccCreditReport} onChange={e => setCcCreditReport(e.target.value)} placeholder="45" /></div>
+              <div><label style={S.label}>Flood Determination ($)</label><input style={S.input} type="number" value={ccFloodDet} onChange={e => setCcFloodDet(e.target.value)} placeholder="20" /></div>
+              <div><label style={S.label}>Tax Monitoring ($)</label><input style={S.input} type="number" value={ccTaxMonitor} onChange={e => setCcTaxMonitor(e.target.value)} placeholder="85" /></div>
+              <div><label style={S.label}>MERS Registration ($)</label><input style={S.input} type="number" value={ccMERS} onChange={e => setCcMERS(e.target.value)} placeholder="15" /></div>
+
+              <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0f4c81', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6, marginTop: 4 }}>PREPAIDS (Section F)</div>
+              <div><label style={S.label}>Per Diem Days</label><input style={S.input} type="number" value={ccPerDiemDays} onChange={e => setCcPerDiemDays(e.target.value)} placeholder="15" /></div>
+              <div><label style={S.inputRO} style={S.label}>Per Diem Interest ($)</label><input style={S.inputRO} value={ccPerDiemTotal > 0 ? fmtDollar(ccPerDiemTotal) : '—'} readOnly /></div>
+              <div><label style={S.label}>HOI Annual Premium ($)</label><input style={S.input} type="number" value={ccHOIPremiumAnnual} onChange={e => setCcHOIPremiumAnnual(e.target.value)} placeholder="e.g. 1200" /></div>
+
+              <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0f4c81', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6, marginTop: 4 }}>INITIAL ESCROW SETUP (Section G)</div>
+              <div>
+                <label style={S.label}>Property Tax Monthly ($)</label>
+                <input style={S.input} type="number" value={taxMonthlyEst > 0 ? taxMonthlyEst.toFixed(2) : ''} readOnly placeholder="Run Property Tax Calculator below" />
+              </div>
+              <div><label style={S.label}>Tax Reserve Months</label><input style={S.input} type="number" value={ccTaxMonthsRes} onChange={e => setCcTaxMonthsRes(e.target.value)} placeholder="3" /></div>
+              <div><label style={S.inputRO} style={S.label}>Tax Reserve Total ($)</label><input style={S.inputRO} value={ccTaxReserve > 0 ? fmtDollar(ccTaxReserve) : '—'} readOnly /></div>
+              <div><label style={S.label}>HOI Monthly ($)</label><input style={S.input} type="number" value={ccHOIMonthly} onChange={e => setCcHOIMonthly(e.target.value)} placeholder="e.g. 100" /></div>
+              <div><label style={S.label}>HOI Reserve Months</label><input style={S.input} type="number" value={ccHOIMonthsRes} onChange={e => setCcHOIMonthsRes(e.target.value)} placeholder="3" /></div>
+              <div><label style={S.inputRO} style={S.label}>HOI Reserve Total ($)</label><input style={S.inputRO} value={ccHOIReserve > 0 ? fmtDollar(ccHOIReserve) : '—'} readOnly /></div>
+              <div><label style={S.label}>MIP Reserve Months</label><input style={S.input} type="number" value={ccMIPMonthsRes} onChange={e => setCcMIPMonthsRes(e.target.value)} placeholder="1" /></div>
+              <div><label style={S.inputRO} style={S.label}>MIP Reserve Total ($)</label><input style={S.inputRO} value={ccMIPReserve > 0 ? fmtDollar(ccMIPReserve) : '—'} readOnly /></div>
             </div>
+
+            {/* Section subtotals */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 14 }}>
+              {[
+                { label: 'Title & Lender Fees', value: [ccTitle,ccTitleIns,ccRecording,ccOrigination,ccProcessing,ccUnderwriting,ccOther].reduce((s,v)=>s+(parseFloat(v)||0),0) },
+                { label: 'Required Services',   value: ccReqServicesTotal },
+                { label: 'Prepaids',            value: ccPrepaidsTotal },
+                { label: 'Escrow Setup',        value: ccEscrowTotal },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ background: '#eef4fb', borderRadius: 6, padding: '10px 12px', textAlign: 'center', border: '1px solid #b8d0e8' }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#6b7a8d', marginBottom: 4 }}>{label}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#0f4c81' }}>{fmtDollar(value)}</div>
+                </div>
+              ))}
+            </div>
+
             <div style={{ background: '#0f4c81', borderRadius: 8, padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div><div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', marginBottom: 2 }}>TOTAL CLOSING COSTS</div><div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>Used by all tabs automatically</div></div>
+              <div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', marginBottom: 2 }}>TOTAL CLOSING COSTS (Cash to Close)</div>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>Title + Lender + Services + Prepaids + Escrow · Used by all tabs automatically</div>
+              </div>
               <div style={{ fontSize: 28, fontWeight: 800, color: '#f9c846' }}>{fmtDollar(ccItemizedTotal)}</div>
+            </div>
+
+            {/* Embedded Property Tax Calculator */}
+            <div style={{ marginTop: 16, background: '#f8fafc', borderRadius: 8, border: '1px solid #e0e7ef', padding: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#0f4c81', marginBottom: 12 }}>🏠 Property Tax — Escrow Estimate</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+                <div>
+                  <label style={S.label}>State</label>
+                  <select style={S.input} value={taxState} onChange={e => setTaxState(e.target.value)}>
+                    <option value="GA">Georgia</option>
+                    <option value="FL">Florida</option>
+                    <option value="NC">North Carolina</option>
+                    <option value="SC">South Carolina</option>
+                    <option value="TN">Tennessee</option>
+                    <option value="TX">Texas</option>
+                    <option value="AL">Alabama</option>
+                  </select>
+                </div>
+                {taxState === 'GA' && (
+                  <div>
+                    <label style={S.label}>GA County</label>
+                    <select style={S.input} value={taxCounty} onChange={e => setTaxCounty(e.target.value)}>
+                      <option value="">— Select County —</option>
+                      {Object.keys(GA_COUNTIES).sort().map(c => <option key={c} value={c}>{c} ({GA_COUNTIES[c].millage} mills)</option>)}
+                    </select>
+                  </div>
+                )}
+                {taxState === 'GA' && (
+                  <div>
+                    <label style={S.label}>City Millage</label>
+                    <input style={S.input} type="number" value={taxCityMills} onChange={e => setTaxCityMills(e.target.value)} placeholder="e.g. 12" />
+                  </div>
+                )}
+                <div>
+                  <label style={S.label}>Fair Market Value ($)</label>
+                  <input style={S.input} type="number" value={taxFMV || estimatedValue} onChange={e => setTaxFMV(e.target.value)} placeholder={estimatedValue || 'e.g. 195000'} />
+                </div>
+              </div>
+              <button style={{ ...S.btn, ...S.btnPrimary, fontSize: 12 }} onClick={runTaxCalc}>📊 Calculate Tax → Auto-fills Escrow</button>
+              {taxResult && (
+                <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
+                  {[
+                    { label: 'Annual Tax', value: fmtDollar(taxResult.annual) },
+                    { label: 'Monthly Escrow', value: fmtDollar(taxResult.monthly) },
+                    { label: `${parseInt(ccTaxMonthsRes)||3}-Mo Reserve`, value: fmtDollar(ccTaxReserve) },
+                  ].map(({ label, value }) => (
+                    <div key={label} style={{ background: '#eef4fb', borderRadius: 6, padding: '8px 12px', textAlign: 'center' }}>
+                      <div style={{ fontSize: 10, color: '#6b7a8d', fontWeight: 600 }}>{label}</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#0f4c81' }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         ) : (
