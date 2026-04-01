@@ -1,12 +1,9 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { db } from "../firebase/config";
-import { doc, getDoc } from "firebase/firestore";
+import { collection, doc, getDoc, serverTimestamp } from "firebase/firestore";
 import { useDecisionRecord } from "../hooks/useDecisionRecord";
-
-import DecisionRecordBanner from "../components/DecisionRecordBanner";
-import ScenarioHeader from "../components/ScenarioHeader";
-import { getUSDAIncomeLimit, getUSDAIncomeLimitBothBrackets } from "../data/usda/usdaIncomeLimits";
+import DecisionRecordBanner from "../components/DecisionRecord/DecisionRecordBanner";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const GUARANTEE_FEE_PCT = 1.00;
@@ -45,7 +42,7 @@ const PROPERTY_FLAGS = [
 ];
 
 const COMP_FACTORS = [
-  { id: "strongCredit", label: "Credit Score ≥ 680", autoFn: (v) => parseInt(v) >= 680 },
+  { id: "strongCredit", label: "Credit Score ≥ 680", autoKey: "creditScore", autoFn: (v) => parseInt(v) >= 680 },
   { id: "reserves", label: "Verified Cash Reserves (≥ 3 months PITI)" },
   { id: "lowPaymentShock", label: "Low Payment Shock (new PITI ≤ 125% of current housing)" },
   { id: "stableEmployment", label: "2+ Years Same Employer or Field" },
@@ -141,12 +138,9 @@ export default function USDAIntelligence() {
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [borrowerName, setBorrowerName] = useState("");
 
   // Step 1
   const [address, setAddress] = useState("");
-  const [scenarioState, setScenarioState] = useState("");
-  const [scenarioCounty, setScenarioCounty] = useState("");
   const [ruralStatus, setRuralStatus] = useState("");
   const [donutHole, setDonutHole] = useState(false);
   const [propFlags, setPropFlags] = useState({});
@@ -166,16 +160,6 @@ export default function USDAIntelligence() {
   // Step 3
   const [useDefaultLimit, setUseDefaultLimit] = useState(true);
   const [countyLimit, setCountyLimit] = useState("");
-
-  // PDF income limit extraction
-  const [extracting, setExtracting] = useState(false);
-  const [extractedLimits, setExtractedLimits] = useState(null);
-  const [extractError, setExtractError] = useState("");
-
-  // GUS findings upload
-  const [gusExtracting, setGusExtracting] = useState(false);
-  const [gusResult, setGusResult] = useState(null);
-  const [gusExtractError, setGusExtractError] = useState("");
 
   // Step 4
   const [purchasePrice, setPurchasePrice] = useState("");
@@ -207,42 +191,18 @@ export default function USDAIntelligence() {
         const snap = await getDoc(doc(db, "scenarios", scenarioId));
         if (!snap.exists()) return;
         const d = snap.data();
-        // Build full address from parts
-        const parts = [d.streetAddress, d.city, d.state, d.zipCode].filter(Boolean);
-        if (parts.length) setAddress(parts.join(", "));
-        const name = [d.firstName, d.lastName].filter(Boolean).join(" ");
-        if (name) setBorrowerName(name.trim());
-        // propertyValue = purchase price in ScenarioCreator
-        if (d.propertyValue) setPurchasePrice(String(d.propertyValue));
+        if (d.propertyAddress) setAddress(d.propertyAddress);
+        if (d.purchasePrice) setPurchasePrice(String(d.purchasePrice));
         if (d.loanAmount) setBaseLoan(String(d.loanAmount));
         if (d.interestRate) setInterestRate(String(d.interestRate));
-        // monthlyIncome is the field name in ScenarioCreator
-        if (d.monthlyIncome) setBorrowerInc(String(d.monthlyIncome));
-        // coBorrowerIncome — use array sum if present, else legacy field
-        const coInc = d.coBorrowers?.length > 0
-          ? d.coBorrowers.reduce((s, cb) => s + (parseFloat(cb.monthlyIncome) || 0), 0)
-          : parseFloat(d.coBorrowerIncome) || 0;
-        if (coInc > 0) setCoBorrowerInc(String(coInc));
+        if (d.grossMonthlyIncome) setBorrowerInc(String(d.grossMonthlyIncome));
+        if (d.coBorrowerIncome) setCoBorrowerInc(String(d.coBorrowerIncome));
         if (d.monthlyDebts) setOtherDebts(String(d.monthlyDebts));
         if (d.creditScore) setCreditScore(String(d.creditScore));
-        // propTaxes and homeInsurance are stored MONTHLY in ScenarioCreator — multiply by 12
-        if (d.propTaxes) setTaxesAnnual(String(Math.round(parseFloat(d.propTaxes) * 12)));
-        if (d.homeInsurance) setInsuranceAnnual(String(Math.round(parseFloat(d.homeInsurance) * 12)));
-        if (d.hoaDues) setHoaMonthly(String(d.hoaDues));
-        const hh = d.householdSize ? Number(d.householdSize) : 2;
-        if (d.householdSize) setHhSize(hh);
-        // Auto-populate state/county and look up income limit from data file
-        const st = d.state || "";
-        const co = (d.county || "").replace(/\s+County$/i, "").trim();
-        if (st) setScenarioState(st);
-        if (co) setScenarioCounty(co);
-        if (st) {
-          const result = getUSDAIncomeLimit(st, co, hh);
-          if (result.source !== "national_baseline") {
-            setUseDefaultLimit(false);
-            setCountyLimit(String(result.limit));
-          }
-        }
+        if (d.annualTaxes) setTaxesAnnual(String(d.annualTaxes));
+        if (d.annualInsurance) setInsuranceAnnual(String(d.annualInsurance));
+        if (d.hoaMonthly) setHoaMonthly(String(d.hoaMonthly));
+        if (d.householdSize) setHhSize(Number(d.householdSize));
       } catch (err) {
         console.error("Scenario load error:", err);
       }
@@ -334,124 +294,6 @@ export default function USDAIntelligence() {
   const convCash = convDown;
   const convTotal = convMonthly * 360;
 
-  // ─── PDF Income Limit Extraction ─────────────────────────────────────────
-  const handleIncomeDocUpload = async (file) => {
-    if (!file) return;
-    setExtracting(true);
-    setExtractError("");
-    setExtractedLimits(null);
-    try {
-      const base64 = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result.split(",")[1]);
-        reader.onerror = () => rej(new Error("File read failed"));
-        reader.readAsDataURL(file);
-      });
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": import.meta.env.VITE_ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 500,
-          messages: [{
-            role: "user",
-            content: [
-              {
-                type: "document",
-                source: { type: "base64", media_type: "application/pdf", data: base64 },
-              },
-              {
-                type: "text",
-                text: `Extract USDA guaranteed loan income limits from this document. Return ONLY valid JSON, no markdown:
-{"state":"2-letter state code","county":"county name without the word County","limit_1_4":annual_dollar_amount_as_number,"limit_5_8":annual_dollar_amount_as_number}
-Use the annual income limit amounts. If multiple counties are listed, extract all of them as an array:
-{"counties":[{"county":"name","limit_1_4":number,"limit_5_8":number}]}
-If this is not a USDA income limit document, return: {"error":"not a USDA income limit document"}`,
-              },
-            ],
-          }],
-        }),
-      });
-      if (!resp.ok) throw new Error(`API error ${resp.status}`);
-      const data = await resp.json();
-      const text = data.content?.map(b => b.text || "").join("") || "";
-      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-      if (parsed.error) {
-        setExtractError(parsed.error);
-      } else if (parsed.counties) {
-        setExtractedLimits(parsed.counties);
-      } else {
-        setExtractedLimits([{ county: parsed.county, limit_1_4: parsed.limit_1_4, limit_5_8: parsed.limit_5_8 }]);
-        // Auto-apply if single county result
-        setUseDefaultLimit(false);
-        setCountyLimit(String(hhSize <= 4 ? parsed.limit_1_4 : parsed.limit_5_8));
-      }
-    } catch (err) {
-      setExtractError(`Extraction failed: ${err.message}`);
-    } finally {
-      setExtracting(false);
-    }
-  };
-
-  // ─── GUS Findings PDF Extraction ─────────────────────────────────────────
-  const handleGusUpload = async (file) => {
-    if (!file) return;
-    setGusExtracting(true);
-    setGusExtractError("");
-    setGusResult(null);
-    try {
-      const base64 = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result.split(",")[1]);
-        reader.onerror = () => rej(new Error("File read failed"));
-        reader.readAsDataURL(file);
-      });
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": import.meta.env.VITE_ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 600,
-          messages: [{
-            role: "user",
-            content: [
-              { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-              {
-                type: "text",
-                text: `Extract GUS (Guaranteed Underwriting System) findings from this USDA document. Return ONLY valid JSON, no markdown:
-{"recommendation":"ACCEPT|REFER|REFER_WITH_CAUTION","front_dti":number_or_null,"back_dti":number_or_null,"loan_amount":number_or_null,"income":number_or_null,"primary_reason":"text explaining the recommendation","conditions":["list","of","conditions"],"loan_type":"string_or_null","property_address":"string_or_null"}
-If this is not a GUS findings document, return: {"error":"not a GUS findings document"}`,
-              },
-            ],
-          }],
-        }),
-      });
-      if (!resp.ok) throw new Error(`API error ${resp.status}`);
-      const data = await resp.json();
-      const text = data.content?.map(b => b.text || "").join("") || "";
-      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
-      if (parsed.error) {
-        setGusExtractError(parsed.error);
-      } else {
-        setGusResult(parsed);
-      }
-    } catch (err) {
-      setGusExtractError(`Extraction failed: ${err.message}`);
-    } finally {
-      setGusExtracting(false);
-    }
-  };
-
   // ─── Save Decision Record ─────────────────────────────────────────────────
   const handleSave = async () => {
     setSaving(true);
@@ -540,30 +382,6 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
         </div>
       </div>
 
-      {/* Borrower Info Bar */}
-      {scenarioId && borrowerName && (
-        <div className="bg-[#1B3A6B] px-6 py-3 print:hidden">
-          <div className="max-w-5xl mx-auto">
-            <p className="text-[11px] font-semibold text-blue-300 uppercase tracking-widest mb-1">Borrower Scenario — USDA Intelligence™</p>
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
-              <span className="text-white font-bold text-base">{borrowerName}</span>
-              {address && <span className="text-blue-200 text-sm">{address}</span>}
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-blue-100">
-                {creditScore && <span>FICO <strong className="text-white">{creditScore}</strong></span>}
-                <span>Loan <strong className="text-white">USDA</strong></span>
-                {purchasePrice && <span>Price <strong className="text-white">${Number(purchasePrice).toLocaleString()}</strong></span>}
-                {baseLoan && <span>Loan Amt <strong className="text-white">${Number(baseLoan).toLocaleString()}</strong></span>}
-                {grossMonthly > 0 && backDTI > 0 && <span>DTI <strong className="text-white">{fmtPct(backDTI)}</strong></span>}
-                {hhSize && <span>HH Size <strong className="text-white">{hhSize}</strong></span>}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Scenario Header */}
-      <ScenarioHeader moduleTitle="USDA Intelligence™" moduleNumber="13" scenarioId={scenarioId} />
-
       {/* Decision Record Banner */}
       <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="USDA_INTELLIGENCE" />
 
@@ -582,15 +400,17 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
 
       <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
 
-        {/* ── STEP 1 ── */}
+        {/* ── STEP 1: Property ──────────────────────────────────────────────── */}
         {step === 1 && (
           <div className="space-y-6">
             <div>
               <h2 className="text-xl font-bold">Step 1 — Property Eligibility</h2>
               <p className="text-sm text-slate-400 mt-1">Confirm rural eligibility and flag any property condition issues before ordering the appraisal.</p>
             </div>
+
             <Card className="space-y-5">
               <Input label="Property Address" value={address} onChange={setAddress} prefix="" type="text" note="Full address including city, state, ZIP" />
+
               <div>
                 <label className="block text-sm font-semibold text-slate-300 mb-3">USDA Rural Eligibility</label>
                 <div className="flex flex-wrap gap-3">
@@ -601,31 +421,15 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                     </button>
                   ))}
                 </div>
-                <div className="flex items-center gap-3 mt-2 flex-wrap">
-                  <p className="text-xs text-slate-500">Always verify at parcel level — never rely on zip code only.</p>
-                  {address && (
-                    <a
-                      href="https://eligibility.sc.egov.usda.gov/eligibility/welcomeAction.do?pageAction=sfhprev"
-                      target="_blank" rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-900/20 border border-green-700/50 text-green-400 text-xs font-semibold rounded-lg hover:bg-green-900/40 transition-all"
-                    >
-                      🔍 Verify on USDA Map →
-                    </a>
-                  )}
-                  {address && (
-                    <div className="flex items-center gap-2 bg-slate-700/40 border border-slate-600 rounded-lg px-3 py-1.5">
-                      <span className="text-xs text-slate-400">Copy address:</span>
-                      <button onClick={() => navigator.clipboard.writeText(address)} className="text-xs text-blue-400 hover:text-blue-300 font-mono truncate max-w-xs">{address}</button>
-                      <button onClick={() => navigator.clipboard.writeText(address)} className="text-xs text-slate-400 hover:text-white">📋</button>
-                    </div>
-                  )}
-                </div>
+                <p className="text-xs text-slate-500 mt-2">Verify at <a href="https://eligibility.sc.egov.usda.gov" target="_blank" rel="noreferrer" className="text-green-400 hover:underline">eligibility.sc.egov.usda.gov</a> — always use parcel-level search.</p>
               </div>
+
               <label className="flex items-center gap-3 p-4 bg-yellow-900/10 border border-yellow-700/30 rounded-xl cursor-pointer">
                 <input type="checkbox" checked={donutHole} onChange={e => setDonutHole(e.target.checked)} className="w-4 h-4 accent-yellow-500" />
                 <span className="text-sm text-yellow-200"><strong>Ineligible "Donut Hole"</strong> — property appears to be in an ineligible pocket within an otherwise eligible county. Requires parcel-level verification.</span>
               </label>
             </Card>
+
             <Card className="space-y-4">
               <div>
                 <h3 className="font-bold text-slate-100 mb-1">Property Condition Flags</h3>
@@ -648,32 +452,36 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 ))}
               </div>
             </Card>
+
             {hardFlags.length > 0 && <InfoBox color="red">⛔ <strong>Disqualifying Issues:</strong> {hardFlags.map(f => f.label).join(", ")}. This property does not qualify for USDA. Switch to FHA or Conventional.</InfoBox>}
+
             <NavRow onNext={() => setStep(2)} nextLabel="Next: Household →" />
           </div>
         )}
 
-        {/* ── STEP 2 ── */}
+        {/* ── STEP 2: Household Income ─────────────────────────────────────── */}
         {step === 2 && (
           <div className="space-y-6">
             <div>
               <h2 className="text-xl font-bold">Step 2 — Household Income Engine™</h2>
               <p className="text-sm text-slate-400 mt-1">USDA counts all adults in the household — not just borrowers. Apply all available deductions to reduce adjusted income.</p>
             </div>
+
             <InfoBox color="blue"><strong>Critical:</strong> Non-borrower adults living in the property must have their income counted in household income, even if they are not on the loan. Foster care, SNAP, and TANF payments are excluded.</InfoBox>
+
             <Card className="space-y-5">
               <h3 className="font-bold text-slate-100">Household Composition</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-2">Total Household Size</label>
                   <select value={hhSize} onChange={e => setHhSize(parseInt(e.target.value))} className="w-full bg-slate-700 border border-slate-600 rounded-xl px-4 py-3 text-slate-100">
-                    {[1,2,3,4,5,6,7,8].map(v => <option key={v} value={v}>{v} person{v > 1 ? "s" : ""}</option>)}
+                    {[1,2,3,4,5,6,7,8].map(n => <option key={n} value={n}>{n} person{n > 1 ? "s" : ""}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-2">Dependents Under 18</label>
                   <select value={numDependents} onChange={e => setNumDependents(parseInt(e.target.value))} className="w-full bg-slate-700 border border-slate-600 rounded-xl px-4 py-3 text-slate-100">
-                    {[0,1,2,3,4,5,6].map(v => <option key={v} value={v}>{v}</option>)}
+                    {[0,1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
                   </select>
                 </div>
               </div>
@@ -682,6 +490,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 <span className="text-sm text-slate-200">Household member age 62+ or disabled — unlocks <strong className="text-green-400">$400 elderly deduction</strong></span>
               </label>
             </Card>
+
             <Card className="space-y-5">
               <h3 className="font-bold text-slate-100">Monthly Income Sources</h3>
               <div className="grid grid-cols-2 gap-4">
@@ -691,6 +500,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 <Input label="Full-Time Student Earned Income (Monthly)" value={studentInc} onChange={setStudentInc} note="Only income above $480/yr is counted" />
               </div>
             </Card>
+
             <Card className="space-y-5">
               <h3 className="font-bold text-slate-100">Allowable Annual Deductions</h3>
               <div className="grid grid-cols-2 gap-4">
@@ -699,12 +509,13 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 <Input label="Total Household Assets" value={assets} onChange={setAssets} note="0.5% of assets over $50,000 added as imputed income" />
               </div>
             </Card>
+
             <Card className="border-green-700/30">
               <h3 className="font-bold text-green-400 mb-4">Household Income Transformer™ — Summary</h3>
               <div className="space-y-2 text-sm">
                 {[
-                  ["Borrower + Co-Borrower (Annual)", fmt(grossAnnual), ""],
-                  ["Non-Borrower Adult Income (Annual)", fmt(nonBorrowerAnnual), ""],
+                  ["Borrower + Co-Borrower (Annual)", fmt(grossAnnual)],
+                  ["Non-Borrower Adult Income (Annual)", fmt(nonBorrowerAnnual)],
                   ["Asset Imputed Income", fmt(assetImputed), assetImputed > 0 ? "text-yellow-300" : ""],
                   ["— Dependent Deductions", `−${fmt(depDeduction)}`, "text-green-400"],
                   ["— Elderly Deduction", `−${fmt(elderlyDed)}`, "text-green-400"],
@@ -724,11 +535,12 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 <p className="text-xs text-slate-500">Total deductions applied: {fmt(totalDeductions)}</p>
               </div>
             </Card>
+
             <NavRow onBack={() => setStep(1)} onNext={() => setStep(3)} nextLabel="Next: Income Limits →" />
           </div>
         )}
 
-        {/* ── STEP 3 ── */}
+        {/* ── STEP 3: Income Limits ────────────────────────────────────────── */}
         {step === 3 && (
           <div className="space-y-6">
             <div>
@@ -736,77 +548,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
               <p className="text-sm text-slate-400 mt-1">USDA limits are county-specific and based on 115% of area median income. Adjusted HH income must be at or below the county limit.</p>
             </div>
 
-            {/* PDF Upload Card */}
-            <Card className="space-y-4 border-blue-700/30">
-              <div>
-                <h3 className="font-bold text-blue-300 mb-1">📄 Upload USDA Income Limit PDF <span className="text-xs font-normal text-slate-400 ml-2">— Auto-extract county-specific limits</span></h3>
-                <p className="text-xs text-slate-500">Download the official limit table from <a href="https://www.rd.usda.gov/resources/regulations-guidelines/income-limits" target="_blank" rel="noreferrer" className="text-green-400 hover:underline">rd.usda.gov/income-limits</a>, then upload here. Haiku will extract the exact county limit and auto-populate below.</p>
-              </div>
-              <label className={`flex flex-col items-center justify-center w-full h-24 border-2 border-dashed rounded-xl cursor-pointer transition-all ${extracting ? "border-blue-500 bg-blue-900/10" : "border-slate-600 hover:border-blue-500 hover:bg-blue-900/5"}`}>
-                <input type="file" accept=".pdf" className="hidden" onChange={e => handleIncomeDocUpload(e.target.files[0])} disabled={extracting} />
-                {extracting ? (
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-xs text-blue-300">Extracting income limits…</span>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-1">
-                    <span className="text-2xl">📋</span>
-                    <span className="text-xs text-slate-400">Click to upload USDA Income Limit PDF</span>
-                  </div>
-                )}
-              </label>
-
-              {/* Error */}
-              {extractError && (
-                <div className="bg-red-900/15 border border-red-700/40 rounded-xl p-3 text-xs text-red-300">⚠️ {extractError}</div>
-              )}
-
-              {/* Single county auto-applied */}
-              {extractedLimits?.length === 1 && !extractError && (
-                <div className="bg-green-900/15 border border-green-700/40 rounded-xl p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-green-400 font-bold text-sm">✓ Income Limits Extracted — Applied</span>
-                    <span className="text-xs bg-green-900/50 text-green-400 px-2 py-0.5 rounded-full">from PDF</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-3 text-sm">
-                    <div className="bg-slate-700/30 rounded-xl p-3"><div className="text-xs text-slate-400">County</div><div className="font-bold text-slate-100">{extractedLimits[0].county}</div></div>
-                    <div className="bg-slate-700/30 rounded-xl p-3"><div className="text-xs text-slate-400">1–4 Person Limit</div><div className="font-bold text-green-400">{fmt(extractedLimits[0].limit_1_4)}</div></div>
-                    <div className="bg-slate-700/30 rounded-xl p-3"><div className="text-xs text-slate-400">5–8 Person Limit</div><div className="font-bold text-green-400">{fmt(extractedLimits[0].limit_5_8)}</div></div>
-                  </div>
-                </div>
-              )}
-
-              {/* Multiple counties — let LO pick */}
-              {extractedLimits?.length > 1 && !extractError && (
-                <div className="space-y-3">
-                  <p className="text-xs font-semibold text-slate-300">Multiple counties found — select the correct one:</p>
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {extractedLimits.map((c, i) => (
-                      <button key={i} onClick={() => { setUseDefaultLimit(false); setCountyLimit(String(hhSize <= 4 ? c.limit_1_4 : c.limit_5_8)); setExtractedLimits([c]); }}
-                        className="w-full flex items-center justify-between bg-slate-700/30 hover:bg-green-900/20 border border-slate-600 hover:border-green-500 rounded-xl p-3 transition-all text-left">
-                        <span className="font-semibold text-slate-100 text-sm">{c.county} County</span>
-                        <div className="text-right text-xs text-slate-400">
-                          <div>1–4: <span className="text-slate-200 font-semibold">{fmt(c.limit_1_4)}</span></div>
-                          <div>5–8: <span className="text-slate-200 font-semibold">{fmt(c.limit_5_8)}</span></div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </Card>
             <Card className="space-y-4">
-              {/* Auto-populated banner when state/county known */}
-              {scenarioState && scenarioCounty && !useDefaultLimit && countyLimit && (
-                <div className="flex items-center gap-2 bg-blue-900/20 border border-blue-700/40 rounded-xl px-4 py-2.5">
-                  <span className="text-blue-400 text-sm">🏛️</span>
-                  <span className="text-xs text-blue-300">
-                    <strong>Auto-populated</strong> from LoanBeacons data — {scenarioCounty} County, {scenarioState} · 2024 limit
-                  </span>
-                  <span className="ml-auto text-xs bg-blue-900/50 text-blue-400 px-2 py-0.5 rounded-full">from data</span>
-                </div>
-              )}
               <label className="flex items-center gap-3 cursor-pointer">
                 <input type="checkbox" checked={useDefaultLimit} onChange={e => setUseDefaultLimit(e.target.checked)} className="w-4 h-4 accent-green-500" />
                 <span className="text-sm text-slate-200">
@@ -815,20 +557,10 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 </span>
               </label>
               {!useDefaultLimit && (
-                <>
-                  <Input label="County-Specific USDA Income Limit (Annual)" value={countyLimit} onChange={setCountyLimit} note={<span>Look up at <a href="https://www.rd.usda.gov/resources/regulations-guidelines/income-limits" target="_blank" rel="noreferrer" className="text-green-400 hover:underline">rd.usda.gov Income Limits</a></span>} />
-                  {scenarioState && scenarioCounty && (() => {
-                    const both = getUSDAIncomeLimitBothBrackets(scenarioState, scenarioCounty);
-                    return (
-                      <div className="grid grid-cols-2 gap-3 text-sm">
-                        <div className="bg-slate-700/30 rounded-xl p-3 text-center"><div className="text-xs text-slate-400 mb-1">1–4 Person Limit</div><div className="font-bold text-green-400">${both.low.toLocaleString()}</div></div>
-                        <div className="bg-slate-700/30 rounded-xl p-3 text-center"><div className="text-xs text-slate-400 mb-1">5–8 Person Limit</div><div className="font-bold text-green-400">${both.high.toLocaleString()}</div></div>
-                      </div>
-                    );
-                  })()}
-                </>
+                <Input label="County-Specific USDA Income Limit (Annual)" value={countyLimit} onChange={setCountyLimit} note={<span>Look up at <a href="https://www.rd.usda.gov/resources/regulations-guidelines/income-limits" target="_blank" rel="noreferrer" className="text-green-400 hover:underline">rd.usda.gov Income Limits</a></span>} />
               )}
             </Card>
+
             <Card className="space-y-5">
               <h3 className="font-bold text-slate-100">Income Limit Analysis</h3>
               <div className="grid grid-cols-3 gap-4 text-center">
@@ -839,10 +571,13 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                   </div>
                 ))}
               </div>
+
               {effectiveLimit > 0 && (
                 <div>
                   <div className="flex justify-between text-xs text-slate-500 mb-1">
-                    <span>$0</span><span>100% — {fmt(effectiveLimit)}</span><span>115% — {fmt(effectiveLimit * 1.15)}</span>
+                    <span>$0</span>
+                    <span>100% — {fmt(effectiveLimit)}</span>
+                    <span>115% — {fmt(effectiveLimit * 1.15)}</span>
                   </div>
                   <div className="relative h-3 bg-slate-700 rounded-full overflow-hidden">
                     <div className="absolute inset-y-0 left-0 bg-green-800/60" style={{ width: `${(1/1.15)*100}%` }} />
@@ -856,24 +591,28 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                   </div>
                 </div>
               )}
+
               <Chip status={incomeRatio <= 1.0 ? "pass" : incomeRatio <= 1.15 ? "warn" : "fail"}>
                 {incomeRatio <= 1.0 ? "✓ PASS — Within USDA Limit" : incomeRatio <= 1.15 ? "⚠ BORDERLINE — Manual Review Required" : "✗ FAIL — Exceeds USDA Limit"}
               </Chip>
+
               {incomeRatio > 1.0 && incomeRatio <= 1.15 && (
                 <InfoBox color="yellow">Income is between 100%–115% of the limit. Apply all deductions in Step 2 to reduce adjusted income. Manual underwrite pathway may be available — see USDA Rescue™ in Step 8.</InfoBox>
               )}
             </Card>
+
             <NavRow onBack={() => setStep(2)} onNext={() => setStep(4)} nextLabel="Next: Loan Setup →" />
           </div>
         )}
 
-        {/* ── STEP 4 ── */}
+        {/* ── STEP 4: Loan Parameters ──────────────────────────────────────── */}
         {step === 4 && (
           <div className="space-y-6">
             <div>
               <h2 className="text-xl font-bold">Step 4 — Loan Parameters</h2>
               <p className="text-sm text-slate-400 mt-1">USDA allows 100% LTV (plus financed guarantee fee). Escrow is mandatory. No renovation loans.</p>
             </div>
+
             <Card>
               <div className="grid grid-cols-2 gap-5">
                 <Input label="Purchase Price" value={purchasePrice} onChange={setPurchasePrice} />
@@ -894,6 +633,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 <Input label="Seller Credits" value={sellerCredits} onChange={setSellerCredits} note="USDA allows up to 6% seller concessions" />
               </div>
             </Card>
+
             <Card>
               <h3 className="font-bold text-slate-100 mb-4">USDA Loan Parameter Rules</h3>
               <div className="grid grid-cols-2 gap-3 text-sm">
@@ -914,17 +654,19 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 ))}
               </div>
             </Card>
+
             <NavRow onBack={() => setStep(3)} onNext={() => setStep(5)} nextLabel="Next: Guarantee Fee →" />
           </div>
         )}
 
-        {/* ── STEP 5 ── */}
+        {/* ── STEP 5: Guarantee Fee ────────────────────────────────────────── */}
         {step === 5 && (
           <div className="space-y-6">
             <div>
               <h2 className="text-xl font-bold">Step 5 — Guarantee Fee Engine™</h2>
               <p className="text-sm text-slate-400 mt-1">1.00% upfront + 0.35% annual. Compare financing vs paying upfront, and see USDA fees vs FHA MIP over 30 years.</p>
             </div>
+
             <Card className="space-y-5">
               <h3 className="font-bold text-slate-100">Upfront Guarantee Fee</h3>
               <div className="grid grid-cols-3 gap-4 text-center">
@@ -935,6 +677,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                   </div>
                 ))}
               </div>
+
               <div className="grid grid-cols-2 gap-4">
                 {[[true, "Finance into Loan", `Adds ${fmt(gfAmt)} to loan. Zero cash required for GF. Slightly higher monthly payment.`], [false, "Pay Upfront at Closing", `${fmt(gfAmt)} cash required at closing. Lower loan balance and monthly P&I.`]].map(([val, label, desc]) => (
                   <button key={label} onClick={() => setFinanceGF(val)}
@@ -945,17 +688,20 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 ))}
               </div>
             </Card>
+
             <Card className="space-y-4">
               <h3 className="font-bold text-slate-100">Annual Fee (0.35%) — Collected Monthly</h3>
               <div className="space-y-2 text-sm">
                 {[["Basis (total loan)", fmt(totalLoan)], ["Annual fee", `${fmt(totalLoan * ANNUAL_FEE_PCT / 100)}/yr`], ["Monthly escrow", fmtD(annualFeeMonthly)]].map(([l, v]) => (
                   <div key={l} className="flex justify-between text-slate-400">
-                    <span>{l}</span><span className="text-slate-200 font-semibold">{v}</span>
+                    <span>{l}</span>
+                    <span className="text-slate-200 font-semibold">{v}</span>
                   </div>
                 ))}
               </div>
               <InfoBox color="blue">The 0.35% annual fee is calculated on the outstanding loan balance, so it decreases as you pay down the principal — unlike FHA MIP which is fixed on the original loan amount for the life of the loan.</InfoBox>
             </Card>
+
             {pp > 0 && rate > 0 && (
               <Card>
                 <h3 className="font-bold text-slate-100 mb-4">USDA Fee vs FHA MIP — Cost Comparison</h3>
@@ -979,17 +725,19 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 )}
               </Card>
             )}
+
             <NavRow onBack={() => setStep(4)} onNext={() => setStep(6)} nextLabel="Next: Qualifying →" />
           </div>
         )}
 
-        {/* ── STEP 6 ── */}
+        {/* ── STEP 6: Qualifying ───────────────────────────────────────────── */}
         {step === 6 && (
           <div className="space-y-6">
             <div>
               <h2 className="text-xl font-bold">Step 6 — Qualifying Analysis</h2>
               <p className="text-sm text-slate-400 mt-1">DTI limits, compensating factor detection, GUS simulation, and manual underwrite pathway.</p>
             </div>
+
             <Card className="space-y-5">
               <h3 className="font-bold text-slate-100">DTI Analysis</h3>
               <div className="grid grid-cols-2 gap-4">
@@ -1006,6 +754,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                   );
                 })}
               </div>
+
               <div className="bg-slate-700/30 rounded-xl p-4 space-y-2 text-sm">
                 <div className="font-semibold text-slate-200 mb-2">Payment Breakdown</div>
                 {[["P&I", fmtD(pi)], ["Property Taxes", fmtD(taxMo)], ["Homeowners Insurance", fmtD(insMo)], ["HOA", fmtD(hoaMo)], ["USDA Annual Fee", fmtD(annualFeeMonthly)]].map(([l, v]) => (
@@ -1017,6 +766,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 </div>
               </div>
             </Card>
+
             <Card className="space-y-4">
               <h3 className="font-bold text-slate-100">Compensating Factors Analyzer™</h3>
               <p className="text-sm text-slate-400">One or more strong factors may allow back-end DTI up to 44% via manual underwrite pathway.</p>
@@ -1040,6 +790,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 <span className="text-sm text-blue-200"><strong>Manual Underwrite Pathway</strong> — GUS likely to return Refer; this file will be manually underwritten</span>
               </label>
             </Card>
+
             <div className={`rounded-2xl border p-6 space-y-3 ${gus.verdict === "ACCEPT" ? "bg-green-900/15 border-green-700/40" : gus.verdict === "REFER" ? "bg-yellow-900/15 border-yellow-700/40" : "bg-red-900/15 border-red-700/40"}`}>
               <h3 className="font-bold text-slate-100">GUS Simulation™</h3>
               <div className="flex items-center gap-4">
@@ -1048,74 +799,26 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
               </div>
               <p className="text-xs text-slate-500">This simulation is based on primary USDA criteria. Actual GUS results depend on full credit file, employment history, and lender overlays.</p>
             </div>
-            {/* GUS Findings Upload */}
-            <Card className="space-y-4 border-blue-700/30">
-              <div>
-                <h3 className="font-bold text-blue-300 mb-1">📄 Upload GUS Findings PDF <span className="text-xs font-normal text-slate-400 ml-2">— Optional · Verify simulation vs actual GUS</span></h3>
-                <p className="text-xs text-slate-500">Run GUS in your LOS, download the findings PDF, and upload here. Haiku will extract the actual GUS recommendation and compare it against the simulation above.</p>
-              </div>
-              <label className={`flex flex-col items-center justify-center w-full h-20 border-2 border-dashed rounded-xl cursor-pointer transition-all ${gusExtracting ? "border-blue-500 bg-blue-900/10" : "border-slate-600 hover:border-blue-500 hover:bg-blue-900/5"}`}>
-                <input type="file" accept=".pdf" className="hidden" onChange={e => handleGusUpload(e.target.files[0])} disabled={gusExtracting} />
-                {gusExtracting ? (
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-xs text-blue-300">Extracting GUS findings…</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">📋</span>
-                    <span className="text-xs text-slate-400">Click to upload GUS Findings PDF</span>
-                  </div>
-                )}
-              </label>
-              {gusExtractError && <div className="bg-red-900/15 border border-red-700/40 rounded-xl p-3 text-xs text-red-300">⚠️ {gusExtractError}</div>}
-              {gusResult && (
-                <div className="space-y-3">
-                  <div className={`rounded-xl border p-4 ${gusResult.recommendation === "ACCEPT" ? "bg-green-900/15 border-green-700/40" : "bg-yellow-900/15 border-yellow-700/40"}`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Actual GUS Result</span>
-                      {gusResult.recommendation !== gus.verdict.replace(/ /g, "_") && (
-                        <span className="text-xs bg-yellow-900/50 text-yellow-300 px-2 py-0.5 rounded-full">⚠️ Differs from simulation</span>
-                      )}
-                    </div>
-                    <div className={`text-2xl font-black mb-1 ${gusResult.recommendation === "ACCEPT" ? "text-green-400" : "text-yellow-400"}`}>
-                      {gusResult.recommendation?.replace(/_/g, " ")}
-                    </div>
-                    {gusResult.primary_reason && <p className="text-xs text-slate-300">{gusResult.primary_reason}</p>}
-                  </div>
-                  {(gusResult.front_dti || gusResult.back_dti) && (
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      {gusResult.front_dti && <div className="bg-slate-700/30 rounded-xl p-3"><div className="text-xs text-slate-400">GUS Front DTI</div><div className="font-bold text-slate-100">{gusResult.front_dti}%</div></div>}
-                      {gusResult.back_dti && <div className="bg-slate-700/30 rounded-xl p-3"><div className="text-xs text-slate-400">GUS Back DTI</div><div className="font-bold text-slate-100">{gusResult.back_dti}%</div></div>}
-                    </div>
-                  )}
-                  {gusResult.conditions?.length > 0 && (
-                    <div className="bg-slate-700/20 rounded-xl p-3">
-                      <p className="text-xs font-semibold text-slate-400 mb-2">GUS Conditions</p>
-                      <ul className="space-y-1">{gusResult.conditions.map((c, i) => <li key={i} className="text-xs text-slate-300">• {c}</li>)}</ul>
-                    </div>
-                  )}
-                </div>
-              )}
-            </Card>
+
             <NavRow onBack={() => setStep(5)} onNext={() => setStep(7)} nextLabel="Next: Comparison →" />
           </div>
         )}
 
-        {/* ── STEP 7 ── */}
+        {/* ── STEP 7: Comparison ──────────────────────────────────────────── */}
         {step === 7 && (
           <div className="space-y-6">
             <div>
               <h2 className="text-xl font-bold">Step 7 — Multi-Comparison Structuring Engine™</h2>
-              <p className="text-sm text-slate-400 mt-1">Side-by-side comparison: payment, cash to close, and 30-year total cost.</p>
+              <p className="text-sm text-slate-400 mt-1">Side-by-side comparison: payment, cash to close, and 30-year total cost. Use this to make the borrower recommendation.</p>
             </div>
+
             {pp > 0 && rate > 0 ? (
               <>
                 <div className="grid grid-cols-3 gap-4">
                   {[
-                    { name: "🌾 USDA", down: "0% / Zero Down", monthly: usdaMonthly, cash: usdaCash, total: usdaTotal, mi: `${fmtD(annualFeeMonthly)}/mo annual fee`, note: "Zero down. Best for rural buyers with limited cash.", eligible: ruralStatus === "eligible" && verdict !== "NOT_ELIGIBLE", highlight: true },
-                    { name: "🏦 FHA", down: `3.5% / ${fmt(fhaDown)}`, monthly: fhaMonthly, cash: fhaCash, total: fhaTotal, mi: `${fmtD(fhaMIPMo)}/mo MIP (life of loan)`, note: "Best for non-rural areas or borrowers who don't qualify for USDA.", eligible: true, highlight: false },
-                    { name: "📊 Conventional", down: `5% / ${fmt(convDown)}`, monthly: convMonthly, cash: convCash, total: convTotal, mi: `${fmtD(convPMIMo)}/mo PMI (removable)`, note: "PMI removable at 80% LTV. Best for stronger credit and down payment.", eligible: true, highlight: false },
+                    { name: "🌾 USDA", down: "0% / Zero Down", monthly: usdaMonthly, cash: usdaCash, total: usdaTotal, mi: `${fmtD(annualFeeMonthly)}/mo annual fee`, note: "Zero down. Best for rural buyers with limited cash. No monthly mortgage insurance — only a small annual fee.", eligible: ruralStatus === "eligible" && verdict !== "NOT_ELIGIBLE", highlight: true },
+                    { name: "🏦 FHA", down: `3.5% / ${fmt(fhaDown)}`, monthly: fhaMonthly, cash: fhaCash, total: fhaTotal, mi: `${fmtD(fhaMIPMo)}/mo MIP (life of loan)`, note: "Best for non-rural areas or borrowers who don't qualify for USDA. Higher cash requirement.", eligible: true, highlight: false },
+                    { name: "📊 Conventional", down: `5% / ${fmt(convDown)}`, monthly: convMonthly, cash: convCash, total: convTotal, mi: `${fmtD(convPMIMo)}/mo PMI (removable)`, note: "PMI can be removed at 80% LTV. Best for borrowers with stronger credit and down payment.", eligible: true, highlight: false },
                   ].map(prog => (
                     <div key={prog.name} className={`rounded-2xl border p-5 space-y-4 ${prog.highlight ? "bg-green-900/15 border-green-500/50" : "bg-slate-800 border-slate-700"}`}>
                       <div className="flex items-center justify-between">
@@ -1134,6 +837,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                     </div>
                   ))}
                 </div>
+
                 <Card className="border-green-700/30">
                   <h3 className="font-bold text-green-400 mb-4">USDA Advantage vs FHA</h3>
                   <div className="grid grid-cols-3 gap-4 text-center text-sm">
@@ -1149,17 +853,19 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
             ) : (
               <InfoBox color="yellow">Complete Steps 4–5 (purchase price, rate, loan amount) to see the comparison.</InfoBox>
             )}
+
             <NavRow onBack={() => setStep(6)} onNext={() => setStep(8)} nextLabel="Next: Rescue™ →" />
           </div>
         )}
 
-        {/* ── STEP 8 ── */}
+        {/* ── STEP 8: USDA Rescue™ ────────────────────────────────────────── */}
         {step === 8 && (
           <div className="space-y-6">
             <div>
               <h2 className="text-xl font-bold">Step 8 — USDA Rescue™</h2>
               <p className="text-sm text-slate-400 mt-1">Targeted strategies to resolve income, DTI, and property issues before they become lender conditions or denial reasons.</p>
             </div>
+
             {verdict === "ELIGIBLE" && dtiStatus === "PASS" && incomeRatio <= 1.0 && hardFlags.length === 0 && ruralStatus === "eligible" ? (
               <InfoBox color="green">✅ <strong>No rescue needed.</strong> This scenario passes all primary USDA tests. Proceed to Results and save the Decision Record.</InfoBox>
             ) : (
@@ -1177,6 +883,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                     </div>
                   </Card>
                 )}
+
                 {dtiStatus !== "PASS" && (
                   <Card className="border-red-700/40 space-y-4">
                     <h3 className="font-bold text-red-300">🔧 DTI Rescue Strategies</h3>
@@ -1190,6 +897,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                     </div>
                   </Card>
                 )}
+
                 {(ruralStatus !== "eligible" || hardFlags.length > 0 || warnFlags.length > 0 || donutHole) && (
                   <Card className="border-blue-700/40 space-y-4">
                     <h3 className="font-bold text-blue-300">🏠 Property Issue Strategies</h3>
@@ -1205,17 +913,20 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 )}
               </>
             )}
+
             <NavRow onBack={() => setStep(7)} onNext={() => setStep(9)} nextLabel="Next: Results →" />
           </div>
         )}
 
-        {/* ── STEP 9 ── */}
+        {/* ── STEP 9: Results & Decision Record ───────────────────────────── */}
         {step === 9 && (
           <div className="space-y-6">
             <div>
               <h2 className="text-xl font-bold">Step 9 — Results & USDA Decision Record™</h2>
               <p className="text-sm text-slate-400 mt-1">Full eligibility summary, red flags, and Decision Record save.</p>
             </div>
+
+            {/* Verdict banner */}
             <div className={`rounded-2xl border p-8 text-center ${verdict === "ELIGIBLE" ? "bg-green-900/20 border-green-600/50" : verdict === "BORDERLINE" ? "bg-yellow-900/20 border-yellow-600/50" : "bg-red-900/20 border-red-600/50"}`}>
               <div className={`text-5xl font-black mb-3 ${verdict === "ELIGIBLE" ? "text-green-400" : verdict === "BORDERLINE" ? "text-yellow-400" : "text-red-400"}`}>
                 {verdict === "ELIGIBLE" ? "✅ ELIGIBLE" : verdict === "BORDERLINE" ? "⚠ BORDERLINE" : "⛔ NOT ELIGIBLE"}
@@ -1226,8 +937,11 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 {verdict === "NOT_ELIGIBLE" && "Scenario fails a hard USDA requirement. See flags below. Consider FHA."}
               </p>
             </div>
+
+            {/* Full Summary */}
             <Card className="space-y-6">
               <h3 className="font-bold text-slate-100">Decision Record™ — Full Summary</h3>
+
               <div>
                 <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Property</div>
                 <div className="flex flex-wrap gap-2">
@@ -1238,6 +952,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                   {hardFlags.length === 0 && warnFlags.length === 0 && ruralStatus === "eligible" && !donutHole && <Chip status="pass">No Property Issues</Chip>}
                 </div>
               </div>
+
               <div>
                 <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Household Income</div>
                 <div className="grid grid-cols-4 gap-3 text-sm">
@@ -1249,6 +964,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                   <Chip status={incomeRatio <= 1.0 ? "pass" : incomeRatio <= 1.15 ? "warn" : "fail"}>Income: {incomeRatio <= 1.0 ? "PASS" : incomeRatio <= 1.15 ? "BORDERLINE" : "FAIL"}</Chip>
                 </div>
               </div>
+
               <div>
                 <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Loan Structure</div>
                 <div className="grid grid-cols-4 gap-3 text-sm">
@@ -1257,6 +973,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                   ))}
                 </div>
               </div>
+
               <div>
                 <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">DTI & Qualifying</div>
                 <div className="grid grid-cols-4 gap-3 text-sm">
@@ -1270,6 +987,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                   {cfCount > 0 && <Chip status="info">{cfCount} Compensating Factor{cfCount > 1 ? "s" : ""}</Chip>}
                 </div>
               </div>
+
               {pp > 0 && rate > 0 && (
                 <div>
                   <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Program Comparison</div>
@@ -1281,12 +999,16 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 </div>
               )}
             </Card>
+
+            {/* LO Notes */}
             <Card>
               <label className="block text-sm font-semibold text-slate-300 mb-2">LO Notes for Decision Record</label>
               <textarea value={loNotes} onChange={e => setLoNotes(e.target.value)} rows={4}
                 placeholder="Document manual verifications needed, lender overlays, compensating factor details, borrower-specific considerations..."
                 className="w-full bg-slate-700 border border-slate-600 rounded-xl px-4 py-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-green-500 text-sm" />
             </Card>
+
+            {/* Red Flags */}
             {(warnFlags.length > 0 || manualUW || incomeRatio > 1.0 || donutHole) && (
               <div className="bg-red-900/10 border border-red-700/30 rounded-2xl p-5">
                 <h3 className="text-sm font-bold text-red-300 mb-3">🚩 Red Flags Requiring LO Verification</h3>
@@ -1298,9 +1020,14 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 </ul>
               </div>
             )}
+
+            {/* Actions */}
             <div className="flex gap-4 print:hidden">
-              <button onClick={handleSave} disabled={saving || saved}
-                className="flex-1 py-3 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white font-bold rounded-xl text-sm transition-all">
+              <button
+                onClick={handleSave}
+                disabled={saving || saved}
+                className="flex-1 py-3 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white font-bold rounded-xl text-sm transition-all"
+              >
                 {saving ? "Saving..." : saved ? "✓ Saved to Decision Record™" : "💾 Save Decision Record™"}
               </button>
               <button onClick={() => window.print()}
@@ -1308,6 +1035,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
                 🖨 Print PDF
               </button>
             </div>
+
             <NavRow onBack={() => setStep(8)} />
           </div>
         )}
