@@ -141,6 +141,8 @@ export default function USDAIntelligence() {
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [savingProgress, setSavingProgress] = useState(false);
+  const [progressSaved, setProgressSaved] = useState(false);
   const [borrowerName, setBorrowerName] = useState("");
 
   // Step 1
@@ -224,7 +226,14 @@ export default function USDAIntelligence() {
           : parseFloat(d.coBorrowerIncome) || 0;
         if (coInc > 0) setCoBorrowerInc(String(coInc));
         if (d.monthlyDebts) setOtherDebts(String(d.monthlyDebts));
-        if (d.creditScore) setCreditScore(String(d.creditScore));
+        // Use lowest middle score across all borrowers (controlling score)
+        const primaryScore = parseInt(d.creditScore) || 0;
+        const coScores = (d.coBorrowers || [])
+          .map(cb => parseInt(cb.creditScore) || 0)
+          .filter(s => s > 300);
+        const allScores = [primaryScore, ...coScores].filter(s => s > 300);
+        const controllingScore = allScores.length > 0 ? Math.min(...allScores) : primaryScore;
+        if (controllingScore) setCreditScore(String(controllingScore));
         // propTaxes and homeInsurance are stored MONTHLY in ScenarioCreator — multiply by 12
         if (d.propTaxes) setTaxesAnnual(String(Math.round(parseFloat(d.propTaxes) * 12)));
         if (d.homeInsurance) setInsuranceAnnual(String(Math.round(parseFloat(d.homeInsurance) * 12)));
@@ -452,6 +461,39 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
     }
   };
 
+  // ─── Save Progress to Scenario ───────────────────────────────────────────────
+  const handleSaveProgress = async () => {
+    if (!scenarioId) return;
+    setSavingProgress(true);
+    setProgressSaved(false);
+    try {
+      const { updateDoc, doc: fsDoc } = await import("firebase/firestore");
+      await updateDoc(fsDoc(db, "scenarios", scenarioId), {
+        // Write USDA module values back to scenario so they persist on reload
+        // propTaxes and homeInsurance stored monthly in ScenarioCreator
+        propTaxes: taxesAnnual ? Math.round(parseFloat(taxesAnnual) / 12) : 0,
+        homeInsurance: insuranceAnnual ? Math.round(parseFloat(insuranceAnnual) / 12) : 0,
+        loanAmount: parseFloat(baseLoan) || 0,
+        propertyValue: parseFloat(purchasePrice) || 0,
+        interestRate: parseFloat(interestRate) || 0,
+        monthlyIncome: parseFloat(borrowerInc) || 0,
+        coBorrowerIncome: parseFloat(coBorrowerInc) || 0,
+        monthlyDebts: parseFloat(otherDebts) || 0,
+        creditScore: parseInt(creditScore) || 0,
+        hoaDues: parseFloat(hoaMonthly) || 0,
+        householdSize: hhSize,
+        updated_at: new Date(),
+      });
+      setProgressSaved(true);
+      setTimeout(() => setProgressSaved(false), 3000);
+    } catch (err) {
+      console.error("Save progress error:", err);
+      alert("Save failed — check connection.");
+    } finally {
+      setSavingProgress(false);
+    }
+  };
+
   // ─── Save Decision Record ─────────────────────────────────────────────────
   const handleSave = async () => {
     setSaving(true);
@@ -549,7 +591,7 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
               <span className="text-white font-bold text-base">{borrowerName}</span>
               {address && <span className="text-blue-200 text-sm">{address}</span>}
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-blue-100">
-                {creditScore && <span>FICO <strong className="text-white">{creditScore}</strong></span>}
+                {creditScore && <span>FICO <strong className="text-white">{creditScore}</strong> <span className="text-blue-300 text-xs">(controlling)</span></span>}
                 <span>Loan <strong className="text-white">USDA</strong></span>
                 {purchasePrice && <span>Price <strong className="text-white">${Number(purchasePrice).toLocaleString()}</strong></span>}
                 {baseLoan && <span>Loan Amt <strong className="text-white">${Number(baseLoan).toLocaleString()}</strong></span>}
@@ -566,6 +608,26 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
 
       {/* Decision Record Banner */}
       <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="USDA_INTELLIGENCE" />
+
+      {/* Save Progress Button — visible on all steps */}
+      {scenarioId && (
+        <div className="bg-slate-800 border-b border-slate-700 px-6 py-2 flex items-center justify-between print:hidden">
+          <p className="text-xs text-slate-500">Step {step} of 9 — changes are not saved until you click Save Progress or Save Decision Record</p>
+          <button
+            onClick={handleSaveProgress}
+            disabled={savingProgress}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-slate-200 text-xs font-semibold rounded-lg border border-slate-600 transition-all"
+          >
+            {savingProgress ? (
+              <><span className="w-3 h-3 border border-slate-400 border-t-transparent rounded-full animate-spin inline-block" /> Saving…</>
+            ) : progressSaved ? (
+              <><span className="text-green-400">✓</span> Saved to Scenario</>
+            ) : (
+              <>💾 Save Progress</>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* Step tabs */}
       <div className="bg-slate-800/60 border-b border-slate-700 print:hidden">
