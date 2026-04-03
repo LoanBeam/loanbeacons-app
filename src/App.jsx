@@ -36,6 +36,7 @@ import PiggybackOptimizer from './pages/PiggybackOptimizer'
 import DisclosureIntel from './pages/DisclosureIntel'
 import ComplianceIntel from './pages/ComplianceIntel'
 import FloodIntel from './pages/FloodIntel'
+import BankStatementIntel from './pages/BankStatementIntel'
 
 const STANDALONE_ROUTES = ['/ae-share']
 
@@ -85,6 +86,7 @@ function AppShell() {
         <Route path="/flood-intel" element={<FloodIntel />} />
         <Route path="/intelligent-checklist" element={<IntelligentChecklist />} />
         <Route path="/piggyback-optimizer" element={<PiggybackOptimizer />} />
+        <Route path="/bank-statement-intel" element={<BankStatementIntel />} />
       </Routes>
       {!isStandalone && <Footer />}
     </div>

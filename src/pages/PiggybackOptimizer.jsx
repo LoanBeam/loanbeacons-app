@@ -1,651 +1,988 @@
-import { useState, useEffect, useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { doc, getDoc } from 'firebase/firestore'
-import { db } from '../firebase/config'
-import { useDecisionRecord } from '../hooks/useDecisionRecord'
-import { MODULE_KEYS } from '../constants/decisionRecordConstants'
-import DecisionRecordBanner from '../components/DecisionRecordBanner'
+// src/pages/PiggybackOptimizer.jsx
+// LoanBeacons™ — Module 19 | Stage 1: Pre-Structure
+// Piggyback 2nd Optimizer™ — 80/10/10 · 80/15/5 · Single Loan + PMI comparison
+
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
+import { db } from '../firebase/config';
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import ScenarioHeader from '../components/ScenarioHeader';
 import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
-// ─────────────────────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────────────────────
+// ─── Math Engine ──────────────────────────────────────────────────────────────
 function monthlyPayment(principal, annualRate, termMonths) {
-  if (!principal || !annualRate || !termMonths) return 0
-  const r = annualRate / 100 / 12
-  if (r === 0) return principal / termMonths
-  return principal * (r * Math.pow(1 + r, termMonths)) / (Math.pow(1 + r, termMonths) - 1)
+  if (!principal || !annualRate || !termMonths) return 0;
+  const r = annualRate / 100 / 12;
+  if (r === 0) return principal / termMonths;
+  return principal * (r * Math.pow(1 + r, termMonths)) / (Math.pow(1 + r, termMonths) - 1);
 }
 
-function fmt(n) {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
-function fmtInt(n) {
-  return Math.round(n).toLocaleString('en-US')
-}
-
-// Estimate monthly PMI: roughly 0.5–1.2% of loan annually, scaled to LTV
 function estimatePMI(loanAmount, ltv) {
-  if (ltv <= 80) return 0
-  // Higher LTV = higher PMI rate
-  let annualRate = 0.0085 // default ~0.85%
-  if (ltv > 95) annualRate = 0.012
-  else if (ltv > 90) annualRate = 0.010
-  else if (ltv > 85) annualRate = 0.0085
-  else annualRate = 0.006
-  return (loanAmount * annualRate) / 12
+  if (ltv <= 80) return 0;
+  let annualRate = 0.0085;
+  if (ltv > 95)      annualRate = 0.012;
+  else if (ltv > 90) annualRate = 0.010;
+  else if (ltv > 85) annualRate = 0.0085;
+  else               annualRate = 0.006;
+  return (loanAmount * annualRate) / 12;
 }
 
-// Month when PMI drops off (when balance reaches 80% of original value)
-function pmiDropOffMonth(principal, annualRate, termMonths, originalHomeValue) {
-  const target = originalHomeValue * 0.80
-  const r = annualRate / 100 / 12
-  let balance = principal
-  const pmt = monthlyPayment(principal, annualRate, termMonths)
+function pmiDropOffMonth(principal, annualRate, termMonths, homeValue) {
+  const target = homeValue * 0.80;
+  const r = annualRate / 100 / 12;
+  let balance = principal;
+  const pmt = monthlyPayment(principal, annualRate, termMonths);
   for (let m = 1; m <= termMonths; m++) {
-    const interest = balance * r
-    balance = balance - (pmt - interest)
-    if (balance <= target) return m
+    balance = balance - (pmt - balance * r);
+    if (balance <= target) return m;
   }
-  return termMonths
+  return termMonths;
 }
 
-// 5-year total cost comparison
-function fiveYearCost(monthlyPITI, closingCostAdder = 0) {
-  return monthlyPITI * 60 + closingCostAdder
+// ─── Formatters ───────────────────────────────────────────────────────────────
+const fmt0  = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
+const fmtD  = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
+const fmtPct = (n) => isNaN(n) ? '--' : Number(n).toFixed(3) + '%';
+
+// ─── Glossary ─────────────────────────────────────────────────────────────────
+const GLOSSARY = [
+  { term: 'Piggyback Loan',  icon: '🏗️', definition: 'A second mortgage taken simultaneously with the first — "piggybacks" on top. Used to avoid PMI by keeping the first lien at 80% LTV.', highlight: true },
+  { term: '80/10/10',        icon: '📊', definition: '80% first lien · 10% second lien · 10% down payment. The classic piggyback. First lien is 30yr fixed; second is typically a 10–15yr fixed or HELOC.', highlight: false },
+  { term: '80/15/5',         icon: '📈', definition: '80% first lien · 15% second lien · 5% down. Reduces the cash to close vs 80/10/10 but increases the 2nd lien balance and payment.', highlight: true },
+  { term: 'PMI',             icon: '⚠️', definition: 'Private Mortgage Insurance. Required when LTV exceeds 80% on conventional loans. Typically 0.5–1.2% of the loan annually. Cancels when balance reaches 80% of original value.', highlight: false },
+  { term: 'CLTV',            icon: '📐', definition: 'Combined Loan-to-Value. Sum of first and second lien balances ÷ property value. Most lenders cap CLTV at 89.99% for piggyback structures.', highlight: false },
+  { term: 'Break-Even',      icon: '⚖️', definition: 'The point in time when cumulative PMI savings from a piggyback exceed the extra interest paid on the second lien. If moving within this window, single + PMI may be smarter.', highlight: true },
+];
+
+const WHEN_TO_USE = [
+  { scenario: 'Avoid PMI — 10–15% Down',  icon: '🚫', color: 'blue',   tip: 'Classic use case. Borrower has 10–15% down but wants to avoid PMI. Piggyback keeps 1st lien at 80% and eliminates the insurance cost entirely.' },
+  { scenario: 'Maximize Purchasing Power', icon: '💪', color: 'violet', tip: '80/15/5 drops required cash to close to just 5% while still avoiding PMI — gives the borrower more flexibility on a tighter down payment.' },
+  { scenario: 'Jumbo Avoidance',           icon: '📉', color: 'emerald', tip: 'Purchase price just above conforming limit? A piggyback can keep the first lien at the conforming limit, avoiding jumbo pricing on the full balance.' },
+  { scenario: 'Short Hold Period',         icon: '⏱️', color: 'amber',  tip: 'Planning to sell or refi within 2–3 years? Single + PMI may beat the piggyback — less setup complexity and the PMI cost may not accumulate long enough to matter.' },
+];
+
+// ─── Letter Builders ──────────────────────────────────────────────────────────
+function buildBorrowerLetter({ borrowerName, purchasePrice, bestScenario, calc, firstRate, secondRate8010, secondRate8015, singleRate, termYears, downPct, loNotes, aiSummary }) {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const bestLabel = bestScenario === 'piggyback_8010' ? '80/10/10 Piggyback' : bestScenario === 'piggyback_8015' ? '80/15/5 Piggyback' : 'Single Loan + PMI';
+  const lines = [];
+  lines.push(today); lines.push('');
+  lines.push('Dear ' + (borrowerName || 'Valued Client') + ',');
+  lines.push(''); lines.push('RE: Piggyback Loan Structure Analysis — Financing Options Comparison'); lines.push('');
+  lines.push('I have completed a side-by-side analysis of your financing options for a home purchase of ' + fmt0(purchasePrice) + '. Below is a summary of each structure and my recommendation.');
+  lines.push(''); lines.push('THE THREE OPTIONS ANALYZED'); lines.push('');
+  lines.push('1. 80/10/10 PIGGYBACK');
+  lines.push('   Down Payment: ' + fmt0(calc.down_8010) + ' (10%)');
+  lines.push('   1st Lien: ' + fmt0(calc.loan1_8010) + ' at ' + firstRate + '% — ' + fmtD(calc.pmt1_8010) + '/mo');
+  lines.push('   2nd Lien: ' + fmt0(calc.loan2_8010) + ' at ' + (secondRate8010 || '?') + '% — ' + fmtD(calc.pmt2_8010) + '/mo');
+  lines.push('   PMI: None · Total P&I: ' + fmtD(calc.totalPI_8010) + '/mo');
+  lines.push('   5-Year Total Cost: ' + fmt0(calc.cost5yr_8010)); lines.push('');
+  lines.push('2. 80/15/5 PIGGYBACK');
+  lines.push('   Down Payment: ' + fmt0(calc.down_8015) + ' (5%)');
+  lines.push('   1st Lien: ' + fmt0(calc.loan1_8015) + ' at ' + firstRate + '% — ' + fmtD(calc.pmt1_8015) + '/mo');
+  lines.push('   2nd Lien: ' + fmt0(calc.loan2_8015) + ' at ' + (secondRate8015 || '?') + '% — ' + fmtD(calc.pmt2_8015) + '/mo');
+  lines.push('   PMI: None · Total P&I: ' + fmtD(calc.totalPI_8015) + '/mo');
+  lines.push('   5-Year Total Cost: ' + fmt0(calc.cost5yr_8015)); lines.push('');
+  lines.push('3. SINGLE LOAN + PMI');
+  lines.push('   Down Payment: ' + fmt0(calc.downAmount) + ' (' + downPct + '%)');
+  lines.push('   Loan: ' + fmt0(calc.loanSingle) + ' at ' + (singleRate || firstRate) + '%');
+  lines.push('   PMI: ' + fmtD(calc.pmiMonthly) + '/mo (drops ~month ' + calc.pmiDropMonth + ')');
+  lines.push('   Total P&I+PMI: ' + fmtD(calc.totalPI_single) + '/mo');
+  lines.push('   Total PMI Cost (est.): ' + fmt0(calc.pmiTotalCost));
+  lines.push('   5-Year Total Cost: ' + fmt0(calc.cost5yr_single)); lines.push('');
+  lines.push('RECOMMENDATION: ' + bestLabel.toUpperCase());
+  lines.push('Based on your scenario, the ' + bestLabel + ' has the lowest 5-year total cost.');
+  if (aiSummary) { lines.push(''); lines.push('AI ANALYSIS SUMMARY'); lines.push(aiSummary); }
+  lines.push(''); lines.push('IMPORTANT NOTES');
+  lines.push('• 2nd lien rates vary by lender and product type. Rates quoted here are estimates.');
+  lines.push('• PMI can be tax-deductible for some borrowers — consult your tax advisor.');
+  lines.push('• This analysis is based on current rates and your stated down payment. Final numbers will be confirmed at loan application.');
+  if (loNotes) { lines.push(''); lines.push('ADDITIONAL NOTES'); lines.push(loNotes); }
+  lines.push(''); lines.push('Please reach out with any questions. I am happy to walk through each option in detail.');
+  lines.push(''); lines.push('Respectfully,');
+  lines.push(''); lines.push('George Jules Chevalier IV, NMLS #1175947');
+  lines.push('Clearview Lending Solutions'); lines.push('george@cvls.loans | cvls.loans');
+  return lines.join('\n');
 }
 
-const SCENARIOS = [
-  { id: 'piggyback_8010', label: '80/10/10', description: '10% 2nd lien + 10% down — no PMI' },
-  { id: 'piggyback_8015', label: '80/15/5', description: '15% 2nd lien + 5% down — no PMI' },
-  { id: 'single_pmi',     label: 'Single Loan + PMI', description: 'One loan at full LTV with PMI' },
-]
-
-const COLOR = {
-  piggyback_8010: { header: 'bg-blue-600', badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30', ring: 'ring-blue-500' },
-  piggyback_8015: { header: 'bg-purple-600', badge: 'bg-purple-500/20 text-purple-300 border-purple-500/30', ring: 'ring-purple-500' },
-  single_pmi:     { header: 'bg-orange-600', badge: 'bg-orange-500/20 text-orange-300 border-orange-500/30', ring: 'ring-orange-500' },
+function buildLOLetter({ borrowerName, purchasePrice, bestScenario, calc, firstRate, secondRate8010, secondRate8015, singleRate, termYears, secondTerm, downPct, loNotes }) {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const bestLabel = bestScenario === 'piggyback_8010' ? '80/10/10' : bestScenario === 'piggyback_8015' ? '80/15/5' : 'Single + PMI';
+  const lines = [];
+  lines.push(today); lines.push('');
+  lines.push('To: Mortgage Underwriter / Processor');
+  lines.push('From: George Jules Chevalier IV, NMLS #1175947 — Clearview Lending Solutions');
+  lines.push('Re: Piggyback Structure Analysis — ' + (borrowerName || 'Borrower'));
+  lines.push(''); lines.push('RECOMMENDED STRUCTURE: ' + bestLabel);
+  lines.push('Purchase Price: ' + fmt0(purchasePrice));
+  lines.push('Down Payment: ' + downPct + '% (' + fmt0(calc.downAmount) + ')');
+  lines.push('1st Lien Rate: ' + firstRate + '% · Term: ' + termYears + ' years');
+  if (bestScenario !== 'single_pmi') {
+    lines.push('2nd Lien Rate (80/10/10): ' + (secondRate8010 || 'TBD') + '% · 2nd Lien Rate (80/15/5): ' + (secondRate8015 || 'TBD') + '%');
+    lines.push('2nd Lien Term: ' + secondTerm + ' years');
+  }
+  lines.push(''); lines.push('COMPARISON SUMMARY');
+  lines.push('Structure         | Monthly P&I     | 5-Yr Cost       | PMI');
+  lines.push('80/10/10          | ' + fmtD(calc.totalPI_8010) + '     | ' + fmt0(calc.cost5yr_8010) + '    | None');
+  lines.push('80/15/5           | ' + fmtD(calc.totalPI_8015) + '     | ' + fmt0(calc.cost5yr_8015) + '    | None');
+  lines.push('Single + PMI      | ' + fmtD(calc.totalPI_single) + '     | ' + fmt0(calc.cost5yr_single) + '    | ' + fmtD(calc.pmiMonthly) + '/mo (drops mo.' + calc.pmiDropMonth + ')');
+  lines.push(''); lines.push('UNDERWRITING NOTES');
+  lines.push('• CLTV for piggyback structures: 90% (1st + 2nd combined)');
+  lines.push('• Second lien must be simultaneous close — verify lender allows piggyback');
+  lines.push('• Verify 2nd lien product availability with lender (HELOC vs fixed 2nd)');
+  lines.push('• CLTV limit for conventional: typically 89.99% — confirm with investor');
+  if (loNotes) { lines.push(''); lines.push('LO NOTES'); lines.push(loNotes); }
+  lines.push(''); lines.push('George Jules Chevalier IV, NMLS #1175947');
+  lines.push('Clearview Lending Solutions | george@cvls.loans | cvls.loans');
+  return lines.join('\n');
 }
 
+function LetterCard({ title, icon, body, color = 'violet' }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className={'rounded-3xl border-2 overflow-hidden ' + (color === 'violet' ? 'border-violet-200 bg-violet-50' : 'border-blue-200 bg-blue-50')}>
+      <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
+        <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
+        <div className="flex gap-2">
+          <button onClick={() => { navigator.clipboard.writeText(body); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+            className={'text-xs px-4 py-2 rounded-xl text-white transition-colors ' + (color === 'violet' ? 'bg-violet-700 hover:bg-violet-600' : 'bg-blue-700 hover:bg-blue-600')}>
+            {copied ? '✓ Copied' : 'Copy Letter'}
+          </button>
+          <button onClick={() => window.print()} className="text-xs px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white">Print</button>
+        </div>
+      </div>
+      <pre className="p-6 text-xs text-slate-700 whitespace-pre-wrap leading-relaxed font-mono">{body}</pre>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function PiggybackOptimizer() {
-  const [searchParams] = useSearchParams()
-  const scenarioIdParam = searchParams.get('scenarioId')
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const scenarioId = searchParams.get('scenarioId');
 
-  const [scenario, setScenario] = useState(null)
-  const [loading, setLoading] = useState(false)
+  const [scenario, setScenario]   = useState(null);
+  const [scenarios, setScenarios] = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [borrowerName, setBorrowerName] = useState('');
+
+  const [activeTab, setActiveTab] = useState(0);
 
   // Inputs
-  const [purchasePrice, setPurchasePrice] = useState('')
-  const [downPct, setDownPct] = useState('10')  // default 10% down
-  const [firstRate, setFirstRate] = useState('')
-  const [secondRate8010, setSecondRate8010] = useState('')
-  const [secondRate8015, setSecondRate8015] = useState('')
-  const [singleRate, setSingleRate] = useState('')
-  const [termYears, setTermYears] = useState('30')
-  const [secondTerm, setSecondTerm] = useState('15')  // 2nd lien typically 15yr HELOC/fixed
-  const [taxesMonthly, setTaxesMonthly] = useState('')
-  const [insuranceMonthly, setInsuranceMonthly] = useState('')
-  const [bestScenario, setBestScenario] = useState(null)
+  const [purchasePrice, setPurchasePrice]     = useState('');
+  const [downPct, setDownPct]                 = useState('10');
+  const [firstRate, setFirstRate]             = useState('');
+  const [secondRate8010, setSecondRate8010]   = useState('');
+  const [secondRate8015, setSecondRate8015]   = useState('');
+  const [singleRate, setSingleRate]           = useState('');
+  const [termYears, setTermYears]             = useState('30');
+  const [secondTerm, setSecondTerm]           = useState('15');
+  const [taxesMonthly, setTaxesMonthly]       = useState('');
+  const [insuranceMonthly, setInsuranceMonthly] = useState('');
+  const [bestScenario, setBestScenario]       = useState(null);
 
-  const [recordSaving, setRecordSaving] = useState(false)
-  const [savedRecordId, setSavedRecordId] = useState(null)
+  // AI
+  const [aiAnalysis, setAiAnalysis]   = useState(null);
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
 
-  const { reportFindings } = useDecisionRecord(scenarioIdParam)
+  // Notes & letters
+  const [loNotes, setLoNotes]               = useState('');
+  const [activeLetterTab, setActiveLetterTab] = useState('borrower');
 
+  // Decision Record
+  const [recordSaving, setRecordSaving]   = useState(false);
+  const [savedRecordId, setSavedRecordId] = useState(null);
+  const { reportFindings } = useDecisionRecord(scenarioId);
+
+  // ─── localStorage ────────────────────────────────────────────────────────────
+  const lsKey = scenarioId ? `lb_piggyback_${scenarioId}` : null;
+
+  const saveToStorage = useCallback(() => {
+    if (!lsKey) return;
+    localStorage.setItem(lsKey, JSON.stringify({
+      purchasePrice, downPct, firstRate, secondRate8010, secondRate8015, singleRate,
+      termYears, secondTerm, taxesMonthly, insuranceMonthly, loNotes, aiAnalysis, savedRecordId,
+    }));
+  }, [lsKey, purchasePrice, downPct, firstRate, secondRate8010, secondRate8015, singleRate,
+      termYears, secondTerm, taxesMonthly, insuranceMonthly, loNotes, aiAnalysis, savedRecordId]);
+
+  useEffect(() => { saveToStorage(); }, [saveToStorage]);
+
+  // ─── Load scenario ────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!scenarioIdParam) return
-    const load = async () => {
-      setLoading(true)
-      try {
-        const snap = await getDoc(doc(db, 'scenarios', scenarioIdParam))
-        if (snap.exists()) {
-          const data = snap.data()
-          setScenario(data)
-          const pp = data.propertyValue || data.purchasePrice || data.purchase_price || ''
-          const ir = data.interestRate || ''
-          if (pp) setPurchasePrice(String(pp))
-          if (ir) {
-            setFirstRate(String(parseFloat(ir).toFixed(3)))
-            setSingleRate(String(parseFloat(ir).toFixed(3)))
-          }
-          // Taxes & insurance from scenario if available
-          if (data.monthlyTaxes) setTaxesMonthly(String(data.monthlyTaxes))
-          if (data.monthlyInsurance) setInsuranceMonthly(String(data.monthlyInsurance))
-        }
-      } catch (err) {
-        console.error('Failed to load scenario:', err)
-      } finally {
-        setLoading(false)
-      }
+    if (!scenarioId) {
+      getDocs(collection(db, 'scenarios')).then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(console.error).finally(() => setLoading(false));
+      return;
     }
-    load()
-  }, [scenarioIdParam])
+    if (lsKey) {
+      try {
+        const saved = JSON.parse(localStorage.getItem(lsKey) || 'null');
+        if (saved) {
+          if (saved.purchasePrice)   setPurchasePrice(saved.purchasePrice);
+          if (saved.downPct)         setDownPct(saved.downPct);
+          if (saved.firstRate)       setFirstRate(saved.firstRate);
+          if (saved.secondRate8010)  setSecondRate8010(saved.secondRate8010);
+          if (saved.secondRate8015)  setSecondRate8015(saved.secondRate8015);
+          if (saved.singleRate)      setSingleRate(saved.singleRate);
+          if (saved.termYears)       setTermYears(saved.termYears);
+          if (saved.secondTerm)      setSecondTerm(saved.secondTerm);
+          if (saved.taxesMonthly)    setTaxesMonthly(saved.taxesMonthly);
+          if (saved.insuranceMonthly) setInsuranceMonthly(saved.insuranceMonthly);
+          if (saved.loNotes)         setLoNotes(saved.loNotes);
+          if (saved.aiAnalysis)      setAiAnalysis(saved.aiAnalysis);
+          if (saved.savedRecordId)   setSavedRecordId(saved.savedRecordId);
+        }
+      } catch (_) {}
+    }
+    getDoc(doc(db, 'scenarios', scenarioId)).then(snap => {
+      if (snap.exists()) {
+        const d = { id: snap.id, ...snap.data() };
+        setScenario(d);
+        const name = [d.firstName, d.lastName].filter(Boolean).join(' ');
+        if (name) setBorrowerName(name.trim());
+        if (d.propertyValue) setPurchasePrice(prev => prev || String(d.propertyValue));
+        if (d.interestRate) {
+          const r = parseFloat(d.interestRate).toFixed(3);
+          setFirstRate(prev => prev || r);
+          setSingleRate(prev => prev || r);
+        }
+        if (d.monthlyTaxes)     setTaxesMonthly(prev => prev || String(d.monthlyTaxes));
+        if (d.monthlyInsurance) setInsuranceMonthly(prev => prev || String(d.monthlyInsurance));
+      }
+    }).catch(console.error).finally(() => setLoading(false));
+  }, [scenarioId, lsKey]);
 
-  // ── Core calculations ──────────────────────────────────────
+  // ─── Core Calculations ────────────────────────────────────────────────────────
   const calc = useMemo(() => {
-    const pp = parseFloat(purchasePrice) || 0
-    const dp = parseFloat(downPct) / 100
-    const taxes = parseFloat(taxesMonthly) || 0
-    const ins = parseFloat(insuranceMonthly) || 0
-    const term = parseInt(termYears) * 12
-    const term2 = parseInt(secondTerm) * 12
-    const r1 = parseFloat(firstRate) || 0
-    const r2_8010 = parseFloat(secondRate8010) || 0
-    const r2_8015 = parseFloat(secondRate8015) || 0
-    const rSingle = parseFloat(singleRate) || 0
+    const pp  = parseFloat(purchasePrice) || 0;
+    const dp  = parseFloat(downPct) / 100;
+    const taxes = parseFloat(taxesMonthly) || 0;
+    const ins   = parseFloat(insuranceMonthly) || 0;
+    const term  = parseInt(termYears) * 12;
+    const term2 = parseInt(secondTerm) * 12;
+    const r1    = parseFloat(firstRate) || 0;
+    const r2_8010 = parseFloat(secondRate8010) || 0;
+    const r2_8015 = parseFloat(secondRate8015) || 0;
+    const rSingle = parseFloat(singleRate) || 0;
 
-    if (!pp || !r1) return null
+    if (!pp || !r1) return null;
 
-    const downAmount = pp * dp
+    const downAmount = pp * dp;
 
-    // ── 80/10/10 ──────────────────────────────────────────────
-    const loan1_8010 = pp * 0.80
-    const loan2_8010 = pp * 0.10
-    const down_8010 = pp * 0.10
-    const pmt1_8010 = monthlyPayment(loan1_8010, r1, term)
-    const pmt2_8010 = r2_8010 ? monthlyPayment(loan2_8010, r2_8010, term2) : 0
-    const totalPI_8010 = pmt1_8010 + pmt2_8010
-    const totalPITI_8010 = totalPI_8010 + taxes + ins
-    const ltv_8010 = 80
+    // 80/10/10
+    const loan1_8010 = pp * 0.80;
+    const loan2_8010 = pp * 0.10;
+    const down_8010  = pp * 0.10;
+    const pmt1_8010  = monthlyPayment(loan1_8010, r1, term);
+    const pmt2_8010  = r2_8010 ? monthlyPayment(loan2_8010, r2_8010, term2) : 0;
+    const totalPI_8010   = pmt1_8010 + pmt2_8010;
+    const totalPITI_8010 = totalPI_8010 + taxes + ins;
 
-    // ── 80/15/5 ──────────────────────────────────────────────
-    const loan1_8015 = pp * 0.80
-    const loan2_8015 = pp * 0.15
-    const down_8015 = pp * 0.05
-    const pmt1_8015 = monthlyPayment(loan1_8015, r1, term)
-    const pmt2_8015 = r2_8015 ? monthlyPayment(loan2_8015, r2_8015, term2) : 0
-    const totalPI_8015 = pmt1_8015 + pmt2_8015
-    const totalPITI_8015 = totalPI_8015 + taxes + ins
-    const ltv_8015 = 80
+    // 80/15/5
+    const loan1_8015 = pp * 0.80;
+    const loan2_8015 = pp * 0.15;
+    const down_8015  = pp * 0.05;
+    const pmt1_8015  = monthlyPayment(loan1_8015, r1, term);
+    const pmt2_8015  = r2_8015 ? monthlyPayment(loan2_8015, r2_8015, term2) : 0;
+    const totalPI_8015   = pmt1_8015 + pmt2_8015;
+    const totalPITI_8015 = totalPI_8015 + taxes + ins;
 
-    // ── Single + PMI ──────────────────────────────────────────
-    const ltvSingle = (1 - dp) * 100
-    const loanSingle = pp * (1 - dp)
-    const pmtSingle = monthlyPayment(loanSingle, rSingle || r1, term)
-    const pmiMonthly = estimatePMI(loanSingle, ltvSingle)
-    const totalPI_single = pmtSingle + pmiMonthly
-    const totalPITI_single = totalPI_single + taxes + ins
-    const pmiDropMonth = ltvSingle > 80
-      ? pmiDropOffMonth(loanSingle, rSingle || r1, term, pp)
-      : 0
-    const pmiTotalCost = pmiMonthly * pmiDropMonth
+    // Single + PMI
+    const ltvSingle   = (1 - dp) * 100;
+    const loanSingle  = pp * (1 - dp);
+    const pmtSingle   = monthlyPayment(loanSingle, rSingle || r1, term);
+    const pmiMonthly  = estimatePMI(loanSingle, ltvSingle);
+    const totalPI_single   = pmtSingle + pmiMonthly;
+    const totalPITI_single = totalPI_single + taxes + ins;
+    const pmiDropMonth = ltvSingle > 80 ? pmiDropOffMonth(loanSingle, rSingle || r1, term, pp) : 0;
+    const pmiTotalCost = pmiMonthly * pmiDropMonth;
 
-    // ── 5-year cost comparison ────────────────────────────────
-    const cost5yr_8010 = fiveYearCost(totalPITI_8010)
-    const cost5yr_8015 = fiveYearCost(totalPITI_8015)
-    const cost5yr_single = fiveYearCost(totalPITI_single)
+    // 5-year costs
+    const cost5yr_8010   = totalPITI_8010 * 60;
+    const cost5yr_8015   = totalPITI_8015 * 60;
+    const cost5yr_single = totalPITI_single * 60;
 
-    // ── Break-even: single+PMI vs piggyback ──────────────────
-    // Month where cumulative PMI paid = extra 2nd lien interest paid
-    // Simplified: find when 80/10/10 cumulative becomes cheaper than single
-    const monthlyDiff_8010_vs_single = totalPITI_8010 - totalPITI_single
-    const monthlyDiff_8015_vs_single = totalPITI_8015 - totalPITI_single
+    // Monthly deltas
+    const diff_8010_vs_single = totalPITI_8010 - totalPITI_single;
+    const diff_8015_vs_single = totalPITI_8015 - totalPITI_single;
 
     return {
-      pp,
-      // 80/10/10
-      loan1_8010, loan2_8010, down_8010, pmt1_8010, pmt2_8010,
-      totalPI_8010, totalPITI_8010, cost5yr_8010, ltv_8010,
-      // 80/15/5
-      loan1_8015, loan2_8015, down_8015, pmt1_8015, pmt2_8015,
-      totalPI_8015, totalPITI_8015, cost5yr_8015, ltv_8015,
-      // Single + PMI
-      ltvSingle, loanSingle, pmtSingle, pmiMonthly, pmiTotalCost,
-      totalPI_single, totalPITI_single, cost5yr_single, pmiDropMonth,
-      // Deltas
-      monthlyDiff_8010_vs_single, monthlyDiff_8015_vs_single,
-      downAmount,
-    }
-  }, [purchasePrice, downPct, firstRate, secondRate8010, secondRate8015,
-      singleRate, termYears, secondTerm, taxesMonthly, insuranceMonthly])
+      pp, downAmount,
+      loan1_8010, loan2_8010, down_8010, pmt1_8010, pmt2_8010, totalPI_8010, totalPITI_8010, cost5yr_8010,
+      loan1_8015, loan2_8015, down_8015, pmt1_8015, pmt2_8015, totalPI_8015, totalPITI_8015, cost5yr_8015,
+      ltvSingle, loanSingle, pmtSingle, pmiMonthly, pmiTotalCost, pmiDropMonth,
+      totalPI_single, totalPITI_single, cost5yr_single,
+      diff_8010_vs_single, diff_8015_vs_single,
+    };
+  }, [purchasePrice, downPct, firstRate, secondRate8010, secondRate8015, singleRate, termYears, secondTerm, taxesMonthly, insuranceMonthly]);
 
-  // Auto-pick best scenario
+  // Auto-pick best
   useEffect(() => {
-    if (!calc) return
+    if (!calc) return;
     const costs = [
       { id: 'piggyback_8010', cost: calc.cost5yr_8010 },
       { id: 'piggyback_8015', cost: calc.cost5yr_8015 },
-      { id: 'single_pmi', cost: calc.cost5yr_single },
-    ]
-    const best = costs.sort((a, b) => a.cost - b.cost)[0]
-    setBestScenario(best.id)
-  }, [calc])
+      { id: 'single_pmi',     cost: calc.cost5yr_single },
+    ];
+    setBestScenario(costs.sort((a, b) => a.cost - b.cost)[0].id);
+  }, [calc]);
 
-  const handleSaveToRecord = async () => {
-    if (!scenarioIdParam || !calc) return
-    setRecordSaving(true)
+  // ─── AI Analysis ─────────────────────────────────────────────────────────────
+  const handleAIAnalysis = async () => {
+    if (!calc) return;
+    setAiAnalyzing(true);
     try {
-      const findings = {
-        inputs: { purchasePrice: calc.pp, downPct, firstRate, secondRate8010, secondRate8015, singleRate, termYears, secondTerm },
-        piggyback_8010: {
-          firstLoan: calc.loan1_8010, secondLoan: calc.loan2_8010, downPayment: calc.down_8010,
-          monthlyPI: calc.totalPI_8010, monthlyPITI: calc.totalPITI_8010, fiveYearCost: calc.cost5yr_8010,
-        },
-        piggyback_8015: {
-          firstLoan: calc.loan1_8015, secondLoan: calc.loan2_8015, downPayment: calc.down_8015,
-          monthlyPI: calc.totalPI_8015, monthlyPITI: calc.totalPITI_8015, fiveYearCost: calc.cost5yr_8015,
-        },
-        single_pmi: {
-          loan: calc.loanSingle, ltv: calc.ltvSingle, monthlyPMI: calc.pmiMonthly,
-          pmiDropMonth: calc.pmiDropMonth, totalPMICost: calc.pmiTotalCost,
-          monthlyPI: calc.totalPI_single, monthlyPITI: calc.totalPITI_single, fiveYearCost: calc.cost5yr_single,
-        },
-        recommendation: bestScenario,
-      }
-      const writtenId = await reportFindings(MODULE_KEYS.PIGGYBACK_OPTIMIZER, findings)
-      if (writtenId) setSavedRecordId(writtenId)
-    } catch (err) {
-      console.error('Failed to save:', err)
-    } finally {
-      setRecordSaving(false)
-    }
-  }
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514', max_tokens: 1200,
+          messages: [{ role: 'user', content: `You are a senior mortgage loan officer analyzing piggyback loan structures. Provide a recommendation for this borrower.
 
-  const borrowerName = scenario
-    ? `${scenario.firstName || ''} ${scenario.lastName || ''}`.trim() || 'Borrower'
-    : null
+SCENARIO:
+Purchase Price: ${fmt0(calc.pp)}
+Down Payment: ${downPct}% (${fmt0(calc.downAmount)})
+1st Lien Rate: ${firstRate}% · Term: ${termYears} years
+2nd Lien Rate (80/10/10): ${secondRate8010 || 'not provided'}%
+2nd Lien Rate (80/15/5): ${secondRate8015 || 'not provided'}%
+Single Loan Rate: ${singleRate || firstRate}%
+2nd Lien Term: ${secondTerm} years
 
-  const hasSecondRates = secondRate8010 && secondRate8015
+CALCULATED RESULTS:
+80/10/10 → Monthly P&I: ${fmtD(calc.totalPI_8010)} · Down: ${fmt0(calc.down_8010)} · 5yr cost: ${fmt0(calc.cost5yr_8010)}
+80/15/5 → Monthly P&I: ${fmtD(calc.totalPI_8015)} · Down: ${fmt0(calc.down_8015)} · 5yr cost: ${fmt0(calc.cost5yr_8015)}
+Single+PMI → Monthly P&I+PMI: ${fmtD(calc.totalPI_single)} · PMI: ${fmtD(calc.pmiMonthly)}/mo · PMI drops month ${calc.pmiDropMonth} · 5yr cost: ${fmt0(calc.cost5yr_single)}
+Best by 5yr cost: ${bestScenario?.replace('_', ' ')}
+
+Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_pmi","summary":"2-3 sentence recommendation explanation","reasonsForPiggyback":["up to 3 reasons piggyback wins in this scenario"],"reasonsAgainst":["up to 2 reasons single+PMI might be better"],"talkingPoints":["2-3 borrower-friendly talking points"],"watchOuts":["1-2 things LO must verify with lender"]}` }],
+        }),
+      });
+      if (!resp.ok) throw new Error('Status ' + resp.status);
+      const data = await resp.json();
+      const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) setAiAnalysis(JSON.parse(match[0]));
+    } catch (err) { console.error('AI analysis failed:', err); }
+    setAiAnalyzing(false);
+  };
+
+  // ─── Decision Record ──────────────────────────────────────────────────────────
+  const handleSaveToRecord = async () => {
+    if (!calc) return;
+    setRecordSaving(true);
+    try {
+      const writtenId = await reportFindings({
+        verdict: bestScenario === 'single_pmi' ? 'Single + PMI recommended' : bestScenario === 'piggyback_8010' ? '80/10/10 recommended' : '80/15/5 recommended',
+        summary: `Piggyback Optimizer — Purchase ${fmt0(calc.pp)} · ${downPct}% down · Best structure: ${bestScenario?.replace('_', ' ')} · 5yr cost: ${fmt0(bestScenario === 'piggyback_8010' ? calc.cost5yr_8010 : bestScenario === 'piggyback_8015' ? calc.cost5yr_8015 : calc.cost5yr_single)}`,
+        riskFlags: [],
+        findings: {
+          purchasePrice: calc.pp, downPct: parseFloat(downPct), firstRate: parseFloat(firstRate),
+          secondRate8010: parseFloat(secondRate8010) || null, secondRate8015: parseFloat(secondRate8015) || null,
+          singleRate: parseFloat(singleRate) || null, termYears: parseInt(termYears), secondTerm: parseInt(secondTerm),
+          bestScenario, cost5yr_8010: calc.cost5yr_8010, cost5yr_8015: calc.cost5yr_8015, cost5yr_single: calc.cost5yr_single,
+          pmiMonthly: calc.pmiMonthly, pmiDropMonth: calc.pmiDropMonth, pmiTotalCost: calc.pmiTotalCost, loNotes,
+        },
+        completeness: { ratesEntered: !!(firstRate), purchasePriceEntered: !!(purchasePrice), aiRun: !!(aiAnalysis) },
+      });
+      if (writtenId) setSavedRecordId(writtenId);
+    } catch (e) { console.error(e); }
+    setRecordSaving(false);
+  };
+
+  const TABS = [
+    { id: 0, label: 'Loan Inputs',      icon: '⚙️' },
+    { id: 1, label: 'Comparison',        icon: '📊' },
+    { id: 2, label: 'Analysis & Letters', icon: '📝' },
+    { id: 3, label: 'Education',         icon: '📚' },
+  ];
+
+  const bestLabel   = bestScenario === 'piggyback_8010' ? '80/10/10' : bestScenario === 'piggyback_8015' ? '80/15/5' : 'Single + PMI';
+  const bestCost    = bestScenario === 'piggyback_8010' ? calc?.cost5yr_8010 : bestScenario === 'piggyback_8015' ? calc?.cost5yr_8015 : calc?.cost5yr_single;
+  const bestMonthly = bestScenario === 'piggyback_8010' ? calc?.totalPI_8010 : bestScenario === 'piggyback_8015' ? calc?.totalPI_8015 : calc?.totalPI_single;
+
+  if (loading) return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="text-center"><div className="text-5xl mb-4">🏗️</div><div className="text-slate-500">Loading...</div></div>
+    </div>
+  );
+
+  if (!scenarioId) return (
+    <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+      <div className="bg-slate-900 px-6 py-10">
+        <div className="max-w-2xl mx-auto">
+          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
+          <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 19</div>
+          <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Piggyback 2nd Optimizer™</h1>
+          <p className="text-slate-400">80/10/10 · 80/15/5 · Single Loan + PMI · Side-by-side cost comparison</p>
+        </div>
+      </div>
+      <div className="max-w-2xl mx-auto px-6 py-8">
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6">
+          <h2 className="font-bold text-slate-800 mb-4">Select a Scenario</h2>
+          {scenarios.length === 0 ? <p className="text-slate-400 text-sm">No scenarios found.</p> :
+            <div className="space-y-2">{scenarios.map(s => (
+              <button key={s.id} onClick={() => navigate('/piggyback-optimizer?scenarioId=' + s.id)}
+                className="w-full text-left p-4 border border-slate-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50 transition-all">
+                <div className="flex justify-between items-center">
+                  <div><div className="font-bold text-slate-800">{s.scenarioName || ([s.firstName, s.lastName].filter(Boolean).join(' ')) || 'Unnamed'}</div><div className="text-xs text-slate-500 mt-0.5">{fmt0(s.loanAmount)} · {s.loanType}</div></div>
+                  <span className="text-blue-400 text-xl">→</span>
+                </div>
+              </button>
+            ))}</div>
+          }
+        </div>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      {/* Header */}
-      <div className="bg-gray-900 border-b border-gray-800 px-6 py-5">
-        <div className="max-w-5xl mx-auto">
-          <div className="flex items-center gap-3 mb-1">
-            <span className="text-2xl">🏗️</span>
-            <h1 className="text-2xl font-bold text-white">Piggyback 2nd Optimizer™</h1>
-            <span className="text-xs bg-orange-500/20 text-orange-300 border border-orange-500/30 px-2 py-0.5 rounded-full font-medium">
-              Module 19
-            </span>
+    <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+
+      {/* Hero */}
+      <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #3b82f6 0%, transparent 50%), radial-gradient(circle at 80% 20%, #8b5cf6 0%, transparent 40%)' }} />
+        <div className="relative max-w-7xl mx-auto px-6 py-8">
+          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
+          <div className="flex items-start justify-between flex-wrap gap-6">
+            <div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 19</div>
+              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Piggyback 2nd Optimizer™</h1>
+              <p className="text-slate-400 text-base max-w-xl">80/10/10 · 80/15/5 · Single Loan + PMI · Side-by-side payment & 5-year cost comparison</p>
+            </div>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px' }}>
+              {scenario ? (
+                <>
+                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
+                  <div className="text-white font-bold">{borrowerName || scenario.scenarioName}</div>
+                  <div className="text-slate-400 text-sm mt-1">{purchasePrice ? fmt0(parseFloat(purchasePrice)) : '--'} · {downPct}% down</div>
+                  {bestScenario && calc && (
+                    <div className={'text-sm font-bold mt-1 ' + (bestScenario === 'single_pmi' ? 'text-orange-300' : 'text-blue-300')}>
+                      Best: {bestLabel} · {fmt0(bestMonthly)}/mo
+                    </div>
+                  )}
+                </>
+              ) : <div className="text-slate-400 text-sm">No scenario loaded</div>}
+            </div>
           </div>
-          <p className="text-gray-400 text-sm ml-9">
-            80/10/10 · 80/15/5 · Single Loan + PMI — side-by-side payment &amp; cost comparison
-          </p>
-          {borrowerName && (
-            <p className="text-orange-400 text-sm ml-9 mt-1 font-medium">
-              📁 {borrowerName}
-              {scenario?.streetAddress ? ` — ${scenario.streetAddress}` : ''}
-            </p>
-          )}
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-6 py-6 space-y-6">
-
-        {scenarioIdParam && (
-          <DecisionRecordBanner
-            scenarioId={scenarioIdParam}
-            onSave={handleSaveToRecord}
-            saving={recordSaving}
-            savedRecordId={savedRecordId}
-          />
-        )}
-
-        {loading && (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-400">
-            Loading scenario data…
-          </div>
-        )}
-
-        {/* Inputs */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">
-            Loan Parameters
-          </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Purchase Price ($)</label>
-              <input type="number" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)}
-                placeholder="450,000"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Actual Down Payment %</label>
-              <select value={downPct} onChange={e => setDownPct(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500">
-                <option value="5">5%</option>
-                <option value="10">10%</option>
-                <option value="15">15%</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">1st Lien Rate (%)</label>
-              <input type="number" step="0.125" value={firstRate} onChange={e => setFirstRate(e.target.value)}
-                placeholder="7.125"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">1st Lien Term</label>
-              <select value={termYears} onChange={e => setTermYears(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500">
-                <option value="30">30 Years</option>
-                <option value="20">20 Years</option>
-                <option value="15">15 Years</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">2nd Lien Rate — 80/10/10 (%)</label>
-              <input type="number" step="0.125" value={secondRate8010} onChange={e => setSecondRate8010(e.target.value)}
-                placeholder="8.500"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">2nd Lien Rate — 80/15/5 (%)</label>
-              <input type="number" step="0.125" value={secondRate8015} onChange={e => setSecondRate8015(e.target.value)}
-                placeholder="8.750"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Single Loan Rate (%)</label>
-              <input type="number" step="0.125" value={singleRate} onChange={e => setSingleRate(e.target.value)}
-                placeholder="7.125"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">2nd Lien Term</label>
-              <select value={secondTerm} onChange={e => setSecondTerm(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500">
-                <option value="10">10 Years</option>
-                <option value="15">15 Years</option>
-                <option value="20">20 Years</option>
-                <option value="30">30 Years</option>
-              </select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Monthly Taxes ($) <span className="text-gray-500">optional</span></label>
-              <input type="number" value={taxesMonthly} onChange={e => setTaxesMonthly(e.target.value)}
-                placeholder="500"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Monthly Insurance ($) <span className="text-gray-500">optional</span></label>
-              <input type="number" value={insuranceMonthly} onChange={e => setInsuranceMonthly(e.target.value)}
-                placeholder="150"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500" />
+      {/* Borrower Bar */}
+      {scenarioId && borrowerName && (
+        <div className="bg-[#1B3A6B] px-6 py-3">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-1">
+            <span className="text-white font-bold text-sm">{borrowerName}</span>
+            {scenario?.streetAddress && <span className="text-blue-200 text-xs">{[scenario.streetAddress, scenario.city, scenario.state].filter(Boolean).join(', ')}</span>}
+            <div className="flex flex-wrap gap-x-4 text-xs text-blue-200">
+              {purchasePrice && <span>Price <strong className="text-white">{fmt0(parseFloat(purchasePrice))}</strong></span>}
+              {firstRate && <span>1st Rate <strong className="text-white">{firstRate}%</strong></span>}
+              {bestScenario && <span>Best <strong className="text-white">{bestLabel}</strong></span>}
             </div>
           </div>
         </div>
+      )}
 
-        {/* Results */}
-        {calc && (firstRate || singleRate) && (
-          <>
-            {/* Recommendation banner */}
-            {bestScenario && (
-              <div className={`rounded-xl border p-4 flex items-center gap-3 ${
-                bestScenario === 'piggyback_8010' ? 'bg-blue-900/20 border-blue-500/40' :
-                bestScenario === 'piggyback_8015' ? 'bg-purple-900/20 border-purple-500/40' :
-                'bg-orange-900/20 border-orange-500/40'
-              }`}>
-                <span className="text-2xl">🏆</span>
-                <div>
-                  <p className={`font-bold text-sm ${
-                    bestScenario === 'piggyback_8010' ? 'text-blue-300' :
-                    bestScenario === 'piggyback_8015' ? 'text-purple-300' : 'text-orange-300'
-                  }`}>
-                    Lowest 5-Year Cost: {SCENARIOS.find(s => s.id === bestScenario)?.label}
-                  </p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Based on current rates and inputs. Verify 2nd lien availability with lender.
-                  </p>
+      <ScenarioHeader moduleTitle="Piggyback 2nd Optimizer™" moduleNumber="19" scenarioId={scenarioId} />
+      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2"><DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="PIGGYBACK_OPTIMIZER" /></div>
+
+      {/* Tab Bar */}
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="flex gap-0">
+            {TABS.map(tab => (
+              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                className={'flex items-center gap-2 px-6 py-4 text-sm font-semibold border-b-2 transition-all ' + (activeTab === tab.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300')}>
+                <span>{tab.icon}</span><span>{tab.label}</span>
+                {tab.id === 1 && calc && bestScenario && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-black">{bestLabel}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+          <div className="xl:col-span-2 space-y-8">
+
+            {/* ─── TAB 0: INPUTS ─────────────────────────────────────────────── */}
+            {activeTab === 0 && (
+              <>
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
+                    <h2 className="text-xl font-bold text-white">Loan Parameters</h2>
+                    <p className="text-slate-400 text-sm mt-1">Enter the purchase price, down payment, and rates for each structure. Results calculate instantly.</p>
+                  </div>
+                  <div className="p-8 space-y-6">
+                    {/* Purchase & Down */}
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Purchase Price ($)</label>
+                        <input type="number" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)} placeholder="450000"
+                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-blue-400" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Actual Down Payment</label>
+                        <div className="flex gap-2">
+                          {['5', '10', '15'].map(p => (
+                            <button key={p} onClick={() => setDownPct(p)}
+                              className={'flex-1 py-3 rounded-2xl border-2 text-sm font-bold transition-all ' + (downPct === p ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500 hover:border-slate-300')}>
+                              {p}%
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 1st Lien */}
+                    <div className="border-2 border-blue-100 rounded-2xl p-5 bg-blue-50">
+                      <div className="text-xs font-bold text-blue-600 uppercase tracking-wide mb-4">1st Lien (applies to all three structures)</div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Rate (%)</label>
+                          <input type="number" step="0.125" value={firstRate} onChange={e => setFirstRate(e.target.value)} placeholder="7.125"
+                            className="w-full border-2 border-blue-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-blue-500 bg-white" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Term</label>
+                          <select value={termYears} onChange={e => setTermYears(e.target.value)}
+                            className="w-full border-2 border-blue-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-blue-500 bg-white">
+                            {[['30','30 Years'],['20','20 Years'],['15','15 Years']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2nd Lien rates */}
+                    <div className="grid grid-cols-2 gap-5">
+                      <div className="border-2 border-slate-200 rounded-2xl p-5">
+                        <div className="text-xs font-bold text-blue-600 uppercase tracking-wide mb-3">80/10/10 — 2nd Lien Rate</div>
+                        <input type="number" step="0.125" value={secondRate8010} onChange={e => setSecondRate8010(e.target.value)} placeholder="8.500"
+                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-blue-400" />
+                        {calc && secondRate8010 && <div className="text-xs text-blue-600 mt-2 font-semibold">2nd payment: {fmtD(calc.pmt2_8010)}/mo</div>}
+                      </div>
+                      <div className="border-2 border-slate-200 rounded-2xl p-5">
+                        <div className="text-xs font-bold text-violet-600 uppercase tracking-wide mb-3">80/15/5 — 2nd Lien Rate</div>
+                        <input type="number" step="0.125" value={secondRate8015} onChange={e => setSecondRate8015(e.target.value)} placeholder="8.750"
+                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-violet-400" />
+                        {calc && secondRate8015 && <div className="text-xs text-violet-600 mt-2 font-semibold">2nd payment: {fmtD(calc.pmt2_8015)}/mo</div>}
+                      </div>
+                    </div>
+
+                    {/* Single + 2nd term */}
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Single Loan Rate (%) <span className="text-slate-400 normal-case font-normal">optional — defaults to 1st rate</span></label>
+                        <input type="number" step="0.125" value={singleRate} onChange={e => setSingleRate(e.target.value)} placeholder={firstRate || '7.125'}
+                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-orange-400" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">2nd Lien Term</label>
+                        <select value={secondTerm} onChange={e => setSecondTerm(e.target.value)}
+                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-blue-400 bg-white">
+                          {[['10','10 Years'],['15','15 Years'],['20','20 Years'],['30','30 Years']].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Taxes & Insurance */}
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Monthly Property Taxes ($) <span className="text-slate-400 normal-case font-normal">optional</span></label>
+                        <input type="number" value={taxesMonthly} onChange={e => setTaxesMonthly(e.target.value)} placeholder="500"
+                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-blue-400" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Monthly Insurance ($) <span className="text-slate-400 normal-case font-normal">optional</span></label>
+                        <input type="number" value={insuranceMonthly} onChange={e => setInsuranceMonthly(e.target.value)} placeholder="150"
+                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-blue-400" />
+                      </div>
+                    </div>
+
+                    {calc && (
+                      <button onClick={() => setActiveTab(1)} className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl transition-colors">
+                        View Comparison →
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </>
             )}
 
-            {/* Comparison Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* ─── TAB 1: COMPARISON ─────────────────────────────────────────── */}
+            {activeTab === 1 && (
+              <>
+                {!calc ? (
+                  <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center">
+                    <div className="text-4xl mb-4">⚙️</div>
+                    <p className="text-slate-500">Enter purchase price and 1st lien rate in Loan Inputs to run the comparison.</p>
+                    <button onClick={() => setActiveTab(0)} className="mt-4 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl text-sm">Go to Inputs →</button>
+                  </div>
+                ) : (
+                  <>
+                    {/* Best recommendation banner */}
+                    {bestScenario && (
+                      <div className={'rounded-3xl border-2 p-5 flex items-center gap-4 ' + (bestScenario === 'piggyback_8010' ? 'border-blue-300 bg-blue-50' : bestScenario === 'piggyback_8015' ? 'border-violet-300 bg-violet-50' : 'border-orange-300 bg-orange-50')}>
+                        <span className="text-4xl">🏆</span>
+                        <div>
+                          <div className={'text-lg font-black ' + (bestScenario === 'piggyback_8010' ? 'text-blue-700' : bestScenario === 'piggyback_8015' ? 'text-violet-700' : 'text-orange-700')}>
+                            Lowest 5-Year Cost: {bestLabel}
+                          </div>
+                          <div className="text-sm text-slate-500 mt-0.5">{fmt0(bestMonthly)}/mo · {fmt0(bestCost)} over 5 years · Based on current rates and inputs</div>
+                          <div className="text-xs text-slate-400 mt-1">Verify 2nd lien availability with lender · CLTV must be ≤ 89.99% for conventional piggyback</div>
+                        </div>
+                      </div>
+                    )}
 
-              {/* 80/10/10 */}
-              <div className={`bg-gray-900 border-2 rounded-xl overflow-hidden ${bestScenario === 'piggyback_8010' ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-gray-700'}`}>
-                <div className="bg-blue-600 px-4 py-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-bold text-white">80/10/10</h3>
-                    {bestScenario === 'piggyback_8010' && <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-full font-bold">BEST</span>}
-                  </div>
-                  <p className="text-blue-100 text-xs mt-0.5">10% 2nd lien + 10% down</p>
-                </div>
-                <div className="p-4 space-y-3">
-                  <div className="flex justify-between text-sm border-b border-gray-800 pb-2">
-                    <span className="text-gray-400">Down Payment</span>
-                    <span className="text-white font-medium">${fmtInt(calc.down_8010)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-400">1st Lien ({firstRate}%)</span>
-                    <span className="text-white">${fmt(calc.pmt1_8010)}/mo</span>
-                  </div>
-                  {secondRate8010 && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-400">2nd Lien ({secondRate8010}%)</span>
-                      <span className="text-white">${fmt(calc.pmt2_8010)}/mo</span>
+                    {/* Three comparison cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                      {[
+                        { id: 'piggyback_8010', label: '80/10/10', color: 'blue', icon: '🏗️', sub: '10% 2nd + 10% down',
+                          rows: [
+                            ['Down Payment', fmt0(calc.down_8010), ''],
+                            ['1st Lien', fmt0(calc.loan1_8010), fmtD(calc.pmt1_8010) + '/mo'],
+                            ['2nd Lien', fmt0(calc.loan2_8010), secondRate8010 ? fmtD(calc.pmt2_8010) + '/mo' : 'Rate needed'],
+                            ['PMI', 'None ✓', ''],
+                          ],
+                          highlight: { label: 'Total P&I', value: fmtD(calc.totalPI_8010) + '/mo' },
+                          bottom: [['5-Year Cost', fmt0(calc.cost5yr_8010)], (taxesMonthly || insuranceMonthly) ? ['Total PITI', fmtD(calc.totalPITI_8010) + '/mo'] : null].filter(Boolean),
+                        },
+                        { id: 'piggyback_8015', label: '80/15/5', color: 'violet', icon: '🏘️', sub: '15% 2nd + 5% down',
+                          rows: [
+                            ['Down Payment', fmt0(calc.down_8015), ''],
+                            ['1st Lien', fmt0(calc.loan1_8015), fmtD(calc.pmt1_8015) + '/mo'],
+                            ['2nd Lien', fmt0(calc.loan2_8015), secondRate8015 ? fmtD(calc.pmt2_8015) + '/mo' : 'Rate needed'],
+                            ['PMI', 'None ✓', ''],
+                          ],
+                          highlight: { label: 'Total P&I', value: fmtD(calc.totalPI_8015) + '/mo' },
+                          bottom: [['5-Year Cost', fmt0(calc.cost5yr_8015)], (taxesMonthly || insuranceMonthly) ? ['Total PITI', fmtD(calc.totalPITI_8015) + '/mo'] : null].filter(Boolean),
+                        },
+                        { id: 'single_pmi', label: 'Single + PMI', color: 'orange', icon: '📋', sub: downPct + '% down, 1 loan',
+                          rows: [
+                            ['Down Payment', fmt0(calc.downAmount), ''],
+                            ['Loan Amount', fmt0(calc.loanSingle), fmtD(calc.pmtSingle) + '/mo'],
+                            ['PMI', fmtD(calc.pmiMonthly) + '/mo', 'drops mo. ' + calc.pmiDropMonth],
+                            ['Total PMI Cost', fmt0(calc.pmiTotalCost), ''],
+                          ],
+                          highlight: { label: 'Total P&I+PMI', value: fmtD(calc.totalPI_single) + '/mo' },
+                          bottom: [['5-Year Cost', fmt0(calc.cost5yr_single)], ['PMI Drops', 'Month ' + calc.pmiDropMonth + ' (~' + Math.floor(calc.pmiDropMonth / 12) + 'y ' + (calc.pmiDropMonth % 12) + 'm)']],
+                        },
+                      ].map(card => {
+                        const isBest = bestScenario === card.id;
+                        const colorBorder = { blue: 'border-blue-500', violet: 'border-violet-500', orange: 'border-orange-500' };
+                        const colorBg    = { blue: 'bg-blue-600', violet: 'bg-violet-600', orange: 'bg-orange-600' };
+                        const colorText  = { blue: 'text-blue-300', violet: 'text-violet-300', orange: 'text-orange-300' };
+                        const colorHL   = { blue: 'bg-blue-900/20 border-blue-500/30', violet: 'bg-violet-900/20 border-violet-500/30', orange: 'bg-orange-900/20 border-orange-500/30' };
+                        return (
+                          <div key={card.id} className={'bg-white rounded-3xl border-2 overflow-hidden ' + (isBest ? colorBorder[card.color] + ' shadow-lg' : 'border-slate-200')}>
+                            <div className={colorBg[card.color] + ' px-5 py-4'}>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xl">{card.icon}</span>
+                                  <span className="font-black text-white">{card.label}</span>
+                                </div>
+                                {isBest && <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-full font-bold">BEST</span>}
+                              </div>
+                              <div className="text-xs text-white/70 mt-0.5">{card.sub}</div>
+                            </div>
+                            <div className="p-5 space-y-2">
+                              {card.rows.map(([label, val, sub]) => (
+                                <div key={label} className="flex justify-between items-start text-sm border-b border-slate-100 pb-2">
+                                  <span className="text-slate-500">{label}</span>
+                                  <div className="text-right">
+                                    <div className={'font-semibold ' + (label === 'PMI' && val === 'None ✓' ? 'text-emerald-600' : label === 'PMI' ? 'text-red-500' : 'text-slate-800')}>{val}</div>
+                                    {sub && <div className="text-xs text-slate-400">{sub}</div>}
+                                  </div>
+                                </div>
+                              ))}
+                              <div className={'rounded-2xl border p-3 ' + colorHL[card.color]}>
+                                <div className="flex justify-between items-center">
+                                  <span className="text-sm font-bold text-slate-600">{card.highlight.label}</span>
+                                  <span className={'text-base font-black ' + colorText[card.color]}>{card.highlight.value}</span>
+                                </div>
+                              </div>
+                              {card.bottom.map(([l, v]) => (
+                                <div key={l} className="flex justify-between text-xs text-slate-500">
+                                  <span>{l}</span><span className="font-semibold text-slate-700">{v}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  )}
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-400">PMI</span>
-                    <span className="text-green-400 font-medium">None ✓</span>
-                  </div>
-                  <div className="bg-blue-900/20 rounded-lg p-3 border border-blue-500/20">
-                    <div className="flex justify-between text-sm font-bold">
-                      <span className="text-gray-300">Total P&I</span>
-                      <span className="text-blue-300">${fmt(calc.totalPI_8010)}/mo</span>
+
+                    {/* Summary table */}
+                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
+                        <h2 className="text-xl font-bold text-white">Side-by-Side Summary</h2>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-100">
+                              <th className="text-left px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wide">Metric</th>
+                              <th className="text-right px-4 py-4 text-xs font-bold text-blue-600 uppercase">80/10/10</th>
+                              <th className="text-right px-4 py-4 text-xs font-bold text-violet-600 uppercase">80/15/5</th>
+                              <th className="text-right px-4 py-4 text-xs font-bold text-orange-600 uppercase">Single + PMI</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {[
+                              { label: 'Down Payment',    v1: fmt0(calc.down_8010),       v2: fmt0(calc.down_8015),       v3: fmt0(calc.downAmount) },
+                              { label: '1st Lien Amount', v1: fmt0(calc.loan1_8010),      v2: fmt0(calc.loan1_8015),      v3: fmt0(calc.loanSingle) },
+                              { label: '2nd Lien Amount', v1: fmt0(calc.loan2_8010),      v2: fmt0(calc.loan2_8015),      v3: '—' },
+                              { label: 'Monthly P&I',     v1: fmtD(calc.totalPI_8010),    v2: fmtD(calc.totalPI_8015),    v3: fmtD(calc.totalPI_single) },
+                              { label: 'Monthly PMI',     v1: 'None', v2: 'None',         v3: fmtD(calc.pmiMonthly), highlight3: true },
+                              { label: '5-Year Total',    v1: fmt0(calc.cost5yr_8010),    v2: fmt0(calc.cost5yr_8015),    v3: fmt0(calc.cost5yr_single), isCost: true },
+                              { label: 'PMI Duration',    v1: 'N/A', v2: 'N/A',           v3: calc.pmiDropMonth > 0 ? '~' + Math.floor(calc.pmiDropMonth / 12) + 'y ' + (calc.pmiDropMonth % 12) + 'm' : 'N/A' },
+                              { label: 'Total PMI Cost',  v1: '—', v2: '—',               v3: fmt0(calc.pmiTotalCost), highlight3: true },
+                            ].map(row => {
+                              const bestV = row.isCost ? Math.min(calc.cost5yr_8010, calc.cost5yr_8015, calc.cost5yr_single) : null;
+                              return (
+                                <tr key={row.label} className="hover:bg-slate-50">
+                                  <td className="px-6 py-3 text-slate-600 font-medium">{row.label}</td>
+                                  <td className={'px-4 py-3 text-right font-semibold ' + (row.isCost && calc.cost5yr_8010 === bestV ? 'text-emerald-600 font-black' : 'text-blue-600')}>{row.v1}</td>
+                                  <td className={'px-4 py-3 text-right font-semibold ' + (row.isCost && calc.cost5yr_8015 === bestV ? 'text-emerald-600 font-black' : 'text-violet-600')}>{row.v2}</td>
+                                  <td className={'px-4 py-3 text-right font-semibold ' + (row.highlight3 ? 'text-red-500' : row.isCost && calc.cost5yr_single === bestV ? 'text-emerald-600 font-black' : 'text-orange-600')}>{row.v3}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                    {(taxesMonthly || insuranceMonthly) && (
-                      <div className="flex justify-between text-xs mt-1">
-                        <span className="text-gray-500">Total PITI</span>
-                        <span className="text-gray-300">${fmt(calc.totalPITI_8010)}/mo</span>
+
+                    {/* Break-even bar */}
+                    {calc.pmiDropMonth > 0 && (
+                      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
+                        <h3 className="text-lg font-bold text-slate-800 mb-2">PMI Drop-Off Timeline</h3>
+                        <p className="text-sm text-slate-500 mb-5">When the single loan balance reaches 80% of the original value, PMI cancels automatically.</p>
+                        <div className="space-y-3">
+                          {[['PMI drops at month', calc.pmiDropMonth, 'mo', 360], ['Years until PMI gone', (calc.pmiDropMonth / 12).toFixed(1), 'years', 30]].map(([label, val, unit, max]) => (
+                            <div key={label}>
+                              <div className="flex justify-between text-sm mb-1.5">
+                                <span className="text-slate-600 font-semibold">{label}</span>
+                                <span className="font-bold text-slate-800">{val} {unit}</span>
+                              </div>
+                              <div className="bg-slate-100 rounded-full h-3 overflow-hidden">
+                                <div className="h-full bg-orange-400 rounded-full transition-all" style={{ width: Math.min(100, (val / max) * 100) + '%' }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-4 text-xs text-slate-400">💡 If the borrower plans to sell or refi before month {calc.pmiDropMonth}, the total PMI cost ({fmt0(calc.pmiTotalCost)}) may be less than the extra 2nd lien interest paid.</div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+
+            {/* ─── TAB 2: ANALYSIS & LETTERS ─────────────────────────────────── */}
+            {activeTab === 2 && (
+              <>
+                {/* AI Analysis */}
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
+                    <h2 className="text-xl font-bold text-white">AI Structure Recommendation</h2>
+                    <p className="text-slate-400 text-sm mt-1">Sonnet analyzes your specific numbers and explains which structure wins — and why</p>
+                  </div>
+                  <div className="p-8">
+                    {!aiAnalysis ? (
+                      <div className="text-center py-6">
+                        <div className="text-4xl mb-4">🤖</div>
+                        <p className="text-slate-500 text-sm mb-4">Run AI analysis to get a recommendation, borrower talking points, and lender watch-outs.</p>
+                        <button onClick={handleAIAnalysis} disabled={aiAnalyzing || !calc}
+                          className="px-8 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold rounded-2xl transition-colors">
+                          {aiAnalyzing ? 'Analyzing...' : !calc ? 'Enter loan inputs first' : '🤖 Run AI Analysis'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-5">
+                        <div className={'inline-block px-4 py-2 rounded-xl border-2 font-black text-sm ' + (aiAnalysis.recommendation === 'single_pmi' ? 'bg-orange-100 text-orange-800 border-orange-300' : 'bg-blue-100 text-blue-800 border-blue-300')}>
+                          Recommended: {aiAnalysis.recommendation === 'piggyback_8010' ? '80/10/10 Piggyback' : aiAnalysis.recommendation === 'piggyback_8015' ? '80/15/5 Piggyback' : 'Single Loan + PMI'}
+                        </div>
+                        <p className="text-slate-700 leading-relaxed">{aiAnalysis.summary}</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {[['✅ Why Piggyback Wins', aiAnalysis.reasonsForPiggyback, 'emerald'], ['⚠️ When Single+PMI Might Win', aiAnalysis.reasonsAgainst, 'amber']].map(([label, items, color]) => (
+                            <div key={label} className={`rounded-2xl border p-4 bg-${color}-50 border-${color}-200`}>
+                              <div className={`text-xs font-bold text-${color}-700 mb-2`}>{label}</div>
+                              <ul className="space-y-1">{(items || []).map((item, i) => <li key={i} className={`text-xs text-${color}-800 flex gap-2`}><span className="shrink-0">•</span><span>{item}</span></li>)}</ul>
+                            </div>
+                          ))}
+                        </div>
+                        {aiAnalysis.talkingPoints?.length > 0 && (
+                          <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5">
+                            <div className="text-xs font-bold text-blue-700 uppercase tracking-wide mb-3">Borrower Talking Points</div>
+                            {aiAnalysis.talkingPoints.map((tp, i) => <div key={i} className="flex gap-2 text-sm text-blue-800 mb-2"><span className="shrink-0 font-bold">{i + 1}.</span><span>{tp}</span></div>)}
+                          </div>
+                        )}
+                        {aiAnalysis.watchOuts?.length > 0 && (
+                          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
+                            <div className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-3">⚠️ LO Must Verify with Lender</div>
+                            {aiAnalysis.watchOuts.map((w, i) => <div key={i} className="flex gap-2 text-sm text-amber-800 mb-1.5"><span className="shrink-0">•</span><span>{w}</span></div>)}
+                          </div>
+                        )}
+                        <button onClick={handleAIAnalysis} disabled={aiAnalyzing} className="text-xs text-blue-600 hover:text-blue-500 font-semibold">{aiAnalyzing ? 'Re-analyzing...' : '↺ Re-run'}</button>
                       </div>
                     )}
                   </div>
-                  <div className="flex justify-between text-xs text-gray-400 pt-1">
-                    <span>5-Year Total Cost</span>
-                    <span className="text-white font-semibold">${fmtInt(calc.cost5yr_8010)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs text-gray-400">
-                    <span>vs. Single + PMI</span>
-                    <span className={calc.monthlyDiff_8010_vs_single <= 0 ? 'text-green-400' : 'text-red-400'}>
-                      {calc.monthlyDiff_8010_vs_single <= 0 ? '▼' : '▲'} ${fmt(Math.abs(calc.monthlyDiff_8010_vs_single))}/mo
-                    </span>
-                  </div>
                 </div>
-              </div>
 
-              {/* 80/15/5 */}
-              <div className={`bg-gray-900 border-2 rounded-xl overflow-hidden ${bestScenario === 'piggyback_8015' ? 'border-purple-500 ring-2 ring-purple-500/30' : 'border-gray-700'}`}>
-                <div className="bg-purple-600 px-4 py-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-bold text-white">80/15/5</h3>
-                    {bestScenario === 'piggyback_8015' && <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-full font-bold">BEST</span>}
+                {/* LO Notes */}
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
+                    <h2 className="text-xl font-bold text-white">LO Notes</h2>
                   </div>
-                  <p className="text-purple-100 text-xs mt-0.5">15% 2nd lien + 5% down</p>
+                  <div className="p-8">
+                    <textarea value={loNotes} onChange={e => setLoNotes(e.target.value)} rows={4}
+                      placeholder="Structure rationale, lender overlays, borrower cash preference, 2nd lien product source, compensating factors..."
+                      className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-blue-400 resize-none" />
+                    <div className="mt-4 flex justify-end">
+                      <button onClick={handleSaveToRecord} disabled={recordSaving || !calc}
+                        className={'px-8 py-3 rounded-2xl text-sm font-bold transition-colors ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
+                        {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record™'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <div className="p-4 space-y-3">
-                  <div className="flex justify-between text-sm border-b border-gray-800 pb-2">
-                    <span className="text-gray-400">Down Payment</span>
-                    <span className="text-white font-medium">${fmtInt(calc.down_8015)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-400">1st Lien ({firstRate}%)</span>
-                    <span className="text-white">${fmt(calc.pmt1_8015)}/mo</span>
-                  </div>
-                  {secondRate8015 && (
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-400">2nd Lien ({secondRate8015}%)</span>
-                      <span className="text-white">${fmt(calc.pmt2_8015)}/mo</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-400">PMI</span>
-                    <span className="text-green-400 font-medium">None ✓</span>
-                  </div>
-                  <div className="bg-purple-900/20 rounded-lg p-3 border border-purple-500/20">
-                    <div className="flex justify-between text-sm font-bold">
-                      <span className="text-gray-300">Total P&I</span>
-                      <span className="text-purple-300">${fmt(calc.totalPI_8015)}/mo</span>
-                    </div>
-                    {(taxesMonthly || insuranceMonthly) && (
-                      <div className="flex justify-between text-xs mt-1">
-                        <span className="text-gray-500">Total PITI</span>
-                        <span className="text-gray-300">${fmt(calc.totalPITI_8015)}/mo</span>
+
+                {/* Letters */}
+                {calc && (
+                  <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5"><h2 className="text-xl font-bold text-white">Letters</h2></div>
+                    <div className="p-8">
+                      <div className="flex gap-2 mb-6">
+                        {[['borrower','👤 Borrower Letter'],['lo','📋 LO / Processor Summary']].map(([v,l]) => (
+                          <button key={v} onClick={() => setActiveLetterTab(v)}
+                            className={'px-5 py-2.5 rounded-2xl text-sm font-bold border-2 transition-all ' + (activeLetterTab === v ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-500 hover:border-slate-300')}>{l}</button>
+                        ))}
                       </div>
-                    )}
+                      {activeLetterTab === 'borrower' && <LetterCard title="Borrower Comparison Letter" icon="👤" color="violet" body={buildBorrowerLetter({ borrowerName, purchasePrice: calc.pp, bestScenario, calc, firstRate, secondRate8010, secondRate8015, singleRate, termYears, downPct, loNotes, aiSummary: aiAnalysis?.summary })} />}
+                      {activeLetterTab === 'lo' && <LetterCard title="LO / Processor Summary" icon="📋" color="blue" body={buildLOLetter({ borrowerName, purchasePrice: calc.pp, bestScenario, calc, firstRate, secondRate8010, secondRate8015, singleRate, termYears, secondTerm, downPct, loNotes })} />}
+                    </div>
                   </div>
-                  <div className="flex justify-between text-xs text-gray-400 pt-1">
-                    <span>5-Year Total Cost</span>
-                    <span className="text-white font-semibold">${fmtInt(calc.cost5yr_8015)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs text-gray-400">
-                    <span>vs. Single + PMI</span>
-                    <span className={calc.monthlyDiff_8015_vs_single <= 0 ? 'text-green-400' : 'text-red-400'}>
-                      {calc.monthlyDiff_8015_vs_single <= 0 ? '▼' : '▲'} ${fmt(Math.abs(calc.monthlyDiff_8015_vs_single))}/mo
-                    </span>
-                  </div>
-                </div>
-              </div>
+                )}
+              </>
+            )}
 
-              {/* Single + PMI */}
-              <div className={`bg-gray-900 border-2 rounded-xl overflow-hidden ${bestScenario === 'single_pmi' ? 'border-orange-500 ring-2 ring-orange-500/30' : 'border-gray-700'}`}>
-                <div className="bg-orange-600 px-4 py-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-bold text-white">Single + PMI</h3>
-                    {bestScenario === 'single_pmi' && <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-full font-bold">BEST</span>}
+            {/* ─── TAB 3: EDUCATION ──────────────────────────────────────────── */}
+            {activeTab === 3 && (
+              <>
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
+                    <h2 className="text-xl font-bold text-white">When to Use Piggyback Financing</h2>
+                    <p className="text-slate-400 text-sm mt-1">Understanding when each structure wins for the borrower</p>
                   </div>
-                  <p className="text-orange-100 text-xs mt-0.5">One loan · {downPct}% down · {fmt(calc.ltvSingle)}% LTV</p>
+                  <div className="p-8 grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    {WHEN_TO_USE.map(u => {
+                      const colorMap = { blue: 'bg-blue-50 border-blue-200', violet: 'bg-violet-50 border-violet-200', emerald: 'bg-emerald-50 border-emerald-200', amber: 'bg-amber-50 border-amber-200' };
+                      const textMap  = { blue: 'text-blue-700', violet: 'text-violet-700', emerald: 'text-emerald-700', amber: 'text-amber-700' };
+                      return (
+                        <div key={u.scenario} className={'rounded-2xl border p-5 ' + colorMap[u.color]}>
+                          <div className="text-2xl mb-2">{u.icon}</div>
+                          <div className={'text-sm font-bold mb-2 ' + textMap[u.color]}>{u.scenario}</div>
+                          <p className="text-xs text-slate-600 leading-relaxed">{u.tip}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="p-4 space-y-3">
-                  <div className="flex justify-between text-sm border-b border-gray-800 pb-2">
-                    <span className="text-gray-400">Down Payment</span>
-                    <span className="text-white font-medium">${fmtInt(calc.downAmount)}</span>
+
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
+                    <h2 className="text-xl font-bold text-white">Key Terms Glossary</h2>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-400">1st Lien ({singleRate || firstRate}%)</span>
-                    <span className="text-white">${fmt(calc.pmtSingle)}/mo</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-400">PMI (est.)</span>
-                    <span className="text-red-400">${fmt(calc.pmiMonthly)}/mo</span>
-                  </div>
-                  {calc.pmiDropMonth > 0 && (
-                    <div className="text-xs text-gray-500">
-                      PMI drops ~month {calc.pmiDropMonth} ({Math.floor(calc.pmiDropMonth/12)}y {calc.pmiDropMonth%12}m)
-                    </div>
-                  )}
-                  <div className="bg-orange-900/20 rounded-lg p-3 border border-orange-500/20">
-                    <div className="flex justify-between text-sm font-bold">
-                      <span className="text-gray-300">Total P&I+PMI</span>
-                      <span className="text-orange-300">${fmt(calc.totalPI_single)}/mo</span>
-                    </div>
-                    {(taxesMonthly || insuranceMonthly) && (
-                      <div className="flex justify-between text-xs mt-1">
-                        <span className="text-gray-500">Total PITI</span>
-                        <span className="text-gray-300">${fmt(calc.totalPITI_single)}/mo</span>
+                  <div className="p-8 space-y-4">
+                    {GLOSSARY.map(g => (
+                      <div key={g.term} className={'rounded-2xl border p-5 ' + (g.highlight ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200')}>
+                        <div className="flex items-center gap-3 mb-2">
+                          <span className="text-xl">{g.icon}</span>
+                          <span className={'font-bold text-sm ' + (g.highlight ? 'text-blue-800' : 'text-slate-800')}>{g.term}</span>
+                        </div>
+                        <p className="text-xs text-slate-600 leading-relaxed">{g.definition}</p>
                       </div>
-                    )}
-                  </div>
-                  <div className="flex justify-between text-xs text-gray-400 pt-1">
-                    <span>5-Year Total Cost</span>
-                    <span className="text-white font-semibold">${fmtInt(calc.cost5yr_single)}</span>
-                  </div>
-                  <div className="flex justify-between text-xs text-gray-400">
-                    <span>Total PMI Paid (est.)</span>
-                    <span className="text-red-400">${fmtInt(calc.pmiTotalCost)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Summary Table */}
-            <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-800">
-                <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
-                  Side-by-Side Summary
-                </h2>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-800">
-                      <th className="text-left px-5 py-3 text-xs text-gray-400 font-medium">Metric</th>
-                      <th className="text-right px-4 py-3 text-xs text-blue-400 font-medium">80/10/10</th>
-                      <th className="text-right px-4 py-3 text-xs text-purple-400 font-medium">80/15/5</th>
-                      <th className="text-right px-4 py-3 text-xs text-orange-400 font-medium">Single + PMI</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-800">
-                    {[
-                      { label: 'Down Payment', v1: `$${fmtInt(calc.down_8010)}`, v2: `$${fmtInt(calc.down_8015)}`, v3: `$${fmtInt(calc.downAmount)}` },
-                      { label: '1st Lien Amount', v1: `$${fmtInt(calc.loan1_8010)}`, v2: `$${fmtInt(calc.loan1_8015)}`, v3: `$${fmtInt(calc.loanSingle)}` },
-                      { label: '2nd Lien Amount', v1: `$${fmtInt(calc.loan2_8010)}`, v2: `$${fmtInt(calc.loan2_8015)}`, v3: '—' },
-                      { label: 'Monthly P&I', v1: `$${fmt(calc.totalPI_8010)}`, v2: `$${fmt(calc.totalPI_8015)}`, v3: `$${fmt(calc.totalPI_single)}` },
-                      { label: 'Monthly PMI', v1: 'None', v2: 'None', v3: `$${fmt(calc.pmiMonthly)}` },
-                      { label: '5-Year Total Cost', v1: `$${fmtInt(calc.cost5yr_8010)}`, v2: `$${fmtInt(calc.cost5yr_8015)}`, v3: `$${fmtInt(calc.cost5yr_single)}` },
-                      { label: 'PMI Duration', v1: 'N/A', v2: 'N/A', v3: calc.pmiDropMonth > 0 ? `~${Math.floor(calc.pmiDropMonth/12)}y ${calc.pmiDropMonth%12}m` : 'N/A' },
-                    ].map(row => (
-                      <tr key={row.label} className="hover:bg-gray-800/20">
-                        <td className="px-5 py-3 text-gray-300">{row.label}</td>
-                        <td className="px-4 py-3 text-right text-blue-300 font-medium">{row.v1}</td>
-                        <td className="px-4 py-3 text-right text-purple-300 font-medium">{row.v2}</td>
-                        <td className="px-4 py-3 text-right text-orange-300 font-medium">{row.v3}</td>
-                      </tr>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* LO Notes */}
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-              <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">
-                Key Considerations
-              </h2>
-              <div className="space-y-2">
-                {[
-                  '2nd lien rates are typically higher than 1st lien rates — verify current HELOC or fixed 2nd lien pricing.',
-                  '80/15/5 reduces the down payment requirement to 5% while still avoiding PMI.',
-                  '80/10/10 requires 10% down but lowers the 2nd lien balance vs. 80/15/5.',
-                  'Single + PMI may win if 2nd lien rates are high or borrower plans to sell/refi within 2–3 years.',
-                  'PMI is tax-deductible for some borrowers — consult tax advisor.',
-                  'Conventional 2nd liens may have CLTV limits (typically 89.99%). Verify with lender.',
-                ].map((note, i) => (
-                  <div key={i} className="flex items-start gap-2">
-                    <span className="text-orange-400 mt-0.5 text-xs">▸</span>
-                    <p className="text-xs text-gray-400">{note}</p>
                   </div>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
-
-        {!calc && (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-10 text-center text-gray-500">
-            Enter purchase price and interest rate above to run the comparison.
+                </div>
+              </>
+            )}
           </div>
-        )}
 
-        {/* Save Button */}
-        {scenarioIdParam && calc && (
-          <div className="flex justify-end">
-            <button
-              onClick={handleSaveToRecord}
-              disabled={recordSaving}
-              className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white font-semibold px-6 py-3 rounded-xl transition-colors flex items-center gap-2"
-            >
-              {recordSaving ? (
+          {/* Sidebar */}
+          <div className="space-y-5">
+            <div className="bg-slate-900 rounded-3xl p-6 sticky top-6">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5">Comparison Summary</div>
+              {calc ? (
                 <>
-                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                  </svg>
-                  Saving…
+                  <div className="space-y-3">
+                    {[
+                      ['Purchase Price', fmt0(calc.pp), 'text-white'],
+                      ['Down Payment', downPct + '% (' + fmt0(calc.downAmount) + ')', 'text-slate-300'],
+                      ['1st Lien Rate', firstRate ? firstRate + '%' : '--', 'text-white'],
+                      ['1st Lien Term', termYears + ' years', 'text-slate-300'],
+                    ].map(([l, v, c]) => (
+                      <div key={l} className="flex justify-between items-center py-2 border-b border-slate-800">
+                        <span className="text-slate-400 text-sm">{l}</span><span className={'font-bold text-sm ' + c}>{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-5 space-y-2">
+                    {[
+                      { label: '80/10/10', monthly: calc.totalPI_8010, cost: calc.cost5yr_8010, color: 'blue' },
+                      { label: '80/15/5', monthly: calc.totalPI_8015, cost: calc.cost5yr_8015, color: 'violet' },
+                      { label: 'Single+PMI', monthly: calc.totalPI_single, cost: calc.cost5yr_single, color: 'orange' },
+                    ].map(s => {
+                      const isBest = bestScenario === (s.label === '80/10/10' ? 'piggyback_8010' : s.label === '80/15/5' ? 'piggyback_8015' : 'single_pmi');
+                      return (
+                        <div key={s.label} className={'rounded-2xl border p-3 ' + (isBest ? (s.color === 'blue' ? 'bg-blue-900/30 border-blue-700/50' : s.color === 'violet' ? 'bg-violet-900/30 border-violet-700/50' : 'bg-orange-900/30 border-orange-700/50') : 'bg-slate-800 border-slate-700')}>
+                          <div className="flex justify-between items-center">
+                            <span className={'text-xs font-bold ' + (s.color === 'blue' ? 'text-blue-300' : s.color === 'violet' ? 'text-violet-300' : 'text-orange-300')}>{s.label}{isBest ? ' 🏆' : ''}</span>
+                            <span className="text-xs text-slate-400">{fmt0(s.cost)} / 5yr</span>
+                          </div>
+                          <div className={'text-sm font-black mt-0.5 ' + (s.color === 'blue' ? 'text-blue-200' : s.color === 'violet' ? 'text-violet-200' : 'text-orange-200')}>{fmtD(s.monthly)}/mo</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {aiAnalysis?.recommendation && (
+                    <div className="mt-3 bg-blue-900/30 border border-blue-700/50 rounded-2xl p-3 text-center">
+                      <div className="text-xs font-bold text-slate-400 uppercase mb-0.5">AI Recommendation</div>
+                      <div className="font-black text-blue-300 text-sm">{aiAnalysis.recommendation === 'piggyback_8010' ? '80/10/10' : aiAnalysis.recommendation === 'piggyback_8015' ? '80/15/5' : 'Single + PMI'}</div>
+                    </div>
+                  )}
                 </>
-              ) : savedRecordId ? '✅ Saved to Decision Record' : '💾 Save to Decision Record'}
-            </button>
+              ) : (
+                <div className="text-slate-500 text-sm text-center py-4">Enter loan inputs to see comparison</div>
+              )}
+            </div>
+
+            {/* Key Rules */}
+            <div className="bg-amber-50 border border-amber-200 rounded-3xl p-5">
+              <div className="font-bold text-amber-800 text-sm mb-3">⚠️ Key Rules</div>
+              <ul className="space-y-2">
+                {[
+                  'CLTV for piggyback: max 89.99% for conventional — verify with investor',
+                  '2nd lien must close simultaneously — not all lenders allow piggyback',
+                  'Second lien rates are always higher than 1st — get current pricing from lender',
+                  'PMI cancels at 80% LTV by request; auto-cancels at 78%',
+                  'FHA/VA/USDA: piggyback not allowed — conventional only',
+                  'Short hold period? PMI total may be less than extra 2nd interest paid',
+                  'PMI may be tax-deductible — recommend borrower consult tax advisor',
+                ].map(rule => <li key={rule} className="flex gap-2 text-xs text-amber-800"><span className="shrink-0">•</span><span>{rule}</span></li>)}
+              </ul>
+            </div>
           </div>
-        )}
+        </div>
       </div>
-          <CanonicalSequenceBar currentModuleKey="PIGGYBACK_OPTIMIZER" scenarioId={scenarioId} recordId={savedRecordId} />
-</div>
-  )
+
+      <CanonicalSequenceBar currentModuleKey="PIGGYBACK_OPTIMIZER" scenarioId={scenarioId} recordId={savedRecordId} />
+    </div>
+  );
 }

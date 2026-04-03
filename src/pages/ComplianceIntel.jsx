@@ -1,528 +1,780 @@
-import { useState, useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { doc, getDoc } from 'firebase/firestore'
-import { db } from '../firebase/config'
-import { useDecisionRecord } from '../hooks/useDecisionRecord'
-import { MODULE_KEYS } from '../constants/decisionRecordConstants'
-import DecisionRecordBanner from '../components/DecisionRecordBanner'
+// src/pages/ComplianceIntel.jsx
+// LoanBeacons™ — Module 15 | Stage 4: Verification & Submit
+// Compliance Intelligence™ — QM · ATR · HPML · HMDA · Fair Lending review
+
+import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
+import { db } from '../firebase/config';
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import ScenarioHeader from '../components/ScenarioHeader';
 import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 
-// QM Safe Harbor thresholds
-const QM_APR_THRESHOLDS = {
-  first_lien_conforming: 1.5,   // APR spread over APOR
-  first_lien_jumbo: 2.5,
-  subordinate: 3.5,
-}
-
-const HMDA_FIELDS = [
-  { id: 'loan_type', label: 'Loan Type' },
-  { id: 'loan_purpose', label: 'Loan Purpose' },
-  { id: 'occupancy_type', label: 'Occupancy Type' },
-  { id: 'loan_amount', label: 'Loan Amount' },
-  { id: 'action_taken', label: 'Action Taken' },
-  { id: 'property_address', label: 'Property Address / Census Tract' },
-  { id: 'borrower_demographics', label: 'Borrower Ethnicity / Race / Sex' },
-  { id: 'income', label: 'Gross Annual Income' },
-  { id: 'rate_spread', label: 'Rate Spread (if HPML)' },
-  { id: 'hoepa_status', label: 'HOEPA Status' },
-  { id: 'lien_status', label: 'Lien Status' },
-  { id: 'credit_score', label: 'Credit Score & Scoring Model' },
-]
+// ─── Data ─────────────────────────────────────────────────────────────────────
+const COMPLIANCE_CHECKS = [
+  { id: 'qm_status',       category: 'QM / ATR',    icon: '⚖️', risk: 'critical', label: 'Qualified Mortgage (QM) Status',          description: 'Loan meets QM definition under Reg Z §1026.43. Safe Harbor (APR ≤ APOR+1.5%) or Rebuttable Presumption (HPML QM). Non-QM loans must still meet ATR requirements.', tips: 'Verify points & fees ≤3%, no balloon, no negative amortization, term ≤30 years, DTI ≤43% (or GSE/agency eligible). Document which QM category applies.' },
+  { id: 'atr_documented',  category: 'QM / ATR',    icon: '📄', risk: 'critical', label: 'ATR — 8 Factors Documented',              description: 'All 8 Ability-to-Repay factors documented per Reg Z §1026.43(c). Income, assets, employment, debts, DTI, credit history all verified and retained.', tips: 'Retain documentation for 3 years. Cannot rely solely on stated income. Third-party verification required for each factor.' },
+  { id: 'points_fees',     category: 'QM / ATR',    icon: '💰', risk: 'critical', label: 'Points & Fees Cap (3% Rule)',              description: 'QM requires points and fees ≤3% of loan amount (or flat cap for smaller loans). Includes all affiliated fees — verify all included.', tips: 'Points & fees include: origination, discount points, compensation to broker, affiliated title/settlement fees. Excludes bona fide 3rd party charges.' },
+  { id: 'balloon_arm',     category: 'QM / ATR',    icon: '🚫', risk: 'high',     label: 'Prohibited Loan Features Check',          description: 'QM prohibits balloon payments (except rural/seasonal qualified), negative amortization, interest-only periods >10 years, and terms >30 years.', tips: 'Rural balloon exception: creditor operates predominantly in rural/underserved areas. Small creditor balloon: <$2B assets, <2,000 first-lien originations.' },
+  { id: 'hpml_check',      category: 'HPML',        icon: '📊', risk: 'critical', label: 'HPML Threshold Test',                      description: 'APR tested against APOR. First lien conforming: ≥1.5% over APOR = HPML. Jumbo: ≥2.5%. Subordinate: ≥3.5%. HPML triggers mandatory escrow and additional appraisal requirements.', tips: 'HPML does NOT mean the loan is illegal — it triggers additional requirements. Escrow for taxes and insurance required for ≥5 years. Independent appraisal required.' },
+  { id: 'hoepa_check',     category: 'HOEPA',       icon: '⛔', risk: 'critical', label: 'HOEPA / Section 32 Test',                  description: 'High-cost mortgage test: Points & fees >5% of loan (or $1,099 for <$22K loans). APR >APOR+6.5% (first lien) or >APOR+8.5% (sub). Prepayment penalty test.', tips: 'HOEPA/Section 32 loans have severe restrictions — balloon payments, negative amortization, and prepayment penalties are prohibited. Counseling required before closing.' },
+  { id: 'fair_lending',    category: 'Fair Lending', icon: '⚖️', risk: 'critical', label: 'Fair Lending / ECOA Review',               description: 'No disparate treatment on prohibited basis (race, color, religion, sex, national origin, age, marital status, familial status, disability). Consistent underwriting standards applied.', tips: 'Document all credit decisions consistently. Pricing must be based on risk factors, not demographic characteristics. Maintain audit trail for all pricing exceptions.' },
+  { id: 'hmda_reportable', category: 'HMDA',        icon: '📋', risk: 'medium',   label: 'HMDA Reportability Determination',         description: 'Determine if transaction is HMDA reportable under Reg C. Covered institution, dwelling-secured, closed-end or HELOC, for home purchase, improvement, or refinance.', tips: 'Not all loans are reportable. Agricultural loans, commercial/business purpose, and loans on non-dwelling property may be exempt. Confirm institution coverage threshold.' },
+  { id: 'hmda_data',       category: 'HMDA',        icon: '📊', risk: 'medium',   label: 'HMDA LAR Data — Complete',                 description: 'All required HMDA data points collected at application. Demographic info offered to borrower (borrower may decline). Race, ethnicity, sex self-reported or observed if not provided.', tips: 'Must offer demographic information collection even if borrower declines. If application taken in person, must observe and record if borrower does not provide.' },
+  { id: 'cra_eligibility', category: 'CRA',         icon: '🏘️', risk: 'low',      label: 'CRA Credit Eligibility Flagged',           description: 'Loan qualifies for CRA credit if property in LMI census tract or borrower is LMI. Flag for institution CRA performance tracking.', tips: 'CRA credit applies to FDIC-insured institutions only. Mortgage companies and credit unions have different community reinvestment requirements.' },
+  { id: 'state_predatory', category: 'State Law',   icon: '📍', risk: 'medium',   label: 'State Anti-Predatory Lending Review',      description: 'Loan reviewed against applicable state mini-HOEPA laws and rate/fee caps. Some states (GA, NY, NC, NJ) have stricter thresholds than federal HOEPA.', tips: 'Georgia Fair Lending Act, NY Banking Law, NC HPTA all have stricter requirements. Check state-specific thresholds before closing.' },
+  { id: 'servicing',       category: 'RESPA',       icon: '🏦', risk: 'low',      label: 'Servicing Transfer Protections — RESPA §6', description: 'RESPA §6 servicing disclosure issued. Transfer notice requirements met. Error resolution and payment processing procedures in place.', tips: 'If servicing is transferred after closing, borrower has 60-day grace period for misdirected payments. New servicer must notify borrower 15 days before effective transfer date.' },
+];
 
 const ATR_FACTORS = [
-  'Current or reasonably expected income or assets',
-  'Current employment status',
-  'Monthly payment on the covered transaction',
-  'Monthly payment on any simultaneous loan',
-  'Monthly payment for mortgage-related obligations',
-  'Current debt obligations, alimony, and child support',
-  'Monthly debt-to-income ratio or residual income',
-  'Credit history',
-]
+  { factor: 'Current or reasonably expected income or assets', doc: 'Pay stubs, W-2s, tax returns, asset statements' },
+  { factor: 'Current employment status', doc: 'VOE, pay stubs, employer letter' },
+  { factor: 'Monthly payment on the covered transaction', doc: 'AUS findings, rate lock confirmation' },
+  { factor: 'Monthly payment on any simultaneous loan', doc: 'HELOC agreement, 2nd lien note' },
+  { factor: 'Monthly payment for mortgage-related obligations (taxes, insurance, HOA)', doc: 'Property tax records, insurance quote, HOA statement' },
+  { factor: 'Current debt obligations, alimony, and child support', doc: 'Credit report, court orders, divorce decree' },
+  { factor: 'Monthly debt-to-income ratio or residual income', doc: 'AUS findings with DTI calculation' },
+  { factor: 'Credit history', doc: 'Tri-merge credit report, VOR if needed' },
+];
 
-const COMPLIANCE_CHECKS = [
-  {
-    id: 'qm_status',
-    category: 'QM / ATR',
-    label: 'Qualified Mortgage Status',
-    description: 'Loan meets QM definition under Reg Z §1026.43 (Safe Harbor or Rebuttable Presumption).',
-    risk: 'high',
-  },
-  {
-    id: 'atr_documented',
-    category: 'QM / ATR',
-    label: 'ATR Documentation Complete',
-    description: 'All 8 ATR factors documented per Reg Z §1026.43(c). Income, assets, debts, credit verified.',
-    risk: 'high',
-  },
-  {
-    id: 'hpml_check',
-    category: 'HPML',
-    label: 'HPML Threshold Check',
-    description: 'APR tested against APOR. First-lien: ≥1.5% over APOR = HPML. Triggers escrow + appraisal requirements.',
-    risk: 'high',
-  },
-  {
-    id: 'hoepa_check',
-    category: 'HOEPA',
-    label: 'HOEPA / Section 32 Check',
-    description: 'Points & fees ≤5% of loan amount (or $1,099 for small loans). APR test vs APOR thresholds.',
-    risk: 'high',
-  },
-  {
-    id: 'points_fees',
-    category: 'QM / ATR',
-    label: 'Points & Fees Cap (3%)',
-    description: 'QM requires points and fees ≤3% of loan amount. Verify all affiliated fees included.',
-    risk: 'high',
-  },
-  {
-    id: 'balloon_arm',
-    category: 'Loan Features',
-    label: 'Prohibited Loan Features',
-    description: 'QM prohibits balloon payments (except rural/seasonal), negative amortization, IO periods >10 yrs, terms >30 yrs.',
-    risk: 'medium',
-  },
-  {
-    id: 'hmda_reportable',
-    category: 'HMDA',
-    label: 'HMDA Reportable Loan',
-    description: 'Determine if transaction is HMDA reportable under Reg C. Covered institution, dwelling-secured, closed-end.',
-    risk: 'medium',
-  },
-  {
-    id: 'hmda_data_complete',
-    category: 'HMDA',
-    label: 'HMDA LAR Data Collection',
-    description: 'All required HMDA data points collected at application. Demographic info offered to borrower.',
-    risk: 'medium',
-  },
-  {
-    id: 'fair_lending',
-    category: 'Fair Lending',
-    label: 'Fair Lending / ECOA Compliance',
-    description: 'No disparate treatment on prohibited basis. Consistent underwriting standards applied.',
-    risk: 'high',
-  },
-  {
-    id: 'cra_eligibility',
-    category: 'CRA',
-    label: 'CRA Eligibility Flagged',
-    description: 'Loan qualifies for CRA credit if in LMI census tract or to LMI borrower. Flag for institution CRA tracking.',
-    risk: 'low',
-  },
-  {
-    id: 'state_predatory',
-    category: 'State Law',
-    label: 'State Anti-Predatory Lending Check',
-    description: 'Loan reviewed against applicable state mini-HOEPA laws and rate/fee caps.',
-    risk: 'medium',
-  },
-  {
-    id: 'servicing_transfer',
-    category: 'RESPA',
-    label: 'Servicing Transfer Protections',
-    description: 'RESPA §6 servicing disclosure issued. Transfer notice procedures in place if applicable.',
-    risk: 'low',
-  },
-]
+const HMDA_FIELDS = [
+  { id: 'loan_type',           label: 'Loan Type',                          note: 'Conv / FHA / VA / USDA' },
+  { id: 'loan_purpose',        label: 'Loan Purpose',                       note: 'Purchase / Refi / Home improvement' },
+  { id: 'occupancy_type',      label: 'Occupancy Type',                     note: 'Primary / Secondary / Investment' },
+  { id: 'loan_amount',         label: 'Loan Amount',                        note: 'Rounded to nearest $1,000' },
+  { id: 'action_taken',        label: 'Action Taken',                       note: 'Originated / Approved / Denied / Withdrawn' },
+  { id: 'property_address',    label: 'Property Address / Census Tract',    note: 'Must geocode to census tract' },
+  { id: 'borrower_demographics', label: 'Borrower Ethnicity / Race / Sex', note: 'Self-reported or observed' },
+  { id: 'income',              label: 'Gross Annual Income',                note: 'As stated on application' },
+  { id: 'rate_spread',         label: 'Rate Spread (HPML only)',            note: 'APR minus APOR' },
+  { id: 'hoepa_status',        label: 'HOEPA Status',                       note: 'High-cost or not' },
+  { id: 'lien_status',         label: 'Lien Status',                        note: 'First / Subordinate' },
+  { id: 'credit_score',        label: 'Credit Score & Scoring Model',       note: 'All scores from each bureau' },
+];
 
 const RESULT_OPTIONS = [
-  { value: 'pass', label: 'Pass ✓', color: 'text-green-400 bg-green-400/10 border-green-400/30' },
-  { value: 'review', label: 'Needs Review', color: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30' },
-  { value: 'fail', label: 'Flag / Fail', color: 'text-red-400 bg-red-400/10 border-red-400/30' },
-  { value: 'na', label: 'N/A', color: 'text-gray-400 bg-gray-400/10 border-gray-400/30' },
-  { value: 'pending', label: 'Pending', color: 'text-blue-400 bg-blue-400/10 border-blue-400/30' },
-]
-
-function getResultStyle(value) {
-  return RESULT_OPTIONS.find(r => r.value === value)?.color || 'text-blue-400 bg-blue-400/10 border-blue-400/30'
-}
+  { value: 'pending', label: '⏳ Pending',      color: 'border-slate-300 bg-slate-50 text-slate-600' },
+  { value: 'pass',    label: '✅ Pass',          color: 'border-emerald-400 bg-emerald-50 text-emerald-800' },
+  { value: 'review',  label: '⚠️ Needs Review', color: 'border-amber-400 bg-amber-50 text-amber-800' },
+  { value: 'fail',    label: '🚨 Flag / Fail',  color: 'border-red-400 bg-red-50 text-red-800' },
+  { value: 'na',      label: '— N/A',           color: 'border-slate-200 bg-slate-100 text-slate-400' },
+];
 
 const RISK_BADGE = {
-  high: 'text-red-400 bg-red-400/10 border border-red-400/20',
-  medium: 'text-yellow-400 bg-yellow-400/10 border border-yellow-400/20',
-  low: 'text-green-400 bg-green-400/10 border border-green-400/20',
+  critical: 'bg-red-100 text-red-700 border border-red-200',
+  high:     'bg-orange-100 text-orange-700 border border-orange-200',
+  medium:   'bg-amber-100 text-amber-700 border border-amber-200',
+  low:      'bg-emerald-100 text-emerald-700 border border-emerald-200',
+};
+
+const CATEGORIES = [...new Set(COMPLIANCE_CHECKS.map(c => c.category))];
+
+// ─── Formatters ───────────────────────────────────────────────────────────────
+const fmt0 = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
+
+// ─── Letter Builder ───────────────────────────────────────────────────────────
+function buildComplianceLetter({ borrowerName, loanType, loanApr, aporRate, aprSpread, isHPML, complianceScore, passCount, failCount, reviewCount, results, loNotes, aiSummary }) {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const lines = [];
+  lines.push(today); lines.push('');
+  lines.push('To: Mortgage Underwriter / Compliance Officer');
+  lines.push('From: George Jules Chevalier IV, NMLS #1175947 — Clearview Lending Solutions');
+  lines.push('Re: Compliance Review Summary — ' + (borrowerName || 'Borrower'));
+  lines.push(''); lines.push('LOAN INFORMATION');
+  lines.push('Borrower: ' + (borrowerName || 'See application'));
+  if (loanType) lines.push('Loan Type: ' + loanType);
+  if (loanApr)  lines.push('Loan APR: ' + loanApr + '%');
+  if (aporRate) lines.push('APOR Rate: ' + aporRate + '%');
+  if (aprSpread !== '') lines.push('APR Spread: ' + aprSpread + '% → ' + (isHPML ? 'HPML — Additional requirements apply' : 'Not HPML'));
+  lines.push(''); lines.push('COMPLIANCE SCORE: ' + complianceScore + '%');
+  lines.push('Pass: ' + passCount + ' · Flag/Fail: ' + failCount + ' · Needs Review: ' + reviewCount);
+  lines.push(''); lines.push('CHECK-BY-CHECK STATUS');
+  COMPLIANCE_CHECKS.forEach(check => {
+    const r = results[check.id];
+    const label = RESULT_OPTIONS.find(o => o.value === r)?.label || r;
+    lines.push(check.label + ': ' + label);
+  });
+  if (isHPML) {
+    lines.push(''); lines.push('HPML REQUIREMENTS — MANDATORY');
+    lines.push('1. Escrow account required for property taxes and insurance (minimum 5 years)');
+    lines.push('2. Independent appraisal required (written report by certified/licensed appraiser)');
+    lines.push('3. For HPMLs with LTV ≥ 110%: second appraisal required at no cost to borrower');
+    lines.push('4. Prepayment penalty restrictions apply (cannot extend beyond 3 years)');
+  }
+  if (aiSummary) { lines.push(''); lines.push('AI COMPLIANCE ASSESSMENT'); lines.push(aiSummary); }
+  if (loNotes) { lines.push(''); lines.push('LO NOTES'); lines.push(loNotes); }
+  lines.push(''); lines.push('All compliance documentation is maintained in the loan file. Please contact me with questions.');
+  lines.push(''); lines.push('George Jules Chevalier IV, NMLS #1175947');
+  lines.push('Clearview Lending Solutions | george@cvls.loans | cvls.loans');
+  return lines.join('\n');
 }
 
-const CATEGORIES = [...new Set(COMPLIANCE_CHECKS.map(c => c.category))]
+function LetterCard({ title, icon, body }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="rounded-3xl border-2 border-purple-200 bg-purple-50 overflow-hidden">
+      <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
+        <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
+        <div className="flex gap-2">
+          <button onClick={() => { navigator.clipboard.writeText(body); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+            className="text-xs px-4 py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-white transition-colors">
+            {copied ? '✓ Copied' : 'Copy Letter'}
+          </button>
+          <button onClick={() => window.print()} className="text-xs px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white">Print</button>
+        </div>
+      </div>
+      <pre className="p-6 text-xs text-slate-700 whitespace-pre-wrap leading-relaxed font-mono">{body}</pre>
+    </div>
+  );
+}
 
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function ComplianceIntel() {
-  const [searchParams] = useSearchParams()
-  const scenarioIdParam = searchParams.get('scenarioId')
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const scenarioId = searchParams.get('scenarioId');
 
-  const [scenario, setScenario] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [results, setResults] = useState(
-    Object.fromEntries(COMPLIANCE_CHECKS.map(c => [c.id, 'pending']))
-  )
-  const [notes, setNotes] = useState(
-    Object.fromEntries(COMPLIANCE_CHECKS.map(c => [c.id, '']))
-  )
-  const [hmda, setHmda] = useState(
-    Object.fromEntries(HMDA_FIELDS.map(f => [f.id, 'pending']))
-  )
-  const [activeTab, setActiveTab] = useState('checks')
-  const [aprSpread, setAprSpread] = useState('')
-  const [loanApr, setLoanApr] = useState('')
-  const [aporRate, setAporRate] = useState('')
-  const [recordSaving, setRecordSaving] = useState(false)
-  const [savedRecordId, setSavedRecordId] = useState(null)
+  const [scenario, setScenario]   = useState(null);
+  const [scenarios, setScenarios] = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [borrowerName, setBorrowerName] = useState('');
 
-  const { reportFindings } = useDecisionRecord(scenarioIdParam)
+  const [activeTab, setActiveTab] = useState(0);
 
+  // Compliance tracking
+  const [results, setResults] = useState(Object.fromEntries(COMPLIANCE_CHECKS.map(c => [c.id, 'pending'])));
+  const [notes, setNotes]     = useState(Object.fromEntries(COMPLIANCE_CHECKS.map(c => [c.id, ''])));
+  const [hmda, setHmda]       = useState(Object.fromEntries(HMDA_FIELDS.map(f => [f.id, 'pending'])));
+
+  // HPML calculator
+  const [loanApr, setLoanApr]     = useState('');
+  const [aporRate, setAporRate]   = useState('');
+  const [lienType, setLienType]   = useState('first_conforming');
+  const [loanType, setLoanType]   = useState('');
+  const [loanAmount, setLoanAmount] = useState('');
+  const [pointsFees, setPointsFees] = useState('');
+
+  // AI
+  const [aiAnalysis, setAiAnalysis]   = useState(null);
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+
+  const [loNotes, setLoNotes] = useState('');
+  const [recordSaving, setRecordSaving]   = useState(false);
+  const [savedRecordId, setSavedRecordId] = useState(null);
+  const { reportFindings } = useDecisionRecord(scenarioId);
+
+  // ─── localStorage ────────────────────────────────────────────────────────────
+  const lsKey = scenarioId ? `lb_compliance_${scenarioId}` : null;
+
+  const saveToStorage = useCallback(() => {
+    if (!lsKey) return;
+    localStorage.setItem(lsKey, JSON.stringify({ results, notes, hmda, loanApr, aporRate, lienType, loanType, loanAmount, pointsFees, loNotes, aiAnalysis, savedRecordId }));
+  }, [lsKey, results, notes, hmda, loanApr, aporRate, lienType, loanType, loanAmount, pointsFees, loNotes, aiAnalysis, savedRecordId]);
+
+  useEffect(() => { saveToStorage(); }, [saveToStorage]);
+
+  // ─── Load ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!scenarioIdParam) return
-    const load = async () => {
-      setLoading(true)
+    if (!scenarioId) {
+      getDocs(collection(db, 'scenarios')).then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(console.error).finally(() => setLoading(false));
+      return;
+    }
+    if (lsKey) {
       try {
-        const snap = await getDoc(doc(db, 'scenarios', scenarioIdParam))
-        if (snap.exists()) {
-          const data = snap.data()
-          setScenario(data)
-          // Pre-populate APR if available
-          if (data.interestRate) {
-            setLoanApr(parseFloat(data.interestRate).toFixed(3))
-          }
+        const saved = JSON.parse(localStorage.getItem(lsKey) || 'null');
+        if (saved) {
+          if (saved.results)      setResults(saved.results);
+          if (saved.notes)        setNotes(saved.notes);
+          if (saved.hmda)         setHmda(saved.hmda);
+          if (saved.loanApr)      setLoanApr(saved.loanApr);
+          if (saved.aporRate)     setAporRate(saved.aporRate);
+          if (saved.lienType)     setLienType(saved.lienType);
+          if (saved.loanType)     setLoanType(saved.loanType);
+          if (saved.loanAmount)   setLoanAmount(saved.loanAmount);
+          if (saved.pointsFees)   setPointsFees(saved.pointsFees);
+          if (saved.loNotes)      setLoNotes(saved.loNotes);
+          if (saved.aiAnalysis)   setAiAnalysis(saved.aiAnalysis);
+          if (saved.savedRecordId) setSavedRecordId(saved.savedRecordId);
         }
-      } catch (err) {
-        console.error('Failed to load scenario:', err)
-      } finally {
-        setLoading(false)
+      } catch (_) {}
+    }
+    getDoc(doc(db, 'scenarios', scenarioId)).then(snap => {
+      if (snap.exists()) {
+        const d = { id: snap.id, ...snap.data() };
+        setScenario(d);
+        const name = [d.firstName, d.lastName].filter(Boolean).join(' ');
+        if (name) setBorrowerName(name.trim());
+        if (d.interestRate) setLoanApr(prev => prev || parseFloat(d.interestRate).toFixed(3));
+        if (d.loanType)     setLoanType(prev => prev || d.loanType);
+        if (d.loanAmount)   setLoanAmount(prev => prev || String(d.loanAmount));
       }
-    }
-    load()
-  }, [scenarioIdParam])
+    }).catch(console.error).finally(() => setLoading(false));
+  }, [scenarioId, lsKey]);
 
-  // Auto-calc APR spread
-  useEffect(() => {
-    const apr = parseFloat(loanApr)
-    const apor = parseFloat(aporRate)
-    if (!isNaN(apr) && !isNaN(apor)) {
-      setAprSpread((apr - apor).toFixed(3))
-    } else {
-      setAprSpread('')
-    }
-  }, [loanApr, aporRate])
+  // ─── HPML Calculations ────────────────────────────────────────────────────────
+  const aprSpread = loanApr && aporRate ? (parseFloat(loanApr) - parseFloat(aporRate)).toFixed(3) : '';
+  const hpmlThresholds = { first_conforming: 1.5, first_jumbo: 2.5, subordinate: 3.5 };
+  const hpmlThreshold = hpmlThresholds[lienType] || 1.5;
+  const isHPML = aprSpread !== '' && parseFloat(aprSpread) >= hpmlThreshold;
+  const isHOEPA_APR = aprSpread !== '' && parseFloat(aprSpread) >= 6.5;
 
-  const passCount = Object.values(results).filter(r => r === 'pass').length
-  const failCount = Object.values(results).filter(r => r === 'fail').length
-  const reviewCount = Object.values(results).filter(r => r === 'review').length
-  const naCount = Object.values(results).filter(r => r === 'na').length
-  const complianceScore = Math.round(((passCount + naCount) / COMPLIANCE_CHECKS.length) * 100)
+  // Points & fees cap
+  const loanAmt = parseFloat(loanAmount) || 0;
+  const pf = parseFloat(pointsFees) || 0;
+  const pfPct = loanAmt > 0 ? (pf / loanAmt) * 100 : 0;
+  const pfCapPct = loanAmt >= 100000 ? 3 : loanAmt >= 60000 ? 3.5 : loanAmt >= 20000 ? 4 : 5;
+  const pfOverCap = pf > 0 && pfPct > pfCapPct;
+  const hoepaFeeTest = pf > 0 && pfPct > 5;
 
-  const isHPML = aprSpread !== '' && parseFloat(aprSpread) >= 1.5
+  // ─── Score ───────────────────────────────────────────────────────────────────
+  const passCount    = Object.values(results).filter(r => r === 'pass').length;
+  const failCount    = Object.values(results).filter(r => r === 'fail').length;
+  const reviewCount  = Object.values(results).filter(r => r === 'review').length;
+  const naCount      = Object.values(results).filter(r => r === 'na').length;
+  const complianceScore = Math.round(((passCount + naCount) / COMPLIANCE_CHECKS.length) * 100);
+  const failItems    = COMPLIANCE_CHECKS.filter(c => results[c.id] === 'fail');
+  const reviewItems  = COMPLIANCE_CHECKS.filter(c => results[c.id] === 'review');
+  const hmdaCollected = Object.values(hmda).filter(v => v === 'collected').length;
+  const hmdaMissing   = Object.values(hmda).filter(v => v === 'missing').length;
 
-  const handleSaveToRecord = async () => {
-    if (!scenarioIdParam) return
-    setRecordSaving(true)
+  // ─── AI Analysis ──────────────────────────────────────────────────────────────
+  const handleAIAnalysis = async () => {
+    setAiAnalyzing(true);
     try {
-      const findings = {
-        loanApr,
-        aporRate,
-        aprSpread,
-        isHPML,
-        complianceResults: results,
-        complianceNotes: notes,
-        hmdaStatus: hmda,
-        summary: {
-          total: COMPLIANCE_CHECKS.length,
-          pass: passCount,
-          fail: failCount,
-          review: reviewCount,
-          na: naCount,
-          complianceScore,
-        },
-        checks: COMPLIANCE_CHECKS.map(c => ({
-          id: c.id,
-          label: c.label,
-          category: c.category,
-          risk: c.risk,
-          result: results[c.id],
-          notes: notes[c.id],
-        })),
-      }
-      const writtenId = await reportFindings(MODULE_KEYS.COMPLIANCE_INTEL, findings)
-      if (writtenId) setSavedRecordId(writtenId)
-    } catch (err) {
-      console.error('Failed to save to Decision Record:', err)
-    } finally {
-      setRecordSaving(false)
-    }
-  }
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514', max_tokens: 1500,
+          messages: [{ role: 'user', content: `You are a senior mortgage compliance officer and regulatory expert. Review this compliance file and provide an assessment.
 
-  const borrowerName = scenario
-    ? `${scenario.firstName || ''} ${scenario.lastName || ''}`.trim() || 'Borrower'
-    : null
+LOAN DETAILS:
+- Loan Type: ${loanType || 'Not specified'}
+- Loan Amount: ${loanAmount ? fmt0(parseFloat(loanAmount)) : 'Not specified'}
+- Loan APR: ${loanApr || 'Not entered'}%
+- APOR Rate: ${aporRate || 'Not entered'}%
+- APR Spread: ${aprSpread !== '' ? aprSpread + '%' : 'Not calculated'}
+- HPML Status: ${isHPML ? 'YES — HPML (' + aprSpread + '% spread exceeds ' + hpmlThreshold + '% threshold)' : 'Not HPML'}
+- HOEPA APR Test: ${isHOEPA_APR ? 'HOEPA TRIGGERED' : 'Clear'}
+- Points & Fees: ${pointsFees ? fmt0(pf) + ' (' + pfPct.toFixed(2) + '% of loan — cap is ' + pfCapPct + '%)' : 'Not entered'}
+- Lien Type: ${lienType?.replace('_', ' ')}
+
+COMPLIANCE CHECK RESULTS:
+${COMPLIANCE_CHECKS.map(c => `${c.label}: ${results[c.id]} (${c.risk} risk)`).join('\n')}
+
+Compliance Score: ${complianceScore}%
+Failed Checks: ${failItems.map(c => c.label).join(', ') || 'None'}
+Needs Review: ${reviewItems.map(c => c.label).join(', ') || 'None'}
+
+HMDA: ${hmdaCollected} fields collected · ${hmdaMissing} missing
+
+Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","clearanceReady":true_or_false,"summary":"2-3 sentence assessment","criticalIssues":["list critical violations or flags"],"actionItems":["specific immediate actions"],"hpmlGuidance":["HPML-specific actions if applicable — omit if not HPML"],"regulatoryNotes":["key regulatory considerations for this file type"]}` }],
+        }),
+      });
+      if (!resp.ok) throw new Error('Status ' + resp.status);
+      const data = await resp.json();
+      const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) setAiAnalysis(JSON.parse(match[0]));
+    } catch (err) { console.error(err); }
+    setAiAnalyzing(false);
+  };
+
+  // ─── Decision Record ──────────────────────────────────────────────────────────
+  const handleSaveToRecord = async () => {
+    setRecordSaving(true);
+    try {
+      const riskFlags = [];
+      failItems.forEach(item => riskFlags.push({ field: item.id, message: item.label + ' — Failed', severity: item.risk === 'critical' ? 'HIGH' : 'MEDIUM' }));
+      if (isHPML) riskFlags.push({ field: 'hpml', message: 'HPML loan — escrow and appraisal requirements triggered', severity: 'MEDIUM' });
+      if (isHOEPA_APR) riskFlags.push({ field: 'hoepa', message: 'HOEPA APR test triggered — high-cost mortgage restrictions apply', severity: 'HIGH' });
+      if (pfOverCap) riskFlags.push({ field: 'points_fees', message: 'Points & fees (' + pfPct.toFixed(2) + '%) exceed QM cap (' + pfCapPct + '%)', severity: 'HIGH' });
+      const writtenId = await reportFindings({
+        verdict: complianceScore >= 80 ? 'Compliant' : complianceScore >= 50 ? 'In Progress' : 'Action Required',
+        summary: `Compliance Intelligence — ${loanType || 'Loan'} · Score: ${complianceScore}% · Pass: ${passCount} · Fail: ${failCount} · Review: ${reviewCount} · HPML: ${isHPML ? 'Yes' : 'No'} · HMDA: ${hmdaCollected}/${HMDA_FIELDS.length} collected`,
+        riskFlags,
+        findings: { loanApr, aporRate, aprSpread, isHPML, isHOEPA_APR, lienType, loanType, complianceScore, passCount, failCount, reviewCount, results, hmdaStatus: hmda, loNotes },
+        completeness: { aprEntered: !!loanApr, noFailedChecks: failCount === 0, hmdaComplete: hmdaMissing === 0, aiRun: !!aiAnalysis },
+      });
+      if (writtenId) setSavedRecordId(writtenId);
+    } catch (e) { console.error(e); }
+    setRecordSaving(false);
+  };
+
+  const TABS = [
+    { id: 0, label: 'HPML Calculator', icon: '📊' },
+    { id: 1, label: 'Compliance Checks', icon: '⚖️' },
+    { id: 2, label: 'ATR Factors', icon: '📄' },
+    { id: 3, label: 'HMDA Data', icon: '📋' },
+    { id: 4, label: 'AI Assessment', icon: '🤖' },
+  ];
+
+  const riskColor = { LOW: 'text-emerald-700 bg-emerald-100 border-emerald-300', MEDIUM: 'text-amber-700 bg-amber-100 border-amber-300', HIGH: 'text-red-700 bg-red-100 border-red-300', CRITICAL: 'text-red-900 bg-red-200 border-red-500' };
+
+  if (loading) return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="text-center"><div className="text-5xl mb-4">⚖️</div><div className="text-slate-500">Loading...</div></div>
+    </div>
+  );
+
+  if (!scenarioId) return (
+    <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+      <div className="bg-slate-900 px-6 py-10">
+        <div className="max-w-2xl mx-auto">
+          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
+          <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 15</div>
+          <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Compliance Intelligence™</h1>
+          <p className="text-slate-400">QM · ATR · HPML · HOEPA · HMDA · Fair Lending compliance review</p>
+        </div>
+      </div>
+      <div className="max-w-2xl mx-auto px-6 py-8">
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6">
+          <h2 className="font-bold text-slate-800 mb-4">Select a Scenario</h2>
+          {scenarios.length === 0 ? <p className="text-slate-400 text-sm">No scenarios found.</p> :
+            <div className="space-y-2">{scenarios.map(s => (
+              <button key={s.id} onClick={() => navigate('/compliance-intel?scenarioId=' + s.id)}
+                className="w-full text-left p-4 border border-slate-200 rounded-2xl hover:border-purple-400 hover:bg-purple-50 transition-all">
+                <div className="flex justify-between items-center">
+                  <div><div className="font-bold text-slate-800">{s.scenarioName || ([s.firstName, s.lastName].filter(Boolean).join(' ')) || 'Unnamed'}</div><div className="text-xs text-slate-500 mt-0.5">{fmt0(s.loanAmount)} · {s.loanType}</div></div>
+                  <span className="text-purple-400 text-xl">→</span>
+                </div>
+              </button>
+            ))}</div>
+          }
+        </div>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
-      {/* Header */}
-      <div className="bg-gray-900 border-b border-gray-800 px-6 py-5">
-        <div className="max-w-5xl mx-auto">
-          <div className="flex items-center gap-3 mb-1">
-            <span className="text-2xl">⚖️</span>
-            <h1 className="text-2xl font-bold text-white">Compliance Intel™</h1>
-            <span className="text-xs bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full font-medium">
-              Module 15
-            </span>
+    <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+
+      {/* Hero */}
+      <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #7c3aed 0%, transparent 50%), radial-gradient(circle at 80% 20%, #a855f7 0%, transparent 40%)' }} />
+        <div className="relative max-w-7xl mx-auto px-6 py-8">
+          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
+          <div className="flex items-start justify-between flex-wrap gap-6">
+            <div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 15</div>
+              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Compliance Intelligence™</h1>
+              <p className="text-slate-400 text-base max-w-xl">QM · ATR · HPML · HOEPA · HMDA · Fair Lending · AI risk assessment</p>
+            </div>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px' }}>
+              {scenario ? (
+                <>
+                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
+                  <div className="text-white font-bold">{borrowerName || scenario.scenarioName}</div>
+                  <div className="text-slate-400 text-sm mt-1">{loanType || '--'} · {loanAmount ? fmt0(parseFloat(loanAmount)) : '--'}</div>
+                  <div className={'text-sm font-bold mt-1 ' + (complianceScore >= 80 ? 'text-emerald-400' : complianceScore >= 50 ? 'text-amber-400' : 'text-red-400')}>
+                    {complianceScore}% compliant · {failCount > 0 ? failCount + ' failed' : 'No failures'}
+                  </div>
+                  {isHPML && <div className="text-amber-300 text-xs font-bold mt-1">⚠️ HPML — {aprSpread}% spread</div>}
+                </>
+              ) : <div className="text-slate-400 text-sm">No scenario loaded</div>}
+            </div>
           </div>
-          <p className="text-gray-400 text-sm ml-9">
-            QM · ATR · HPML · HMDA · Fair Lending compliance review
-          </p>
-          {borrowerName && (
-            <p className="text-purple-400 text-sm ml-9 mt-1 font-medium">
-              📁 {borrowerName}
-              {scenario?.streetAddress ? ` — ${scenario.streetAddress}` : ''}
-            </p>
-          )}
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-6 py-6 space-y-6">
-
-        {/* Decision Record Banner */}
-        {scenarioIdParam && (
-          <DecisionRecordBanner
-            scenarioId={scenarioIdParam}
-            onSave={handleSaveToRecord}
-            saving={recordSaving}
-            savedRecordId={savedRecordId}
-          />
-        )}
-
-        {loading && (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-400">
-            Loading scenario data…
-          </div>
-        )}
-
-        {/* HPML / APR Calculator */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">
-            HPML / APR Spread Calculator
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Loan APR (%)</label>
-              <input
-                type="number"
-                step="0.001"
-                value={loanApr}
-                onChange={e => setLoanApr(e.target.value)}
-                placeholder="e.g. 7.125"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Current APOR (%)</label>
-              <input
-                type="number"
-                step="0.001"
-                value={aporRate}
-                onChange={e => setAporRate(e.target.value)}
-                placeholder="e.g. 6.500"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-purple-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                <a href="https://www.ffiec.gov/ratespread/newcalc.aspx" target="_blank" rel="noreferrer" className="text-purple-400 hover:underline">
-                  FFIEC Rate Spread Calculator ↗
-                </a>
-              </p>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">APR Spread</label>
-              <div className={`w-full rounded-lg px-3 py-2 text-sm font-bold border ${
-                aprSpread === ''
-                  ? 'bg-gray-800 border-gray-700 text-gray-400'
-                  : isHPML
-                  ? 'bg-red-900/30 border-red-500/50 text-red-400'
-                  : 'bg-green-900/30 border-green-500/50 text-green-400'
-              }`}>
-                {aprSpread !== '' ? `${parseFloat(aprSpread) >= 0 ? '+' : ''}${aprSpread}%` : '—'}
-              </div>
-              {aprSpread !== '' && (
-                <p className={`text-xs mt-1 font-medium ${isHPML ? 'text-red-400' : 'text-green-400'}`}>
-                  {isHPML ? '⚠️ HPML — Escrow + Appraisal requirements apply' : '✓ Not HPML (below 1.5% threshold)'}
-                </p>
-              )}
+      {/* Borrower Bar */}
+      {scenarioId && borrowerName && (
+        <div className="bg-[#1B3A6B] px-6 py-3">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-1">
+            <span className="text-white font-bold text-sm">{borrowerName}</span>
+            {scenario?.streetAddress && <span className="text-blue-200 text-xs">{[scenario.streetAddress, scenario.city, scenario.state].filter(Boolean).join(', ')}</span>}
+            <div className="flex flex-wrap gap-x-4 text-xs text-blue-200">
+              {loanType && <span>Type <strong className="text-white">{loanType}</strong></span>}
+              {loanApr && <span>APR <strong className="text-white">{loanApr}%</strong></span>}
+              {isHPML && <span className="text-amber-300 font-bold">⚠️ HPML</span>}
             </div>
           </div>
         </div>
+      )}
 
-        {/* Score Summary */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          {[
-            { label: 'Compliance Score', value: `${complianceScore}%`, color: complianceScore >= 80 ? 'text-green-400' : complianceScore >= 50 ? 'text-yellow-400' : 'text-red-400' },
-            { label: 'Pass', value: passCount, color: 'text-green-400' },
-            { label: 'Flag / Fail', value: failCount, color: failCount > 0 ? 'text-red-400' : 'text-gray-400' },
-            { label: 'Needs Review', value: reviewCount, color: reviewCount > 0 ? 'text-yellow-400' : 'text-gray-400' },
-            { label: 'N/A', value: naCount, color: 'text-gray-400' },
-          ].map(s => (
-            <div key={s.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
-              <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
-              <div className="text-xs text-gray-400 mt-1">{s.label}</div>
-            </div>
-          ))}
+      <ScenarioHeader moduleTitle="Compliance Intelligence™" moduleNumber="15" scenarioId={scenarioId} />
+      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2"><DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="COMPLIANCE_INTEL" /></div>
+
+      {/* Tab Bar */}
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="flex gap-0 overflow-x-auto">
+            {TABS.map(tab => (
+              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                className={'flex items-center gap-2 px-5 py-4 text-sm font-semibold whitespace-nowrap border-b-2 transition-all ' + (activeTab === tab.id ? 'border-purple-500 text-purple-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300')}>
+                <span>{tab.icon}</span><span>{tab.label}</span>
+                {tab.id === 1 && failCount > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-black">{failCount}</span>}
+                {tab.id === 0 && isHPML && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-black">HPML</span>}
+              </button>
+            ))}
+          </div>
         </div>
+      </div>
 
-        {/* Tabs */}
-        <div className="flex gap-2">
-          {['checks', 'atr', 'hmda'].map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                activeTab === tab
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-              }`}
-            >
-              {tab === 'checks' && '📋 Compliance Checks'}
-              {tab === 'atr' && '📄 ATR Factors'}
-              {tab === 'hmda' && '📊 HMDA Data'}
-            </button>
-          ))}
-        </div>
+      {/* Body */}
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+          <div className="xl:col-span-2 space-y-8">
 
-        {/* Compliance Checks Tab */}
-        {activeTab === 'checks' && (
-          <div className="space-y-4">
-            {CATEGORIES.map(cat => (
-              <div key={cat} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-                <div className="px-5 py-3 bg-gray-800/50 border-b border-gray-800">
-                  <h3 className="text-xs font-semibold text-gray-300 uppercase tracking-wider">{cat}</h3>
-                </div>
-                <div className="divide-y divide-gray-800">
-                  {COMPLIANCE_CHECKS.filter(c => c.category === cat).map(check => (
-                    <div key={check.id} className="p-4 hover:bg-gray-800/20 transition-colors">
-                      <div className="flex flex-col md:flex-row md:items-start gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-medium text-white text-sm">{check.label}</span>
-                            <span className={`text-xs px-2 py-0.5 rounded font-medium ${RISK_BADGE[check.risk]}`}>
-                              {check.risk.toUpperCase()} RISK
-                            </span>
+            {/* ─── TAB 0: HPML CALCULATOR ──────────────────────────────────── */}
+            {activeTab === 0 && (
+              <>
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-r from-purple-800 to-purple-700 px-8 py-5">
+                    <h2 className="text-xl font-bold text-white">HPML & HOEPA Calculator</h2>
+                    <p className="text-purple-200 text-sm mt-1">Enter loan APR and current APOR to auto-calculate spread and determine HPML / HOEPA status</p>
+                  </div>
+                  <div className="p-8 space-y-6">
+                    {/* APOR Note */}
+                    <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-xs text-blue-800">
+                      <strong>📍 Current APOR Rate:</strong> Look up the weekly APOR at <strong>ffiec.cfpb.gov</strong> → Rate Spread Calculator. APOR is published every Thursday for the following week's applications.
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Loan APR (%)</label>
+                        <input type="number" step="0.001" value={loanApr} onChange={e => setLoanApr(e.target.value)} placeholder="7.250"
+                          className="w-full border-2 border-purple-300 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-purple-500 bg-purple-50" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Current APOR Rate (%)</label>
+                        <input type="number" step="0.001" value={aporRate} onChange={e => setAporRate(e.target.value)} placeholder="6.100"
+                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-purple-400" />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Lien Type</label>
+                        <select value={lienType} onChange={e => setLienType(e.target.value)}
+                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-purple-400 bg-white">
+                          <option value="first_conforming">1st Lien — Conforming (threshold: 1.5%)</option>
+                          <option value="first_jumbo">1st Lien — Jumbo (threshold: 2.5%)</option>
+                          <option value="subordinate">Subordinate Lien (threshold: 3.5%)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Loan Type</label>
+                        <select value={loanType} onChange={e => setLoanType(e.target.value)}
+                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-purple-400 bg-white">
+                          <option value="">Select…</option>
+                          {['Conventional','FHA','VA','USDA','Jumbo','ARM','Non-QM'].map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Results */}
+                    {aprSpread !== '' && (
+                      <div className={'rounded-3xl border-2 p-6 ' + (isHPML ? 'border-amber-400 bg-amber-50' : 'border-emerald-400 bg-emerald-50')}>
+                        <div className="flex items-center gap-4 mb-4">
+                          <span className="text-4xl">{isHPML ? '⚠️' : '✅'}</span>
+                          <div>
+                            <div className={'text-2xl font-black ' + (isHPML ? 'text-amber-800' : 'text-emerald-800')}>
+                              {isHPML ? 'HPML — Higher-Priced Mortgage Loan' : 'Not HPML — Clear'}
+                            </div>
+                            <div className={'text-sm ' + (isHPML ? 'text-amber-700' : 'text-emerald-700')}>
+                              APR spread: {aprSpread}% · Threshold: {hpmlThreshold}% · {isHPML ? aprSpread + '% ≥ ' + hpmlThreshold + '% = HPML' : aprSpread + '% < ' + hpmlThreshold + '% = Not HPML'}
+                            </div>
                           </div>
-                          <p className="text-xs text-gray-400 mt-1">{check.description}</p>
-                          <input
-                            type="text"
-                            placeholder="Notes / evidence / exception…"
-                            value={notes[check.id]}
-                            onChange={e => setNotes(prev => ({ ...prev, [check.id]: e.target.value }))}
-                            className="mt-2 w-full bg-gray-800/60 border border-gray-700 rounded px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
-                          />
                         </div>
-                        <div className="flex-shrink-0">
-                          <select
-                            value={results[check.id]}
-                            onChange={e => setResults(prev => ({ ...prev, [check.id]: e.target.value }))}
-                            className={`text-xs border rounded-lg px-3 py-2 font-medium focus:outline-none bg-transparent ${getResultStyle(results[check.id])}`}
-                          >
-                            {RESULT_OPTIONS.map(r => (
-                              <option key={r.value} value={r.value} className="bg-gray-900 text-white">
-                                {r.label}
-                              </option>
+                        {isHPML && (
+                          <div className="space-y-2">
+                            <div className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2">HPML Mandatory Requirements:</div>
+                            {['Escrow account required for taxes and insurance (minimum 5 years)', 'Independent written appraisal required (by certified or licensed appraiser)', 'If LTV ≥ 110%: second independent appraisal required at no cost to borrower', 'Prepayment penalty restrictions: cannot exceed 3 years from consummation', 'Pre-loan counseling encouraged (not required but best practice)'].map((req, i) => (
+                              <div key={i} className="flex gap-2 text-xs text-amber-800"><span className="shrink-0 font-bold">{i + 1}.</span><span>{req}</span></div>
                             ))}
-                          </select>
+                          </div>
+                        )}
+                        {isHOEPA_APR && (
+                          <div className="mt-4 bg-red-100 border border-red-300 rounded-2xl p-4">
+                            <div className="font-bold text-red-800 text-sm">🚨 HOEPA APR Test Triggered ({aprSpread}% ≥ 6.5%)</div>
+                            <div className="text-xs text-red-700 mt-1">This may be a high-cost mortgage subject to HOEPA/Section 32 restrictions. Special counseling, disclosures, and prohibitions apply. Refer to compliance counsel immediately.</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Points & Fees QM Test */}
+                    <div className="border-t border-slate-200 pt-6">
+                      <div className="text-sm font-bold text-slate-700 mb-4">Points & Fees QM Cap Test</div>
+                      <div className="grid grid-cols-2 gap-5">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Loan Amount ($)</label>
+                          <input type="number" value={loanAmount} onChange={e => setLoanAmount(e.target.value)} placeholder="450000"
+                            className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-purple-400" />
                         </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Total Points & Fees ($)</label>
+                          <input type="number" value={pointsFees} onChange={e => setPointsFees(e.target.value)} placeholder="12000"
+                            className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-purple-400" />
+                        </div>
+                      </div>
+                      {pf > 0 && loanAmt > 0 && (
+                        <div className={'mt-4 rounded-2xl border-2 p-4 ' + (pfOverCap ? 'border-red-400 bg-red-50' : 'border-emerald-400 bg-emerald-50')}>
+                          <div className={'font-bold ' + (pfOverCap ? 'text-red-700' : 'text-emerald-700')}>
+                            {pfOverCap ? '🚨 Points & fees exceed QM cap' : '✅ Points & fees within QM cap'}
+                          </div>
+                          <div className={'text-sm mt-1 ' + (pfOverCap ? 'text-red-600' : 'text-emerald-600')}>
+                            {fmt0(pf)} = {pfPct.toFixed(2)}% of {fmt0(loanAmt)} · QM cap: {pfCapPct}%
+                          </div>
+                          {hoepaFeeTest && <div className="text-xs text-red-700 font-bold mt-2">{'⚠️ HOEPA fee test also triggered (' + pfPct.toFixed(2) + '% > 5%)'}</div>}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* ─── TAB 1: COMPLIANCE CHECKS ─────────────────────────────────── */}
+            {activeTab === 1 && (
+              <div className="space-y-6">
+                {CATEGORIES.map(cat => (
+                  <div key={cat} className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-4">
+                      <h3 className="text-sm font-bold text-white uppercase tracking-widest">{cat}</h3>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {COMPLIANCE_CHECKS.filter(c => c.category === cat).map(check => {
+                        const result = results[check.id];
+                        const resultObj = RESULT_OPTIONS.find(r => r.value === result);
+                        return (
+                          <div key={check.id} className={'p-6 transition-colors ' + (result === 'fail' ? 'bg-red-50' : result === 'review' ? 'bg-amber-50' : 'hover:bg-slate-50')}>
+                            <div className="flex items-start gap-4">
+                              <span className="text-2xl mt-0.5 shrink-0">{check.icon}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  <span className="font-bold text-slate-800">{check.label}</span>
+                                  <span className={'text-xs px-2 py-0.5 rounded-lg font-bold ' + RISK_BADGE[check.risk]}>{check.risk.toUpperCase()} RISK</span>
+                                </div>
+                                <p className="text-xs text-slate-500 mb-2">{check.description}</p>
+                                <p className="text-xs text-indigo-600 italic mb-3">💡 {check.tips}</p>
+                                <input type="text" value={notes[check.id]} onChange={e => setNotes(prev => ({ ...prev, [check.id]: e.target.value }))}
+                                  placeholder="Notes / evidence / exception documentation..."
+                                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-purple-400 bg-slate-50" />
+                              </div>
+                              <div className="shrink-0">
+                                <select value={result} onChange={e => setResults(prev => ({ ...prev, [check.id]: e.target.value }))}
+                                  className={'text-xs border-2 rounded-2xl px-3 py-2 font-bold focus:outline-none cursor-pointer ' + (resultObj?.color || 'border-slate-200 bg-slate-50 text-slate-500')}>
+                                  {RESULT_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                <div className="flex justify-end">
+                  <button onClick={handleSaveToRecord} disabled={recordSaving}
+                    className={'px-8 py-3 rounded-2xl text-sm font-bold transition-colors ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
+                    {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record™'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ─── TAB 2: ATR FACTORS ──────────────────────────────────────── */}
+            {activeTab === 2 && (
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
+                  <h2 className="text-xl font-bold text-white">Ability-to-Repay — 8 Required Factors</h2>
+                  <p className="text-slate-400 text-sm mt-1">Reg Z §1026.43(c)(2) — All 8 factors must be considered and documented for every covered transaction</p>
+                </div>
+                <div className="p-8 space-y-4">
+                  {ATR_FACTORS.map((item, i) => (
+                    <div key={i} className="flex items-start gap-4 p-4 bg-slate-50 border border-slate-200 rounded-2xl">
+                      <div className="w-8 h-8 bg-purple-100 border border-purple-200 rounded-xl text-purple-700 text-sm font-black flex items-center justify-center shrink-0">{i + 1}</div>
+                      <div>
+                        <div className="text-sm font-semibold text-slate-800 mb-1">{item.factor}</div>
+                        <div className="text-xs text-indigo-600">📄 Documentation: {item.doc}</div>
                       </div>
                     </div>
                   ))}
+                  <div className="bg-purple-50 border border-purple-200 rounded-2xl p-5 mt-4">
+                    <div className="font-bold text-purple-800 text-sm mb-2">QM Safe Harbor vs Rebuttable Presumption</div>
+                    <div className="space-y-2 text-xs text-purple-800">
+                      <p><strong>Safe Harbor (conclusive presumption):</strong> APR ≤ APOR + 1.5%. Lender has complete protection from ATR liability if QM requirements met.</p>
+                      <p><strong>Rebuttable Presumption:</strong> APR above APOR + 1.5% but still QM (HPML QM). Borrower can rebut the presumption by showing lender failed to make reasonable good-faith determination of ATR.</p>
+                      <p><strong>Non-QM:</strong> No presumption. Lender must affirmatively demonstrate ATR compliance in court if challenged. Higher documentation and evidence standard required.</p>
+                    </div>
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            )}
 
-        {/* ATR Factors Tab */}
-        {activeTab === 'atr' && (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-            <div className="mb-4">
-              <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
-                Ability-to-Repay (ATR) — 8 Required Factors
-              </h2>
-              <p className="text-xs text-gray-500 mt-1">
-                Per Reg Z §1026.43(c)(2). All 8 factors must be considered and documented.
-              </p>
-            </div>
-            <div className="space-y-3">
-              {ATR_FACTORS.map((factor, i) => (
-                <div key={i} className="flex items-start gap-3 p-3 bg-gray-800/40 rounded-lg border border-gray-700">
-                  <div className="flex-shrink-0 w-6 h-6 bg-purple-600/20 border border-purple-500/30 rounded text-purple-400 text-xs font-bold flex items-center justify-center mt-0.5">
-                    {i + 1}
+            {/* ─── TAB 3: HMDA ─────────────────────────────────────────────── */}
+            {activeTab === 3 && (
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
+                  <h2 className="text-xl font-bold text-white">HMDA LAR Data Collection</h2>
+                  <p className="text-slate-400 text-sm mt-1">Regulation C — Required data points for covered institutions · {hmdaCollected} collected · {hmdaMissing} missing</p>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {HMDA_FIELDS.map(field => {
+                    const v = hmda[field.id];
+                    return (
+                      <div key={field.id} className={'flex items-center justify-between px-6 py-4 ' + (v === 'missing' ? 'bg-red-50' : v === 'collected' ? 'bg-emerald-50' : '')}>
+                        <div>
+                          <div className="text-sm font-semibold text-slate-800">{field.label}</div>
+                          <div className="text-xs text-slate-400">{field.note}</div>
+                        </div>
+                        <select value={v} onChange={e => setHmda(prev => ({ ...prev, [field.id]: e.target.value }))}
+                          className={'text-xs border-2 rounded-2xl px-3 py-2 font-bold focus:outline-none cursor-pointer ' + (v === 'collected' ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : v === 'missing' ? 'border-red-400 bg-red-50 text-red-800' : v === 'na' ? 'border-slate-200 bg-slate-100 text-slate-400' : 'border-slate-200 bg-slate-50 text-slate-600')}>
+                          <option value="pending">⏳ Pending</option>
+                          <option value="collected">✅ Collected</option>
+                          <option value="missing">⚠️ Missing</option>
+                          <option value="na">— N/A</option>
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+                {hmdaMissing > 0 && (
+                  <div className="p-6 border-t border-slate-200">
+                    <div className="bg-red-50 border border-red-200 rounded-2xl p-4">
+                      <div className="font-bold text-red-700 text-sm">⚠️ {hmdaMissing} HMDA field(s) missing</div>
+                      <div className="text-xs text-red-600 mt-1">HMDA data must be complete before loan submission. Missing data can result in regulatory penalties during CRA examination.</div>
+                    </div>
                   </div>
-                  <span className="text-sm text-gray-200">{factor}</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 p-3 bg-blue-900/20 border border-blue-500/30 rounded-lg">
-              <p className="text-xs text-blue-300">
-                <strong>QM Safe Harbor:</strong> Loans meeting QM definition receive a conclusive presumption of ATR compliance if APR ≤ APOR + 1.5%. Rebuttable Presumption applies if APR {'>'} 1.5% over APOR (HPML QM).
-              </p>
-            </div>
-          </div>
-        )}
+                )}
+              </div>
+            )}
 
-        {/* HMDA Tab */}
-        {activeTab === 'hmda' && (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-800">
-              <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
-                HMDA LAR Data Collection Checklist
-              </h2>
-              <p className="text-xs text-gray-500 mt-1">Regulation C — Required data points for covered institutions</p>
-            </div>
-            <div className="divide-y divide-gray-800">
-              {HMDA_FIELDS.map(field => (
-                <div key={field.id} className="flex items-center justify-between p-4 hover:bg-gray-800/20">
-                  <span className="text-sm text-gray-200">{field.label}</span>
-                  <select
-                    value={hmda[field.id]}
-                    onChange={e => setHmda(prev => ({ ...prev, [field.id]: e.target.value }))}
-                    className={`text-xs border rounded-lg px-3 py-1.5 font-medium focus:outline-none bg-transparent ${
-                      hmda[field.id] === 'collected' ? 'text-green-400 bg-green-400/10 border-green-400/30' :
-                      hmda[field.id] === 'missing' ? 'text-red-400 bg-red-400/10 border-red-400/30' :
-                      'text-blue-400 bg-blue-400/10 border-blue-400/30'
-                    }`}
-                  >
-                    <option value="pending" className="bg-gray-900 text-white">Pending</option>
-                    <option value="collected" className="bg-gray-900 text-white">Collected ✓</option>
-                    <option value="missing" className="bg-gray-900 text-white">Missing ⚠️</option>
-                    <option value="na" className="bg-gray-900 text-white">N/A</option>
-                  </select>
+            {/* ─── TAB 4: AI ASSESSMENT ────────────────────────────────────── */}
+            {activeTab === 4 && (
+              <>
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
+                    <h2 className="text-xl font-bold text-white">AI Compliance Assessment</h2>
+                    <p className="text-slate-400 text-sm mt-1">Sonnet reviews the full compliance file and flags regulatory risks specific to this loan</p>
+                  </div>
+                  <div className="p-8">
+                    {!aiAnalysis ? (
+                      <div className="text-center py-6">
+                        <div className="text-4xl mb-4">🤖</div>
+                        <p className="text-slate-500 text-sm mb-4">Run AI assessment to identify compliance risks, HPML guidance, and loan-type-specific regulatory considerations.</p>
+                        <button onClick={handleAIAnalysis} disabled={aiAnalyzing}
+                          className="px-8 py-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold rounded-2xl transition-colors">
+                          {aiAnalyzing ? 'Analyzing...' : '🤖 Run AI Compliance Assessment'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-5">
+                        <div className={'inline-flex items-center gap-2 px-4 py-2 rounded-xl border-2 font-black text-sm ' + (riskColor[aiAnalysis.riskLevel] || riskColor.MEDIUM)}>
+                          {aiAnalysis.riskLevel === 'LOW' ? '✅' : aiAnalysis.riskLevel === 'MEDIUM' ? '⚠️' : '🚨'} Risk: {aiAnalysis.riskLevel}
+                          {aiAnalysis.clearanceReady && <span className="ml-2 text-xs bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded-full">Ready for Clearance</span>}
+                        </div>
+                        <p className="text-slate-700 leading-relaxed">{aiAnalysis.summary}</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          {[['🚨 Critical Issues', aiAnalysis.criticalIssues, 'red'], ['✅ Action Items', aiAnalysis.actionItems, 'blue']].map(([label, items, color]) => (
+                            <div key={label} className={`rounded-2xl border p-4 bg-${color}-50 border-${color}-200`}>
+                              <div className={`text-xs font-bold text-${color}-700 mb-2`}>{label}</div>
+                              <ul className="space-y-1">{(items || []).map((item, i) => <li key={i} className={`text-xs text-${color}-800 flex gap-2`}><span className="shrink-0">•</span><span>{item}</span></li>)}</ul>
+                            </div>
+                          ))}
+                        </div>
+                        {aiAnalysis.hpmlGuidance?.length > 0 && (
+                          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
+                            <div className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-3">⚠️ HPML-Specific Guidance</div>
+                            {aiAnalysis.hpmlGuidance.map((g, i) => <div key={i} className="flex gap-2 text-sm text-amber-800 mb-1.5"><span className="shrink-0">•</span><span>{g}</span></div>)}
+                          </div>
+                        )}
+                        {aiAnalysis.regulatoryNotes?.length > 0 && (
+                          <div className="bg-purple-50 border border-purple-200 rounded-2xl p-5">
+                            <div className="text-xs font-bold text-purple-700 uppercase tracking-wide mb-3">📋 Regulatory Notes</div>
+                            {aiAnalysis.regulatoryNotes.map((n, i) => <div key={i} className="flex gap-2 text-sm text-purple-800 mb-1.5"><span className="shrink-0">•</span><span>{n}</span></div>)}
+                          </div>
+                        )}
+                        <button onClick={handleAIAnalysis} disabled={aiAnalyzing} className="text-xs text-purple-600 hover:text-purple-500 font-semibold">{aiAnalyzing ? 'Re-analyzing...' : '↺ Re-run'}</button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
 
-        {/* Save Button */}
-        {scenarioIdParam && (
-          <div className="flex justify-end">
-            <button
-              onClick={handleSaveToRecord}
-              disabled={recordSaving}
-              className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-semibold px-6 py-3 rounded-xl transition-colors flex items-center gap-2"
-            >
-              {recordSaving ? (
-                <>
-                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                  </svg>
-                  Saving…
-                </>
-              ) : savedRecordId ? (
-                '✅ Saved to Decision Record'
-              ) : (
-                '💾 Save to Decision Record'
+                {/* LO Notes */}
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5"><h2 className="text-xl font-bold text-white">LO Notes</h2></div>
+                  <div className="p-8">
+                    <textarea value={loNotes} onChange={e => setLoNotes(e.target.value)} rows={4}
+                      placeholder="QM exception documentation, HPML compliance steps taken, fair lending notes, state law overlays..."
+                      className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-purple-400 resize-none" />
+                    <div className="mt-4 flex justify-end">
+                      <button onClick={handleSaveToRecord} disabled={recordSaving}
+                        className={'px-8 py-3 rounded-2xl text-sm font-bold transition-colors ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
+                        {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record™'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Letter */}
+                <LetterCard title="Compliance Summary Letter" icon="⚖️" body={buildComplianceLetter({ borrowerName, loanType, loanApr, aporRate, aprSpread, isHPML, complianceScore, passCount, failCount, reviewCount, results, loNotes, aiSummary: aiAnalysis?.summary })} />
+              </>
+            )}
+          </div>
+
+          {/* Sidebar */}
+          <div className="space-y-5">
+            <div className="bg-slate-900 rounded-3xl p-6 sticky top-6">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5">Compliance Score</div>
+              <div className="text-center mb-5">
+                <div className={'text-5xl font-black ' + (complianceScore >= 80 ? 'text-emerald-400' : complianceScore >= 50 ? 'text-amber-400' : 'text-red-400')}>{complianceScore}%</div>
+                <div className="text-slate-400 text-sm mt-1">Pass: {passCount} · Fail: {failCount} · Review: {reviewCount} · N/A: {naCount}</div>
+                <div className="mt-3 bg-slate-800 rounded-full h-3 overflow-hidden">
+                  <div className={'h-full rounded-full transition-all ' + (complianceScore >= 80 ? 'bg-emerald-400' : complianceScore >= 50 ? 'bg-amber-400' : 'bg-red-400')}
+                    style={{ width: complianceScore + '%' }} />
+                </div>
+              </div>
+
+              {/* HPML status */}
+              {aprSpread !== '' && (
+                <div className={'rounded-2xl border p-3 mb-4 ' + (isHPML ? 'bg-amber-900/30 border-amber-700/50' : 'bg-emerald-900/30 border-emerald-700/50')}>
+                  <div className={'text-xs font-bold uppercase mb-0.5 ' + (isHPML ? 'text-amber-400' : 'text-emerald-400')}>HPML Status</div>
+                  <div className={'font-black ' + (isHPML ? 'text-amber-300' : 'text-emerald-300')}>{isHPML ? '⚠️ HPML — ' + aprSpread + '% spread' : '✅ Not HPML'}</div>
+                </div>
               )}
-            </button>
+
+              {/* Failed items */}
+              {failItems.length > 0 && (
+                <div className="bg-red-900/30 border border-red-700/50 rounded-2xl p-4 mb-4">
+                  <div className="text-xs font-bold text-red-400 uppercase mb-2">🚨 Failed Checks</div>
+                  {failItems.map(item => <div key={item.id} className="text-xs text-red-300 mb-1 flex gap-1.5"><span className="shrink-0">•</span><span>{item.label}</span></div>)}
+                </div>
+              )}
+
+              {/* HMDA status */}
+              <div className={'rounded-2xl border p-3 ' + (hmdaMissing > 0 ? 'bg-amber-900/30 border-amber-700/50' : 'bg-slate-800 border-slate-700')}>
+                <div className="text-xs text-slate-400 mb-0.5">HMDA Data</div>
+                <div className={'text-sm font-black ' + (hmdaMissing > 0 ? 'text-amber-300' : 'text-slate-300')}>{hmdaCollected}/{HMDA_FIELDS.length} fields collected{hmdaMissing > 0 ? ' · ' + hmdaMissing + ' missing' : ''}</div>
+              </div>
+
+              {aiAnalysis?.riskLevel && (
+                <div className={'mt-3 rounded-2xl p-3 border text-center ' + (aiAnalysis.riskLevel === 'LOW' ? 'bg-emerald-900/30 border-emerald-700/50' : aiAnalysis.riskLevel === 'MEDIUM' ? 'bg-amber-900/30 border-amber-700/50' : 'bg-red-900/30 border-red-700/50')}>
+                  <div className="text-xs font-bold text-slate-400 uppercase mb-0.5">AI Risk Level</div>
+                  <div className={'font-black ' + (aiAnalysis.riskLevel === 'LOW' ? 'text-emerald-300' : aiAnalysis.riskLevel === 'MEDIUM' ? 'text-amber-300' : 'text-red-300')}>{aiAnalysis.riskLevel}</div>
+                </div>
+              )}
+            </div>
+
+            {/* Key Rules */}
+            <div className="bg-amber-50 border border-amber-200 rounded-3xl p-5">
+              <div className="font-bold text-amber-800 text-sm mb-3">⚠️ Key Rules</div>
+              <ul className="space-y-2">
+                {['HPML (1st conforming): APR ≥ APOR + 1.5% — escrow + appraisal required', 'QM points & fees cap: 3% for loans ≥ $100K (sliding scale for smaller loans)', 'HOEPA fee test: points & fees > 5% = high-cost mortgage', 'ATR: all 8 factors must be documented — cannot rely on stated income', 'Fair lending: pricing exceptions must be documented with risk-based justification', 'HMDA: demographic data must be offered — record even if borrower declines', 'Non-QM loans: no ATR presumption — higher documentation standard'].map(rule => (
+                  <li key={rule} className="flex gap-2 text-xs text-amber-800"><span className="shrink-0">•</span><span>{rule}</span></li>
+                ))}
+              </ul>
+            </div>
           </div>
-        )}
+        </div>
       </div>
-          <CanonicalSequenceBar currentModuleKey="COMPLIANCE_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
-</div>
-  )
+
+      <CanonicalSequenceBar currentModuleKey="COMPLIANCE_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
+    </div>
+  );
 }
