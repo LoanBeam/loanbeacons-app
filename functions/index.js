@@ -2,14 +2,15 @@
 // LoanBeacons™ — Cloud Functions index.js
 // All functions Gen2 | Secrets via Secret Manager (NOT .env)
 // ANTHROPIC_KEY + SENDGRID_API_KEY both stored in Secret Manager
-// Last updated: March 2026
+// Last updated: April 2026
 // ===========================================================================
 
 const { onDocumentCreated }    = require("firebase-functions/v2/firestore");
-const { onCall, onRequest }    = require("firebase-functions/v2/https");
+const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { defineSecret }         = require("firebase-functions/params");
 const { initializeApp }        = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const { getAuth }              = require("firebase-admin/auth");
 const sgMail                   = require("@sendgrid/mail");
 const crypto                   = require("crypto");
 
@@ -380,16 +381,7 @@ const { respondToScenarioShare } = require("./src/respondToScenarioShare.cjs");
 exports.respondToScenarioShare = respondToScenarioShare;
 
 // ===========================================================================
-// FUNCTION 6: extractFHADocument → Gen2 | M10 FHA Streamline
-// Supports multi-doc { documents: [{label, base64, mediaType}] }
-// and legacy single-doc { documentBase64, mediaType, documentType }
-//
-// EXTRACTION IMPROVEMENTS (March 2026):
-// - Per-field source priority rules (Mortgage Statement vs CD)
-// - Rate disambiguation: existing rate only, never proposed/new rate
-// - Confidence scoring per field (high/medium/low)
-// - Post-extraction validation with warnings
-// - docs_identified array to confirm what was found
+// FUNCTION 6: extractFHADocument
 // ===========================================================================
 exports.extractFHADocument = onCall(
   { secrets: [ANTHROPIC_KEY], timeoutSeconds: 120, memory: "512MiB" },
@@ -496,33 +488,21 @@ Return ONLY a valid JSON object — no markdown, no backticks, no explanation, n
 
     let contentBlocks = [];
 
-    // ── Multi-doc format: { documents: [{ label, base64, mediaType }] }
     if (request.data.documents && Array.isArray(request.data.documents)) {
       if (request.data.documents.length === 0) throw new Error("documents array is empty");
       for (const docItem of request.data.documents) {
         if (!docItem.base64) throw new Error(`Document '${docItem.label || "unknown"}' is missing base64 data`);
         contentBlocks.push({
           type: "document",
-          source: {
-            type: "base64",
-            media_type: docItem.mediaType || "application/pdf",
-            data: docItem.base64,
-          },
+          source: { type: "base64", media_type: docItem.mediaType || "application/pdf", data: docItem.base64 },
         });
       }
-    }
-    // ── Legacy single-doc format: { documentBase64, mediaType, documentType }
-    else if (request.data.documentBase64) {
+    } else if (request.data.documentBase64) {
       contentBlocks.push({
         type: "document",
-        source: {
-          type: "base64",
-          media_type: request.data.mediaType || "application/pdf",
-          data: request.data.documentBase64,
-        },
+        source: { type: "base64", media_type: request.data.mediaType || "application/pdf", data: request.data.documentBase64 },
       });
-    }
-    else {
+    } else {
       throw new Error("Provide either 'documents' array or 'documentBase64'");
     }
 
@@ -538,41 +518,34 @@ Return ONLY a valid JSON object — no markdown, no backticks, no explanation, n
     const cleaned = raw.replace(/```json\n?/g, "").replace(/```/g, "").trim();
 
     let parsed;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch (e) {
-      throw new Error("Haiku returned non-JSON. Raw: " + raw.substring(0, 200));
-    }
+    try { parsed = JSON.parse(cleaned); }
+    catch (e) { throw new Error("Haiku returned non-JSON. Raw: " + raw.substring(0, 200)); }
 
-    // ── Post-extraction validation — flag suspicious values, do not block
     const warnings = [];
-
     if (parsed.existing_note_rate !== null && parsed.existing_note_rate !== undefined) {
       if (parsed.existing_note_rate < 2.0 || parsed.existing_note_rate > 14.0) {
-        warnings.push(`existing_note_rate ${parsed.existing_note_rate}% is outside expected range 2.0–14.0% — may be a decimal (e.g. 0.0725 instead of 7.25)`);
+        warnings.push(`existing_note_rate ${parsed.existing_note_rate}% is outside expected range 2.0–14.0%`);
         parsed.existing_note_rate_confidence = "low";
       }
     }
     if (parsed.existing_upb !== null && parsed.existing_upb !== undefined) {
       if (parsed.existing_upb < 10000 || parsed.existing_upb > 2000000) {
-        warnings.push(`existing_upb $${parsed.existing_upb} is outside expected range $10,000–$2,000,000`);
+        warnings.push(`existing_upb $${parsed.existing_upb} is outside expected range`);
         parsed.existing_upb_confidence = "low";
       }
     }
     if (parsed.original_ufmip !== null && parsed.original_ufmip !== undefined) {
-      // UFMIP is a dollar amount (~1.75% of loan). If < 100 it's likely a rate decimal, not dollars.
       if (parsed.original_ufmip > 0 && parsed.original_ufmip < 100) {
-        warnings.push(`original_ufmip ${parsed.original_ufmip} looks like a rate or percentage, not a dollar amount — expected range $500–$15,000`);
+        warnings.push(`original_ufmip ${parsed.original_ufmip} looks like a rate, not a dollar amount`);
         parsed.original_ufmip_confidence = "low";
       }
     }
     if (parsed.existing_monthly_mip !== null && parsed.existing_monthly_mip !== undefined) {
       if (parsed.existing_monthly_mip > 0 && parsed.existing_monthly_mip < 10) {
-        warnings.push(`existing_monthly_mip ${parsed.existing_monthly_mip} looks like a rate, not a monthly dollar amount — expected range $30–$500`);
+        warnings.push(`existing_monthly_mip ${parsed.existing_monthly_mip} looks like a rate, not a monthly dollar amount`);
         parsed.existing_monthly_mip_confidence = "low";
       }
     }
-
     if (warnings.length > 0) {
       console.warn("extractFHADocument validation warnings:", warnings);
       parsed._extraction_warnings = warnings;
@@ -583,17 +556,7 @@ Return ONLY a valid JSON object — no markdown, no backticks, no explanation, n
 );
 
 // ===========================================================================
-// FUNCTION 7: extractVADocument → Gen2 | M11 VA IRRRL
-// Supports multi-doc { documents: [{label, base64, mediaType}] }
-// and legacy single-doc { documentBase64, mediaType }
-//
-// EXTRACTION IMPROVEMENTS (March 2026):
-// - Per-field source priority rules (Mortgage Statement vs VA Note vs COE)
-// - Rate disambiguation: existing rate only, never proposed/new rate
-// - Confidence scoring per field (high/medium/low)
-// - Post-extraction validation with warnings
-// - closingDate + monthsSeasonedCount for seasoning check
-// - docs_identified array to confirm what was found
+// FUNCTION 7: extractVADocument
 // ===========================================================================
 exports.extractVADocument = onCall(
   { secrets: [ANTHROPIC_KEY], timeoutSeconds: 120, memory: "512MiB" },
@@ -611,90 +574,67 @@ veteranName:
 vaLoanNumber:
   SOURCE = COE or mortgage statement.
   Look for: "VA Loan Number", "VA Case Number", "Loan #", "VA Loan #".
-  VA loan numbers typically follow format: XXXXXXXXXX or XX-XX-X-XXXXXXX.
 
 currentNoteRate (the interest rate on the loan being refinanced):
   SOURCE = Mortgage Statement first, then VA Note.
-  CRITICAL: VA IRRRL documents may contain BOTH the existing loan rate and a proposed new rate. You MUST return ONLY the EXISTING rate on the loan currently being paid.
-  Look for: "Interest Rate", "Current Rate", "Note Rate", "Original Rate".
+  CRITICAL: VA IRRRL documents may contain BOTH the existing loan rate and a proposed new rate. You MUST return ONLY the EXISTING rate.
   Return as a DECIMAL — e.g. return 0.0675 for 6.75%, return 0.0750 for 7.50%.
   NEVER return a rate from any section labeled: "New Loan", "Proposed", "New Rate", "Refinance Rate", "Option".
-  RULE: If you see two rates, return the HIGHER one expressed as a decimal. The existing rate is always higher in an IRRRL.
+  RULE: If you see two rates, return the HIGHER one expressed as a decimal.
 
-currentPIPayment (current monthly P&I payment on the loan being paid off):
+currentPIPayment:
   SOURCE = Mortgage Statement.
-  Look for: "Monthly P&I", "Principal & Interest", "P&I Payment", "P&I".
   Return as a dollar amount (e.g. 1850.00). Do NOT use a proposed new payment.
 
-originalLoanAmount (amount at origination, before any paydown):
+originalLoanAmount:
   SOURCE = VA Note or original CD.
-  Look for: "Original Loan Amount", "Note Amount", "Principal Amount", "Loan Amount".
-  This is always greater than the current remaining balance.
 
-remainingBalance (current outstanding payoff balance):
+remainingBalance:
   SOURCE = Mortgage Statement ONLY.
-  Look for: "Current Balance", "Unpaid Principal Balance", "Outstanding Balance", "Remaining Balance".
-  This is always less than originalLoanAmount.
+  Always less than originalLoanAmount.
 
 originalTermMonths:
   SOURCE = VA Note or CD.
-  Look for: "Loan Term", "Term", "Maturity".
   Convert years to months: 30 years = 360, 20 years = 240, 15 years = 180.
 
 remainingTermMonths:
   SOURCE = Mortgage Statement.
-  Look for: "Payments Remaining", "Remaining Term", "Months Remaining".
-  If not explicit, calculate: remainingTermMonths = originalTermMonths - paymentsMade.
 
 fundingFeeExempt:
-  Return true ONLY if documents explicitly mention: service-connected disability, disability rating, VA disability compensation, or funding fee exemption/waiver.
-  Return false if documents confirm veteran is NOT exempt or no disability is mentioned.
-  Return null if the documents contain no mention of disability status or funding fee exemption.
+  Return true ONLY if documents explicitly mention service-connected disability or funding fee exemption.
+  Return false if not exempt or not mentioned.
+  Return null if no mention anywhere.
 
-propertyAddress:
-  SOURCE = Any document.
-  Return full street address including city, state, and zip code.
+propertyAddress, closingDate, monthsSeasonedCount:
+  closingDate = YYYY-MM-DD from VA Note or CD.
+  monthsSeasonedCount = full months between closingDate and April 2026.
 
-closingDate (date the original VA loan closed):
-  SOURCE = VA Note or original CD.
-  Look for: "Closing Date", "Origination Date", "Note Date", "Loan Date".
-  Return as YYYY-MM-DD.
+CONFIDENCE SCORING — high/medium/low per field.
 
-monthsSeasonedCount:
-  Calculate as the number of full months between closingDate and March 2026.
-  If closingDate not found, return null.
-
-CONFIDENCE SCORING — for each field include a confidence level:
-  "high" = value found explicitly with a clear matching label
-  "medium" = value inferred or calculated from other stated values
-  "low" = best guess, ambiguous label, or multiple possible values
-
-Return ONLY a valid JSON object — no markdown, no backticks, no explanation, no preamble. Use exactly this structure:
-
+Return ONLY valid JSON:
 {
-  "veteranName": "full name string" or null,
-  "vaLoanNumber": "VA loan number string" or null,
-  "currentNoteRate": number as decimal e.g. 0.0675 for 6.75% or null,
-  "currentNoteRate_confidence": "high" or "medium" or "low" or null,
-  "currentPIPayment": number e.g. 1850.00 or null,
-  "currentPIPayment_confidence": "high" or "medium" or "low" or null,
-  "originalLoanAmount": number or null,
-  "originalLoanAmount_confidence": "high" or "medium" or "low" or null,
-  "remainingBalance": number or null,
-  "remainingBalance_confidence": "high" or "medium" or "low" or null,
-  "originalTermMonths": number e.g. 360 or null,
-  "remainingTermMonths": number e.g. 324 or null,
-  "fundingFeeExempt": true or false or null,
-  "fundingFeeExempt_confidence": "high" or "medium" or "low" or null,
-  "propertyAddress": "full address string" or null,
-  "closingDate": "YYYY-MM-DD" or null,
-  "monthsSeasonedCount": number or null,
-  "docs_identified": array of document types found from this list: ["coe", "mortgage_statement", "va_note", "closing_disclosure", "unknown"]
+  "veteranName": null,
+  "vaLoanNumber": null,
+  "currentNoteRate": null,
+  "currentNoteRate_confidence": null,
+  "currentPIPayment": null,
+  "currentPIPayment_confidence": null,
+  "originalLoanAmount": null,
+  "originalLoanAmount_confidence": null,
+  "remainingBalance": null,
+  "remainingBalance_confidence": null,
+  "originalTermMonths": null,
+  "remainingTermMonths": null,
+  "fundingFeeExempt": null,
+  "fundingFeeExempt_confidence": null,
+  "propertyAddress": null,
+  "closingDate": null,
+  "monthsSeasonedCount": null,
+  "docs_identified": []
 }`;
 
     let contentBlocks = [];
 
-    // ── Multi-doc format: { documents: [{ label, base64, mediaType }] }
     if (request.data.documents && Array.isArray(request.data.documents)) {
       if (request.data.documents.length === 0) throw new Error("documents array is empty");
       for (const doc of request.data.documents) {
@@ -704,15 +644,12 @@ Return ONLY a valid JSON object — no markdown, no backticks, no explanation, n
           source: { type: "base64", media_type: doc.mediaType || "application/pdf", data: doc.base64 },
         });
       }
-    }
-    // ── Legacy single-doc format: { documentBase64, mediaType }
-    else if (request.data.documentBase64) {
+    } else if (request.data.documentBase64) {
       contentBlocks.push({
         type: "document",
         source: { type: "base64", media_type: request.data.mediaType || "application/pdf", data: request.data.documentBase64 },
       });
-    }
-    else {
+    } else {
       throw new Error("Provide either 'documents' array or 'documentBase64'");
     }
 
@@ -728,23 +665,17 @@ Return ONLY a valid JSON object — no markdown, no backticks, no explanation, n
     const cleaned = raw.replace(/```json\n?/g, "").replace(/```/g, "").trim();
 
     let parsed;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch (e) {
-      throw new Error("Haiku returned non-JSON. Raw: " + raw.substring(0, 200));
-    }
+    try { parsed = JSON.parse(cleaned); }
+    catch (e) { throw new Error("Haiku returned non-JSON. Raw: " + raw.substring(0, 200)); }
 
-    // ── Post-extraction validation — flag suspicious values, do not block
     const warnings = [];
-
     if (parsed.currentNoteRate !== null && parsed.currentNoteRate !== undefined) {
-      // Rate should be decimal (0.0675), not percent (6.75)
       if (parsed.currentNoteRate > 0.20) {
-        warnings.push(`currentNoteRate ${parsed.currentNoteRate} looks like a percentage, not a decimal — expected e.g. 0.0675 for 6.75%`);
+        warnings.push(`currentNoteRate ${parsed.currentNoteRate} looks like a percentage, not a decimal`);
         parsed.currentNoteRate_confidence = "low";
       }
       if (parsed.currentNoteRate < 0.01) {
-        warnings.push(`currentNoteRate ${parsed.currentNoteRate} is suspiciously low — verify it is expressed as a decimal`);
+        warnings.push(`currentNoteRate ${parsed.currentNoteRate} is suspiciously low`);
         parsed.currentNoteRate_confidence = "low";
       }
     }
@@ -753,17 +684,257 @@ Return ONLY a valid JSON object — no markdown, no backticks, no explanation, n
       parsed.originalLoanAmount !== null && parsed.originalLoanAmount !== undefined
     ) {
       if (parsed.remainingBalance > parsed.originalLoanAmount * 1.05) {
-        warnings.push(`remainingBalance ${parsed.remainingBalance} exceeds originalLoanAmount ${parsed.originalLoanAmount} — values may be swapped`);
+        warnings.push(`remainingBalance exceeds originalLoanAmount — values may be swapped`);
         parsed.remainingBalance_confidence = "low";
         parsed.originalLoanAmount_confidence = "low";
       }
     }
-
     if (warnings.length > 0) {
       console.warn("extractVADocument validation warnings:", warnings);
       parsed._extraction_warnings = warnings;
     }
 
     return { data: parsed };
+  }
+);
+
+// ===========================================================================
+// FUNCTION 8: checkLenderNMLS
+// Gate 1 — check if a company NMLS# already has a canonical profile
+// ===========================================================================
+exports.checkLenderNMLS = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+
+  const { nmls } = request.data;
+  if (!nmls || typeof nmls !== "string" || !nmls.trim()) {
+    throw new HttpsError("invalid-argument", "nmls is required.");
+  }
+
+  const snap = await db
+    .collection("lenderProfiles")
+    .where("nmls", "==", nmls.trim())
+    .limit(1)
+    .get();
+
+  if (snap.empty) return { exists: false, profileId: null, lenderName: null };
+
+  const doc = snap.docs[0];
+  return { exists: true, profileId: doc.id, lenderName: doc.data().name || null };
+});
+
+// ===========================================================================
+// FUNCTION 9: createLenderInvite
+// Writes lenderInvites token doc, returns invite URL
+// SendGrid send gated behind SENDGRID_READY env flag (set when domain verified)
+// ===========================================================================
+exports.createLenderInvite = onCall(
+  { secrets: [SENDGRID_API_KEY], timeoutSeconds: 30 },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+
+    const { nmls, lenderName, aeEmail, aeName, loName, loNmls, personalMessage } = request.data;
+    if (!nmls || !aeEmail || !lenderName) {
+      throw new HttpsError("invalid-argument", "nmls, lenderName, and aeEmail are required.");
+    }
+
+    // Authoritative Gate 1 re-check server-side
+    const existingSnap = await db
+      .collection("lenderProfiles")
+      .where("nmls", "==", nmls.trim())
+      .limit(1)
+      .get();
+
+    if (!existingSnap.empty) {
+      return {
+        success: false,
+        alreadyExists: true,
+        profileId: existingSnap.docs[0].id,
+        lenderName: existingSnap.docs[0].data().name || lenderName,
+      };
+    }
+
+    // Reuse existing pending invite for this NMLS# to avoid spam
+    const pendingSnap = await db
+      .collection("lenderInvites")
+      .where("nmls", "==", nmls.trim())
+      .where("status", "==", "pending")
+      .limit(1)
+      .get();
+
+    let token;
+    if (!pendingSnap.empty) {
+      token = pendingSnap.docs[0].id;
+    } else {
+      token = crypto.randomUUID();
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 30);
+      await db.collection("lenderInvites").doc(token).set({
+        token,
+        nmls: nmls.trim(),
+        lenderName,
+        aeEmail: aeEmail.toLowerCase().trim(),
+        aeName: aeName || "",
+        loUid: request.auth.uid,
+        loName: loName || "",
+        loNmls: loNmls || "",
+        personalMessage: personalMessage || "",
+        status: "pending",
+        createdAt: FieldValue.serverTimestamp(),
+        expiresAt,
+      });
+    }
+
+    const inviteUrl = `https://loanbeacons.com/lender-register?token=${token}`;
+
+    // SendGrid send — only active when SENDGRID_READY=true env var is set
+    const SENDGRID_READY = process.env.SENDGRID_READY === "true";
+    if (SENDGRID_READY) {
+      try {
+        sgMail.setApiKey(SENDGRID_API_KEY.value());
+        await sgMail.send({
+          to: aeEmail,
+          from: { email: "noreply@loanbeacons.com", name: "LoanBeacons™" },
+          subject: `${loName || "A broker"} invites you to join LoanBeacons™`,
+          html: `<p>Hi ${aeName || "there"},</p><p>${loName || "A broker"} has invited ${lenderName} to join LoanBeacons™.</p>${personalMessage ? `<p>${personalMessage}</p>` : ""}<p><a href="${inviteUrl}">Set Up Your Lender Profile →</a></p><p style="font-size:11px;color:#64748b;">Expires in 30 days.</p>`,
+        });
+      } catch (emailErr) {
+        console.error("SendGrid send failed (non-blocking):", emailErr);
+      }
+    }
+
+    return { success: true, token, inviteUrl, alreadyExists: false };
+  }
+);
+
+// ===========================================================================
+// FUNCTION 10: completeLenderRegistration
+// Gates 2 & 3 — called after Firebase Auth account created on client
+// Gate 2 (duplicate email) is handled by Firebase Auth before this runs
+// Gate 3: if primary AE already exists for NMLS#, queue as pending backup
+// ===========================================================================
+exports.completeLenderRegistration = onCall(
+  { timeoutSeconds: 60 },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+
+    const uid = request.auth.uid;
+    const { token, nmls, lenderName, aeName, aePhone, aeTitle, aeEmail } = request.data;
+
+    // Validate invite token
+    const tokenDoc = await db.collection("lenderInvites").doc(token).get();
+    if (!tokenDoc.exists) throw new HttpsError("not-found", "Invite token not found.");
+    const tokenData = tokenDoc.data();
+    if (tokenData.status !== "pending") throw new HttpsError("failed-precondition", "Invite token already used.");
+    if (tokenData.expiresAt && tokenData.expiresAt.toDate() < new Date()) {
+      throw new HttpsError("deadline-exceeded", "Invite token has expired.");
+    }
+
+    // Mark token consumed immediately
+    await db.collection("lenderInvites").doc(token).update({
+      status: "consumed",
+      consumedBy: uid,
+      consumedAt: FieldValue.serverTimestamp(),
+    });
+
+    // Gate 3: check if primary AE already managing this NMLS#
+    const existingSnap = await db
+      .collection("lenderProfiles")
+      .where("nmls", "==", nmls.trim())
+      .limit(1)
+      .get();
+
+    if (!existingSnap.empty) {
+      // Profile exists — queue as pending backup
+      const existingDoc = existingSnap.docs[0];
+      const profileId = existingDoc.id;
+
+      await db.collection("lenderAccounts").doc(uid).set({
+        uid,
+        lenderNmls: nmls.trim(),
+        lenderProfileId: profileId,
+        name: aeName || "",
+        email: aeEmail || tokenData.aeEmail || "",
+        phone: aePhone || "",
+        title: aeTitle || "",
+        role: "pending_backup",
+        requestedAt: FieldValue.serverTimestamp(),
+      });
+
+      await db.collection("backupAERequests").add({
+        uid,
+        lenderNmls: nmls.trim(),
+        lenderProfileId: profileId,
+        lenderName: existingDoc.data().name || lenderName,
+        aeName: aeName || "",
+        aeEmail: aeEmail || tokenData.aeEmail || "",
+        aePhone: aePhone || "",
+        aeTitle: aeTitle || "",
+        status: "pending_admin_review",
+        createdAt: FieldValue.serverTimestamp(),
+      });
+
+      await getAuth().setCustomUserClaims(uid, {
+        role: "lender_pending",
+        lenderNmls: nmls.trim(),
+        lenderProfileId: profileId,
+      });
+
+      return {
+        success: true,
+        status: "pending_backup",
+        lenderName: existingDoc.data().name || lenderName,
+        lenderProfileId: profileId,
+      };
+    }
+
+    // No existing profile — create canonical profile, set AE as primary
+    const profileRef = await db.collection("lenderProfiles").add({
+      name: lenderName,
+      nmls: nmls.trim(),
+      type: "nonqm",
+      primaryAE: {
+        name: aeName || "",
+        email: aeEmail || tokenData.aeEmail || "",
+        phone: aePhone || "",
+        title: aeTitle || "",
+        uid,
+        setBy: "enrollment",
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      backupAE: { name: "", email: "", phone: "", title: "", uid: null, setBy: null },
+      agencies: [],
+      overlays: {},
+      channelOverrides: {},
+      nqmProducts: [],
+      nqmProductData: {},
+      matrixData: null,
+      hmData: null,
+      layer1: "AGENCY_STANDARDS_V1",
+      source: "LENDER_SELF",
+      visibility: "platform",
+      enrolledByLoUid: tokenData.loUid || null,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    await db.collection("lenderAccounts").doc(uid).set({
+      uid,
+      lenderNmls: nmls.trim(),
+      lenderProfileId: profileRef.id,
+      name: aeName || "",
+      email: aeEmail || tokenData.aeEmail || "",
+      phone: aePhone || "",
+      title: aeTitle || "",
+      role: "primary_ae",
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    await getAuth().setCustomUserClaims(uid, {
+      role: "lender",
+      lenderNmls: nmls.trim(),
+      lenderProfileId: profileRef.id,
+    });
+
+    return { success: true, status: "primary", lenderProfileId: profileRef.id, lenderName };
   }
 );

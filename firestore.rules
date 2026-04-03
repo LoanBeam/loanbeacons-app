@@ -1,0 +1,114 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Auth helpers ────────────────────────────────────────────────────────
+    function isAuth() {
+      return request.auth != null;
+    }
+    function isAdmin() {
+      return isAuth() && request.auth.token.role == 'admin';
+    }
+    function isLO() {
+      return isAuth()
+        && request.auth.token.role != 'lender'
+        && request.auth.token.role != 'lender_pending'
+        && request.auth.token.role != 'admin';
+    }
+    function isAnyLender() {
+      return isAuth() && (
+        request.auth.token.role == 'lender' ||
+        request.auth.token.role == 'lender_pending'
+      );
+    }
+    // Primary AE for a given NMLS# — must be role:lender with matching nmls claim
+    function isPrimaryAEFor(nmls) {
+      return isAuth()
+        && request.auth.token.role == 'lender'
+        && request.auth.token.lenderNmls == nmls;
+    }
+
+    // ── Lender Profiles ─────────────────────────────────────────────────────
+    // One canonical document per company NMLS# (enforced by Cloud Function).
+    // Created and deleted only by Cloud Functions (Admin SDK bypasses rules).
+    match /lenderProfiles/{profileId} {
+
+      // All authenticated users may read
+      allow read: if isAuth();
+
+      // LOs may update ONLY their personal overlay + channel data
+      allow update: if isLO()
+        && request.resource.data.diff(resource.data)
+            .affectedKeys()
+            .hasOnly(['overlays', 'channelOverrides', 'updatedAt']);
+
+      // Primary AE may update everything EXCEPT backupAE and nmls
+      allow update: if isPrimaryAEFor(resource.data.nmls)
+        && !request.resource.data.diff(resource.data)
+            .affectedKeys()
+            .hasAny(['backupAE', 'nmls']);
+
+      // Admin may update any field including backupAE
+      allow update: if isAdmin();
+
+      // Create + delete: Cloud Functions (Admin SDK) only — deny from client
+      allow create, delete: if false;
+    }
+
+    // ── Lender Invites ──────────────────────────────────────────────────────
+    // Token documents written by LOs, read publicly so the /lender-register
+    // page can validate them without auth. Status updates by Cloud Functions.
+    match /lenderInvites/{tokenId} {
+      allow read: if true;                         // public — token is the secret
+      allow create: if isLO();                     // LOs generate invites
+      allow update, delete: if isAdmin();          // Cloud Functions update status via Admin SDK
+    }
+
+    // ── Lender Accounts ─────────────────────────────────────────────────────
+    // Written exclusively by Cloud Functions (Admin SDK). Contains role,
+    // lenderNmls, lenderProfileId. Client reads only their own doc.
+    match /lenderAccounts/{uid} {
+      allow read: if isAuth() && (request.auth.uid == uid || isAdmin());
+      allow write: if false;                       // Cloud Functions only
+    }
+
+    // ── Backup AE Requests ──────────────────────────────────────────────────
+    // Created when a 2nd AE from the same NMLS# registers (pending approval).
+    match /backupAERequests/{requestId} {
+      allow read: if isAdmin()
+        || (isAuth() && resource.data.uid == request.auth.uid);
+      allow create: if isAnyLender();
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Existing Platform Collections (unchanged) ───────────────────────────
+    match /scenarios/{scenarioId} {
+      allow read, write: if isAuth();
+    }
+
+    match /loProfiles/{profileId} {
+      allow read, write: if isAuth();
+    }
+
+    match /userProfiles/{profileId} {
+      allow read, write: if isAuth();
+    }
+
+    match /decisionRecords/{recordId} {
+      allow read, write: if isAuth();
+    }
+
+    match /dpaPrograms/{uid}/{programId} {
+      allow read, write: if isAuth() && request.auth.uid == uid;
+    }
+
+    match /platform_activity/{activityId} {
+      allow read: if isAdmin();
+      allow create: if isAuth();
+    }
+
+    match /aeShares/{shareId} {
+      allow read, write: if isAuth();
+    }
+  }
+}
