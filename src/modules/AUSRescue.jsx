@@ -324,7 +324,7 @@ export default function AUSRescue() {
       });
       const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
       if (!apiKey) throw new Error('VITE_ANTHROPIC_API_KEY not set in .env file');
-      const response = await fetch('/anthropic-api/v1/messages', {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
         body: JSON.stringify({
