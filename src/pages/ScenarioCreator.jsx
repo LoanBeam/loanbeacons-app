@@ -325,6 +325,10 @@ function ScenarioCreator() {
   const [isDirty, setIsDirty] = useState(false);
   const markDirty = () => setIsDirty(true);
 
+  // ── Trigger Lead Shield prompt state ────────────────────────────────────────
+  const [savedScenarioId, setSavedScenarioId] = useState(null);
+  const [showTlsPrompt, setShowTlsPrompt] = useState(false);
+
   // ── MISMO Import State ──────────────────────────────────────────────────────
   const [importedData, setImportedData] = useState(null);
   const [importSummary, setImportSummary] = useState([]);
@@ -783,9 +787,12 @@ function ScenarioCreator() {
         alert('Scenario updated successfully!');
       } else {
         scenarioData.created_at = new Date();
-        await addDoc(collection(db, 'scenarios'), scenarioData);
+        const docRef = await addDoc(collection(db, 'scenarios'), scenarioData);
         setIsDirty(false);
-        alert('Scenario created successfully!');
+        // ── Show Trigger Lead Shield™ prompt instead of navigating away ──
+        setSavedScenarioId(docRef.id);
+        setShowTlsPrompt(true);
+        return;
       }
       navigate('/scenarios');
     } catch (err) {
@@ -825,6 +832,118 @@ function ScenarioCreator() {
     const idx = coBorrowers.findIndex(cb => cb.creditScore && parseInt(cb.creditScore) === qualifyingCreditScore);
     return idx >= 0 ? (coBorrowers[idx].firstName || `Co-Borrower ${idx + 1}`) : null;
   })();
+
+  // ── All borrowers for TLS prompt ─────────────────────────────────────────────
+  const tlsBorrowers = [
+    { label: 'Borrower', name: [firstName, lastName].filter(Boolean).join(' ') || 'Primary Borrower' },
+    ...coBorrowers.filter(cb => cb.firstName || cb.lastName).map((cb, i) => ({
+      label: `Co-Borrower ${i + 1}`,
+      name: [cb.firstName, cb.lastName].filter(Boolean).join(' '),
+    })),
+  ];
+
+  const purposeLabelsForTls = {
+    PURCHASE: 'Purchase', RATE_TERM_REFI: 'Rate/Term Refi', CASH_OUT: 'Cash-Out Refi',
+    STREAMLINE: 'Streamline', FIX_FLIP: 'Fix & Flip', CONSTRUCTION: 'Construction',
+    BRIDGE: 'Bridge', INVESTMENT_PURCHASE: 'Investment Purchase', COMMERCIAL: 'Commercial', OTHER: 'Other',
+  };
+
+  // ── Trigger Lead Shield™ Prompt — shown immediately after new scenario save ──
+  if (showTlsPrompt && savedScenarioId) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4 py-12">
+        <div className="max-w-lg w-full space-y-6">
+
+          {/* Success banner */}
+          <div className="bg-emerald-500 rounded-3xl px-6 py-4 flex items-center gap-4">
+            <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
+              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-white font-bold text-sm">Scenario Saved</p>
+              <p className="text-emerald-100 text-xs mt-0.5">
+                {[firstName, lastName].filter(Boolean).join(' ')} · {loanType || 'Loan'} · {purposeLabelsForTls[loanPurpose] || loanPurpose}
+              </p>
+            </div>
+          </div>
+
+          {/* TLS Card */}
+          <div className="bg-white rounded-3xl overflow-hidden shadow-2xl">
+            {/* Header */}
+            <div className="bg-amber-400 px-6 py-5 flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-slate-900/20 flex items-center justify-center flex-shrink-0">
+                <svg className="w-7 h-7 text-slate-900" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+              </div>
+              <div>
+                <p className="font-black text-slate-900 text-lg" style={{ fontFamily: 'DM Serif Display, Georgia, serif' }}>
+                  Send Trigger Lead Shield™ Letters
+                </p>
+                <p className="text-slate-800 text-xs mt-0.5 font-semibold">Do this now — before pulling credit</p>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-5">
+              <p className="text-slate-700 text-sm leading-relaxed">
+                When credit is pulled, the bureaus legally sell your borrower's information to competing lenders
+                within hours. Generate personalized opt-out letters now for <strong>every party on this
+                application</strong> so they can visit <strong>OptOutPrescreen.com</strong> before the credit
+                pull happens.
+              </p>
+
+              {/* Borrowers on application */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">
+                  Parties Requiring Letters ({tlsBorrowers.length})
+                </p>
+                <div className="space-y-2">
+                  {tlsBorrowers.map((b, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <div className="w-7 h-7 rounded-full bg-amber-100 border border-amber-300 flex items-center justify-center flex-shrink-0">
+                        <svg className="w-3.5 h-3.5 text-amber-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">{b.name}</p>
+                        <p className="text-xs text-slate-400">{b.label}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Primary CTA */}
+              <button
+                onClick={() => navigate(`/disclosure-intel?scenarioId=${savedScenarioId}`)}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-4 rounded-2xl transition-colors flex items-center justify-center gap-3 text-sm">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                Send Trigger Lead Shield™ Letters Now
+              </button>
+
+              {/* Secondary action */}
+              <button
+                onClick={() => navigate('/scenarios')}
+                className="w-full text-slate-400 hover:text-slate-600 text-sm font-medium py-2 transition-colors">
+                Skip for now — go to Scenarios
+              </button>
+
+              <p className="text-xs text-slate-400 text-center">
+                You can always access this from the <strong>Trigger Lead Shield™</strong> tab in Disclosure Intelligence.
+              </p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    );
+  }
 
   // ── JSX ──────────────────────────────────────────────────────────────────────
   return (

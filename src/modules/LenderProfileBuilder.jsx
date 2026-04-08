@@ -831,10 +831,10 @@ export default function LenderProfileBuilder() {
   return (
     <div>
       {/* Sub-header with tabs */}
-      <div className="bg-white border-b border-slate-200 px-0 pb-0 mb-6 -mx-0">
+      <div className="bg-white border-b border-slate-100 px-0 pb-0 mb-6 -mx-0">
         <div className="flex items-center justify-between flex-wrap gap-4 mb-4">
           <div>
-            <p className="text-xs font-bold text-green-600 tracking-widest uppercase">Core Infrastructure</p>
+            <p className="text-xs font-bold tracking-widest uppercase" style={{ color: T.amber }}>Core Infrastructure · Stage 1</p>
             <h2 className="text-2xl font-bold text-slate-900" style={{ fontFamily: "'DM Serif Display', serif" }}>
               Lender Profile Builder™
             </h2>
@@ -843,7 +843,8 @@ export default function LenderProfileBuilder() {
           <div className="flex gap-2 flex-wrap">
             {[["standards","📋 Agency Standards"],["profiles",`🗂️ My Lenders (${lenders.length})`],["add","➕ Add Lender"]].map(([id, label]) => (
               <button key={id} onClick={() => setTab(id)}
-                className={`px-4 py-2 rounded-xl font-semibold text-sm transition-all ${tab === id ? "bg-green-700 text-white shadow-sm" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
+                className={`px-4 py-2 rounded-xl font-semibold text-sm transition-all ${tab === id ? "text-white shadow-sm" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                style={tab === id ? { backgroundColor: T.amber } : {}}>
                 {label}
               </button>
             ))}
@@ -876,7 +877,7 @@ export default function LenderProfileBuilder() {
               <h3 className="text-xl font-bold text-slate-900" style={{ fontFamily: "'DM Serif Display', serif" }}>My Lender Profiles</h3>
               <p className="text-slate-500 text-sm mt-0.5">Your private lender roster — agency, Non-QM, and Hard Money.</p>
             </div>
-            <button onClick={() => setTab("add")} className="px-5 py-2.5 rounded-xl font-semibold text-sm bg-green-700 hover:bg-green-600 text-white shadow-sm">
+            <button onClick={() => setTab("add")} className="px-5 py-2.5 rounded-xl font-semibold text-sm text-white shadow-sm" style={{ backgroundColor: "#d97706" }}>
               ➕ Add Lender
             </button>
           </div>
@@ -888,7 +889,7 @@ export default function LenderProfileBuilder() {
               <div className="text-4xl mb-4">🏗️</div>
               <h3 className="text-lg font-bold text-slate-900 mb-2">No lender profiles yet</h3>
               <p className="text-slate-500 text-sm mb-6 max-w-sm mx-auto">Add your first lender — agency wholesale, Non-QM, or hard money — to begin building your roster.</p>
-              <button onClick={() => setTab("add")} className="px-6 py-3 rounded-xl font-semibold text-sm bg-green-700 hover:bg-green-600 text-white">
+              <button onClick={() => setTab("add")} className="px-6 py-3 rounded-xl font-semibold text-sm text-white" style={{ backgroundColor: "#d97706" }}>
                 ➕ Add First Lender
               </button>
             </div>

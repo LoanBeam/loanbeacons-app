@@ -1,10 +1,11 @@
 // src/pages/DisclosureIntel.jsx
 // LoanBeacons™ — Module 14 | Stage 4: Verification & Submit
-// Disclosure Intelligence™ — TRID · RESPA · ECOA · Deadline tracking · Compliance score
+// Disclosure Intelligence™ — TRID · RESPA · ECOA · Deadline tracking · Compliance score · Trigger Lead Shield™
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
@@ -41,6 +42,10 @@ function daysUntil(dateStr) {
   const target = new Date(dateStr + 'T12:00:00');
   const diff = Math.round((target - today) / (1000 * 60 * 60 * 24));
   return diff;
+}
+
+function todayLong() {
+  return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
 // ─── Disclosure Items ─────────────────────────────────────────────────────────
@@ -125,7 +130,7 @@ const DISCLOSURE_ITEMS = [
     deadline: 'At or before referral',
     deadlineKey: null,
     description: 'Required whenever referring borrower to an affiliated settlement service provider (title company, insurance, etc.) with a business relationship.',
-    applies: () => false, // manual — LO must determine
+    applies: () => false,
     severity: 'medium',
     tips: 'Must describe the relationship and estimated charges. Borrower is NOT required to use the affiliated provider. Retain signed copy in file.',
   },
@@ -149,7 +154,7 @@ const DISCLOSURE_ITEMS = [
     deadline: 'Within 30 days of adverse action',
     deadlineKey: 'adverse_action_due',
     description: 'Required if application is denied, withdrawn at lender request, or approved on different terms. Must state specific reasons for adverse action.',
-    applies: () => false, // manual — triggered by adverse action
+    applies: () => false,
     severity: 'critical',
     tips: 'Failure to provide adverse action notice is a federal violation. Do not use vague reasons — must be specific (e.g., "Debt-to-income ratio too high"). Retain copy for 25 months.',
   },
@@ -178,9 +183,87 @@ const STATUS_OPTIONS = [
 // ─── Formatters ───────────────────────────────────────────────────────────────
 const fmt0 = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
 
-// ─── Letter Builder ───────────────────────────────────────────────────────────
+// ─── Print Styles ─────────────────────────────────────────────────────────────
+const PRINT_STYLE_ID = 'tls-print-styles';
+function injectPrintStyles() {
+  if (document.getElementById(PRINT_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = PRINT_STYLE_ID;
+  style.textContent = `
+    @media print {
+      body * { visibility: hidden !important; }
+      #tls-print-zone, #tls-print-zone * { visibility: visible !important; }
+      #tls-print-zone {
+        position: fixed !important;
+        top: 0; left: 0;
+        width: 100%; height: auto;
+        background: white !important;
+        color: black !important;
+        font-family: 'Georgia', serif !important;
+        font-size: 13pt !important;
+        line-height: 1.8 !important;
+        padding: 1.25in 1in !important;
+        white-space: pre-wrap !important;
+      }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+// ─── Trigger Lead Letter Builder ──────────────────────────────────────────────
+function buildTriggerLetter({ borrower, lo, propertyAddress }) {
+  return `${lo.name}  |  NMLS #${lo.nmls}  |  ${lo.company}
+${lo.phone}  |  ${lo.email}
+
+${todayLong()}
+
+${borrower.fullName}
+${propertyAddress || '[Property Address]'}
+
+
+Re: Protect Your Privacy — Stop Unsolicited Lender Calls
+
+Dear ${borrower.firstName},
+
+Thank you for trusting me with your home loan. There is one urgent step I ask you to take today — before your credit is pulled.
+
+WHAT IS A TRIGGER LEAD?
+
+When a mortgage lender pulls your credit report, the credit bureaus are legally permitted to sell your contact information to competing lenders within hours. You may then receive a flood of unsolicited calls, texts, and mailers from lenders you never contacted. This is called a trigger lead — and it can cause confusion, delays, and unnecessary stress during your transaction.
+
+HOW TO OPT OUT — TAKES LESS THAN 5 MINUTES
+
+Visit: www.OptOutPrescreen.com
+This is the only official, free opt-out portal operated by the credit bureaus under the Fair Credit Reporting Act.
+
+  • 5-Year Opt-Out    →  Completed entirely online. Takes effect quickly.
+  • Permanent Opt-Out →  Requires a mailed signature form to finalize.
+
+Either option fully protects you during your current transaction. The 5-Year Online Opt-Out is the fastest.
+
+WILL THIS AFFECT MY CREDIT SCORE?
+
+No. Opting out has absolutely zero impact on your credit score, credit report, or mortgage approval. It only removes you from bureau marketing lists.
+
+Please complete this today. I am committed to protecting your interests every step of the way. Call or text me anytime with questions.
+
+It is my honor to serve you.
+
+
+${lo.name}
+NMLS #${lo.nmls}  |  ${lo.company}${lo.companyNmls ? '  |  Company NMLS #' + lo.companyNmls : ''}
+${lo.phone}  |  ${lo.email}
+
+
+────────────────────────────────────────────────────────────────
+OptOutPrescreen.com is operated jointly by Equifax, Experian, TransUnion, and Innovis
+and is the only official opt-out resource authorized under the Fair Credit Reporting Act
+(15 U.S.C. § 1681b).`.trim();
+}
+
+// ─── Compliance Letter Builder ────────────────────────────────────────────────
 function buildComplianceLetter({ borrowerName, loanType, loanPurpose, applicationDate, closingDate, deadlines, statuses, complianceScore, pendingItems, loNotes, aiSummary }) {
-  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const today = todayLong();
   const lines = [];
   lines.push(today); lines.push('');
   lines.push('To: Mortgage Underwriter / Processor / Compliance Officer');
@@ -239,6 +322,7 @@ export default function DisclosureIntel() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const scenarioId = searchParams.get('scenarioId');
+  const auth = getAuth();
 
   const [scenario, setScenario]   = useState(null);
   const [scenarios, setScenarios] = useState([]);
@@ -271,6 +355,12 @@ export default function DisclosureIntel() {
   const [savedRecordId, setSavedRecordId] = useState(null);
   const { reportFindings } = useDecisionRecord(scenarioId);
 
+  // Trigger Lead Shield state
+  const [tlsSentMap, setTlsSentMap]       = useState({});
+  const [tlsActiveIndex, setTlsActiveIndex] = useState(0);
+  const [loProfile, setLoProfile]           = useState(null);
+  const tlsPrintRef = useRef(null);
+
   // ─── localStorage ─────────────────────────────────────────────────────────
   const lsKey = scenarioId ? `lb_disclosure_${scenarioId}` : null;
 
@@ -278,18 +368,21 @@ export default function DisclosureIntel() {
     if (!lsKey) return;
     localStorage.setItem(lsKey, JSON.stringify({
       applicationDate, closingDate, loanType, loanPurpose, adverseActionDate,
-      statuses, notes, loNotes, aiAnalysis, savedRecordId,
+      statuses, notes, loNotes, aiAnalysis, savedRecordId, tlsSentMap,
     }));
-  }, [lsKey, applicationDate, closingDate, loanType, loanPurpose, adverseActionDate, statuses, notes, loNotes, aiAnalysis, savedRecordId]);
+  }, [lsKey, applicationDate, closingDate, loanType, loanPurpose, adverseActionDate, statuses, notes, loNotes, aiAnalysis, savedRecordId, tlsSentMap]);
 
   useEffect(() => { saveToStorage(); }, [saveToStorage]);
 
   // ─── Load ──────────────────────────────────────────────────────────────────
   useEffect(() => {
+    injectPrintStyles();
+
     if (!scenarioId) {
       getDocs(collection(db, 'scenarios')).then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(console.error).finally(() => setLoading(false));
       return;
     }
+
     if (lsKey) {
       try {
         const saved = JSON.parse(localStorage.getItem(lsKey) || 'null');
@@ -304,9 +397,12 @@ export default function DisclosureIntel() {
           if (saved.loNotes)           setLoNotes(saved.loNotes);
           if (saved.aiAnalysis)        setAiAnalysis(saved.aiAnalysis);
           if (saved.savedRecordId)     setSavedRecordId(saved.savedRecordId);
+          if (saved.tlsSentMap)        setTlsSentMap(saved.tlsSentMap);
         }
       } catch (_) {}
     }
+
+    // Load scenario
     getDoc(doc(db, 'scenarios', scenarioId)).then(snap => {
       if (snap.exists()) {
         const d = { id: snap.id, ...snap.data() };
@@ -321,6 +417,31 @@ export default function DisclosureIntel() {
         }
       }
     }).catch(console.error).finally(() => setLoading(false));
+
+    // Load LO profile for Trigger Lead Shield
+    const user = auth.currentUser;
+    if (user) {
+      getDoc(doc(db, 'userProfiles', user.uid)).then(snap => {
+        const d = snap.exists() ? snap.data() : {};
+        setLoProfile({
+          name: d.displayName || user.displayName || 'Your Loan Officer',
+          nmls: d.nmls || '',
+          company: d.company || '',
+          companyNmls: d.companyNmls || '',
+          phone: d.phone || '',
+          email: user.email || '',
+        });
+      }).catch(() => {
+        setLoProfile({
+          name: user.displayName || 'Your Loan Officer',
+          nmls: '',
+          company: '',
+          companyNmls: '',
+          phone: '',
+          email: user.email || '',
+        });
+      });
+    }
   }, [scenarioId, lsKey]);
 
   // Auto-set N/A based on loan type / purpose
@@ -348,24 +469,17 @@ export default function DisclosureIntel() {
   // ─── Deadline Calculations ─────────────────────────────────────────────────
   const deadlines = useMemo(() => {
     const d = {};
-    if (applicationDate) {
-      d.le_due = addBusinessDays(applicationDate, 3);
-    }
+    if (applicationDate) d.le_due = addBusinessDays(applicationDate, 3);
     if (closingDate) {
       d.cd_due = subtractBusinessDays(closingDate, 3);
       d.rescission_end = addBusinessDays(closingDate, 3);
       d.fund_date = addBusinessDays(closingDate, 3);
     }
-    if (adverseActionDate) {
-      d.adverse_action_due = addBusinessDays(adverseActionDate, 21);
-    }
+    if (adverseActionDate) d.adverse_action_due = addBusinessDays(adverseActionDate, 21);
     return d;
   }, [applicationDate, closingDate, adverseActionDate]);
 
   // ─── Compliance Score ──────────────────────────────────────────────────────
-  const applicable = DISCLOSURE_ITEMS.filter(item =>
-    item.applies === undefined || item.applies(loanPurpose, loanType) !== false
-  );
   const issuedCount    = Object.values(statuses).filter(s => s === 'issued' || s === 'received').length;
   const naCount        = Object.values(statuses).filter(s => s === 'na' || s === 'waived').length;
   const pendingCount   = DISCLOSURE_ITEMS.length - issuedCount - naCount;
@@ -373,13 +487,82 @@ export default function DisclosureIntel() {
   const pendingItems   = DISCLOSURE_ITEMS.filter(item => statuses[item.id] === 'pending');
   const criticalPending = pendingItems.filter(item => item.severity === 'critical');
 
+  // ─── Trigger Lead Shield — Borrowers ──────────────────────────────────────
+  const tlsBorrowers = useMemo(() => {
+    if (!scenario) return [];
+    const list = [];
+    const b = scenario;
+    if (b.firstName || b.borrowerFirstName) {
+      list.push({
+        key: 'borrower',
+        label: 'Borrower',
+        firstName: b.firstName || b.borrowerFirstName || 'Borrower',
+        fullName: [b.firstName || b.borrowerFirstName, b.lastName || b.borrowerLastName].filter(Boolean).join(' ') || 'Borrower',
+      });
+    }
+    const cb = scenario.coBorrower || scenario.coborrower || {};
+    if (cb.firstName || cb.coBorrowerFirstName) {
+      list.push({
+        key: 'coBorrower',
+        label: 'Co-Borrower',
+        firstName: cb.firstName || cb.coBorrowerFirstName || 'Co-Borrower',
+        fullName: [cb.firstName || cb.coBorrowerFirstName, cb.lastName || cb.coBorrowerLastName].filter(Boolean).join(' ') || 'Co-Borrower',
+      });
+    }
+    if (list.length === 0 && borrowerName) {
+      list.push({ key: 'borrower', label: 'Borrower', firstName: borrowerName.split(' ')[0], fullName: borrowerName });
+    }
+    return list;
+  }, [scenario, borrowerName]);
+
+  const tlsDisplayBorrowers = tlsBorrowers.length > 0
+    ? tlsBorrowers
+    : [{ key: 'borrower', label: 'Borrower', firstName: 'Borrower', fullName: 'Borrower Name' }];
+
+  const tlsActiveBorrower = tlsDisplayBorrowers[tlsActiveIndex] || tlsDisplayBorrowers[0];
+
+  const tlsPropertyAddress = scenario
+    ? [scenario.streetAddress, scenario.city, scenario.state].filter(Boolean).join(', ')
+    : '';
+
+  const tlsLetterBody = loProfile
+    ? buildTriggerLetter({ borrower: tlsActiveBorrower, lo: loProfile, propertyAddress: tlsPropertyAddress })
+    : '';
+
+  function handleTlsPrint(borrower) {
+    if (!tlsPrintRef.current || !loProfile) return;
+    const letter = buildTriggerLetter({ borrower, lo: loProfile, propertyAddress: tlsPropertyAddress });
+    tlsPrintRef.current.textContent = letter;
+    window.print();
+    setTlsSentMap(prev => ({ ...prev, [borrower.key]: true }));
+    logTlsToDecisionRecord(borrower);
+  }
+
+  async function logTlsToDecisionRecord(borrower) {
+    try {
+      if (!scenarioId) return;
+      await addDoc(collection(db, 'decisionRecords'), {
+        scenarioId,
+        module: 'DISCLOSURE_INTEL',
+        action: 'TRIGGER_LEAD_SHIELD_LETTER_GENERATED',
+        detail: `Trigger Lead Shield™ letter generated for ${borrower.fullName}`,
+        timestamp: serverTimestamp(),
+      });
+    } catch (_) {}
+  }
+
   // ─── AI Analysis ──────────────────────────────────────────────────────────
   const handleAIAnalysis = async () => {
     setAiAnalyzing(true);
     try {
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514', max_tokens: 1200,
           messages: [{ role: 'user', content: `You are a senior mortgage compliance officer. Review this disclosure tracking file and identify compliance risks.
@@ -442,20 +625,30 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
   };
 
   const TABS = [
-    { id: 0, label: 'Deadline Tracker', icon: '📅' },
+    { id: 0, label: 'Deadline Tracker',    icon: '📅' },
     { id: 1, label: 'Disclosure Checklist', icon: '📋' },
-    { id: 2, label: 'AI Assessment', icon: '🤖' },
-    { id: 3, label: 'Regulation Guide', icon: '📚' },
+    { id: 2, label: 'AI Assessment',        icon: '🤖' },
+    { id: 3, label: 'Regulation Guide',     icon: '📚' },
+    { id: 4, label: 'Trigger Lead Shield™', icon: '🛡️' },
   ];
 
-  const riskColor = { LOW: 'text-emerald-700 bg-emerald-100 border-emerald-300', MEDIUM: 'text-amber-700 bg-amber-100 border-amber-300', HIGH: 'text-red-700 bg-red-100 border-red-300', CRITICAL: 'text-red-900 bg-red-200 border-red-500' };
+  const riskColor = {
+    LOW:      'text-emerald-700 bg-emerald-100 border-emerald-300',
+    MEDIUM:   'text-amber-700 bg-amber-100 border-amber-300',
+    HIGH:     'text-red-700 bg-red-100 border-red-300',
+    CRITICAL: 'text-red-900 bg-red-200 border-red-500',
+  };
 
+  const tlsSentAll = tlsDisplayBorrowers.every(b => tlsSentMap[b.key]);
+
+  // ─── Loading ───────────────────────────────────────────────────────────────
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
       <div className="text-center"><div className="text-5xl mb-4">📋</div><div className="text-slate-500">Loading...</div></div>
     </div>
   );
 
+  // ─── No Scenario — Picker ──────────────────────────────────────────────────
   if (!scenarioId) return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
@@ -475,7 +668,10 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
               <button key={s.id} onClick={() => navigate('/disclosure-intel?scenarioId=' + s.id)}
                 className="w-full text-left p-4 border border-slate-200 rounded-2xl hover:border-indigo-400 hover:bg-indigo-50 transition-all">
                 <div className="flex justify-between items-center">
-                  <div><div className="font-bold text-slate-800">{s.scenarioName || ([s.firstName, s.lastName].filter(Boolean).join(' ')) || 'Unnamed'}</div><div className="text-xs text-slate-500 mt-0.5">{fmt0(s.loanAmount)} · {s.loanType}</div></div>
+                  <div>
+                    <div className="font-bold text-slate-800">{s.scenarioName || ([s.firstName, s.lastName].filter(Boolean).join(' ')) || 'Unnamed'}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{fmt0(s.loanAmount)} · {s.loanType}</div>
+                  </div>
                   <span className="text-indigo-400 text-xl">→</span>
                 </div>
               </button>
@@ -486,9 +682,13 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
     </div>
   );
 
+  // ─── Main View ─────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+
+      {/* Hidden print zone for Trigger Lead Shield */}
+      <div id="tls-print-zone" ref={tlsPrintRef} style={{ display: 'none' }} />
 
       {/* Hero */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
@@ -528,22 +728,41 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
               {loanPurpose && <span>Purpose <strong className="text-white">{loanPurpose}</strong></span>}
               {deadlines.le_due && <span>LE Due <strong className="text-white">{formatDate(deadlines.le_due)}</strong></span>}
             </div>
+            {/* Trigger Lead Shield status badge */}
+            <span className={'ml-auto text-xs font-bold px-3 py-1 rounded-full ' + (tlsSentAll ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40')}>
+              🛡️ {tlsSentAll ? 'Trigger Shield Sent' : 'Trigger Shield Pending'}
+            </span>
           </div>
         </div>
       )}
 
       <ScenarioHeader moduleTitle="Disclosure Intelligence™" moduleNumber="14" scenarioId={scenarioId} />
-      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2"><DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="DISCLOSURE_INTEL" /></div>
+      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
+        <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="DISCLOSURE_INTEL" />
+      </div>
 
       {/* Tab Bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="flex gap-0">
+          <div className="flex gap-0 overflow-x-auto">
             {TABS.map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                className={'flex items-center gap-2 px-6 py-4 text-sm font-semibold border-b-2 transition-all ' + (activeTab === tab.id ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300')}>
-                <span>{tab.icon}</span><span>{tab.label}</span>
-                {tab.id === 1 && pendingCount > 0 && <span className={'text-xs px-2 py-0.5 rounded-full font-black ' + (criticalPending.length > 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700')}>{pendingCount}</span>}
+                className={'flex items-center gap-2 px-5 py-4 text-sm font-semibold border-b-2 transition-all whitespace-nowrap ' + (activeTab === tab.id
+                  ? (tab.id === 4 ? 'border-amber-500 text-amber-700' : 'border-indigo-500 text-indigo-600')
+                  : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300')}>
+                <span>{tab.icon}</span>
+                <span>{tab.label}</span>
+                {tab.id === 1 && pendingCount > 0 && (
+                  <span className={'text-xs px-2 py-0.5 rounded-full font-black ' + (criticalPending.length > 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700')}>
+                    {pendingCount}
+                  </span>
+                )}
+                {tab.id === 4 && !tlsSentAll && (
+                  <span className="text-xs px-2 py-0.5 rounded-full font-black bg-amber-100 text-amber-700">!</span>
+                )}
+                {tab.id === 4 && tlsSentAll && (
+                  <span className="text-xs px-2 py-0.5 rounded-full font-black bg-emerald-100 text-emerald-700">✓</span>
+                )}
               </button>
             ))}
           </div>
@@ -555,10 +774,9 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
           <div className="xl:col-span-2 space-y-8">
 
-            {/* ─── TAB 0: DEADLINE TRACKER ────────────────────────────────── */}
+            {/* ─── TAB 0: DEADLINE TRACKER ──────────────────────────────────── */}
             {activeTab === 0 && (
               <>
-                {/* Loan Context */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
                     <h2 className="text-xl font-bold text-white">Loan Context</h2>
@@ -585,7 +803,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
                         <select value={loanType} onChange={e => setLoanType(e.target.value)}
                           className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-400 bg-white">
                           <option value="">Select…</option>
-                          {['Conventional','FHA','VA','USDA','ARM','Jumbo','Non-QM'].map(t => <option key={t} value={t}>{t}</option>)}
+                          {['Conventional', 'FHA', 'VA', 'USDA', 'ARM', 'Jumbo', 'Non-QM'].map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                       </div>
                       <div>
@@ -610,7 +828,6 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
                   </div>
                 </div>
 
-                {/* Deadline Timeline */}
                 {(applicationDate || closingDate) && (
                   <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                     <div className="bg-gradient-to-r from-indigo-800 to-indigo-700 px-8 py-5">
@@ -665,7 +882,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
               </>
             )}
 
-            {/* ─── TAB 1: CHECKLIST ────────────────────────────────────────── */}
+            {/* ─── TAB 1: DISCLOSURE CHECKLIST ──────────────────────────────── */}
             {activeTab === 1 && (
               <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
@@ -720,7 +937,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
               </div>
             )}
 
-            {/* ─── TAB 2: AI ASSESSMENT ────────────────────────────────────── */}
+            {/* ─── TAB 2: AI ASSESSMENT ─────────────────────────────────────── */}
             {activeTab === 2 && (
               <>
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
@@ -746,20 +963,25 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
                         </div>
                         <p className="text-slate-700 leading-relaxed">{aiAnalysis.summary}</p>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                          {[['🚨 Critical Issues', aiAnalysis.criticalIssues, 'red'], ['✅ Action Items', aiAnalysis.actionItems, 'blue'], ['⚠️ Watch-Outs', aiAnalysis.watchOuts, 'amber']].map(([label, items, color]) => (
+                          {[
+                            ['🚨 Critical Issues', aiAnalysis.criticalIssues, 'red'],
+                            ['✅ Action Items', aiAnalysis.actionItems, 'blue'],
+                            ['⚠️ Watch-Outs', aiAnalysis.watchOuts, 'amber'],
+                          ].map(([label, items, color]) => (
                             <div key={label} className={`rounded-2xl border p-4 bg-${color}-50 border-${color}-200`}>
                               <div className={`text-xs font-bold text-${color}-700 mb-2`}>{label}</div>
                               <ul className="space-y-1">{(items || []).map((item, i) => <li key={i} className={`text-xs text-${color}-800 flex gap-2`}><span className="shrink-0">•</span><span>{item}</span></li>)}</ul>
                             </div>
                           ))}
                         </div>
-                        <button onClick={handleAIAnalysis} disabled={aiAnalyzing} className="text-xs text-indigo-600 hover:text-indigo-500 font-semibold">{aiAnalyzing ? 'Re-analyzing...' : '↺ Re-run'}</button>
+                        <button onClick={handleAIAnalysis} disabled={aiAnalyzing} className="text-xs text-indigo-600 hover:text-indigo-500 font-semibold">
+                          {aiAnalyzing ? 'Re-analyzing...' : '↺ Re-run'}
+                        </button>
                       </div>
                     )}
                   </div>
                 </div>
 
-                {/* LO Notes */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5"><h2 className="text-xl font-bold text-white">LO Notes</h2></div>
                   <div className="p-8">
@@ -775,7 +997,6 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
                   </div>
                 </div>
 
-                {/* Compliance Letter */}
                 <LetterCard title="Compliance Summary Letter" icon="📋" body={buildComplianceLetter({
                   borrowerName, loanType, loanPurpose, applicationDate, closingDate,
                   deadlines, statuses, complianceScore, pendingItems, loNotes, aiSummary: aiAnalysis?.summary,
@@ -783,7 +1004,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
               </>
             )}
 
-            {/* ─── TAB 3: REGULATION GUIDE ─────────────────────────────────── */}
+            {/* ─── TAB 3: REGULATION GUIDE ──────────────────────────────────── */}
             {activeTab === 3 && (
               <>
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
@@ -837,7 +1058,6 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
                   </div>
                 </div>
 
-                {/* Business Day Definition */}
                 <div className="bg-indigo-50 border border-indigo-200 rounded-3xl p-6">
                   <div className="font-bold text-indigo-800 mb-3">📅 What Counts as a "Business Day"?</div>
                   <div className="space-y-2 text-xs text-indigo-800">
@@ -849,9 +1069,131 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
                 </div>
               </>
             )}
+
+            {/* ─── TAB 4: TRIGGER LEAD SHIELD™ ──────────────────────────────── */}
+            {activeTab === 4 && (
+              <>
+                {/* Header Card */}
+                <div className="bg-slate-900 rounded-3xl p-6 text-white">
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-2xl bg-amber-400 flex items-center justify-center flex-shrink-0">
+                      <svg className="w-6 h-6 text-slate-900" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-bold" style={{ fontFamily: "'DM Serif Display', Georgia, serif" }}>
+                        Trigger Lead Shield™
+                      </h2>
+                      <p className="text-slate-300 text-sm mt-1">
+                        Protect every borrower on this application before the credit pull. Generate personalized opt-out letters for all parties and deliver them today.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Urgency Banner */}
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex gap-3">
+                  <svg className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="text-amber-800 text-sm leading-relaxed">
+                    <strong>Send before pulling credit.</strong> The bureaus sell trigger leads within hours of a credit inquiry. OptOutPrescreen.com is the only official opt-out portal under the Fair Credit Reporting Act.
+                  </p>
+                </div>
+
+                {/* Borrower Tabs */}
+                {tlsDisplayBorrowers.length > 1 && (
+                  <div className="flex gap-2">
+                    {tlsDisplayBorrowers.map((b, i) => (
+                      <button key={b.key} onClick={() => setTlsActiveIndex(i)}
+                        className={'flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ' +
+                          (tlsActiveIndex === i ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>
+                        {b.label}
+                        {tlsSentMap[b.key] && <span className="text-xs text-emerald-400 font-bold">✓ Sent</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Letter Preview */}
+                <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+                  <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <div className="flex items-center gap-2">
+                      <div className={'w-2.5 h-2.5 rounded-full ' + (tlsSentMap[tlsActiveBorrower.key] ? 'bg-emerald-400' : 'bg-amber-400')} />
+                      <span className="text-sm font-semibold text-slate-700">
+                        {tlsActiveBorrower.label}: <span className="font-bold">{tlsActiveBorrower.fullName}</span>
+                      </span>
+                    </div>
+                    <span className="text-xs text-slate-400">{todayLong()}</span>
+                  </div>
+                  <div className="p-8">
+                    <pre className="whitespace-pre-wrap text-slate-700 leading-relaxed" style={{ fontFamily: 'Georgia, serif', fontSize: '13px', lineHeight: '1.85' }}>
+                      {tlsLetterBody || 'Loading LO profile…'}
+                    </pre>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex flex-wrap gap-3">
+                  <button onClick={() => handleTlsPrint(tlsActiveBorrower)}
+                    className="flex items-center gap-2 bg-slate-900 text-white px-6 py-3 rounded-xl text-sm font-bold hover:bg-slate-700 transition-colors">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                    </svg>
+                    Print / Save PDF — {tlsActiveBorrower.label}
+                  </button>
+
+                  {tlsDisplayBorrowers.length > 1 && tlsDisplayBorrowers.filter((_, i) => i !== tlsActiveIndex).map(b => (
+                    <button key={b.key}
+                      onClick={() => { setTlsActiveIndex(tlsDisplayBorrowers.indexOf(b)); setTimeout(() => handleTlsPrint(b), 120); }}
+                      className="flex items-center gap-2 bg-slate-100 text-slate-700 px-6 py-3 rounded-xl text-sm font-bold hover:bg-slate-200 transition-colors">
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                      </svg>
+                      Print / Save PDF — {b.label}
+                    </button>
+                  ))}
+
+                  <button onClick={() => { navigator.clipboard.writeText(tlsLetterBody); }}
+                    className="flex items-center gap-2 bg-slate-100 text-slate-700 px-6 py-3 rounded-xl text-sm font-bold hover:bg-slate-200 transition-colors">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    Copy to Clipboard
+                  </button>
+                </div>
+
+                {/* Sent Confirmation */}
+                {Object.keys(tlsSentMap).length > 0 && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex items-center gap-3">
+                    <svg className="w-5 h-5 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p className="text-emerald-800 text-sm">
+                      <strong>Letter(s) generated and logged to the Decision Record.</strong>{' '}
+                      {tlsSentAll ? 'All parties on this application have been covered.' : `${Object.keys(tlsSentMap).length} of ${tlsDisplayBorrowers.length} letters generated.`}
+                    </p>
+                  </div>
+                )}
+
+                {/* Reference Footer */}
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex items-start gap-3">
+                  <svg className="w-5 h-5 text-slate-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                  </svg>
+                  <div>
+                    <p className="text-slate-600 text-sm font-semibold">Official Opt-Out Portal</p>
+                    <a href="https://www.optoutprescreen.com" target="_blank" rel="noopener noreferrer"
+                      className="text-amber-600 text-sm hover:underline font-medium">www.OptOutPrescreen.com</a>
+                    <p className="text-slate-400 text-xs mt-1">Operated jointly by Equifax, Experian, TransUnion & Innovis under 15 U.S.C. § 1681b</p>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
-          {/* Sidebar */}
+          {/* ─── Sidebar ──────────────────────────────────────────────────────── */}
           <div className="space-y-5">
             <div className="bg-slate-900 rounded-3xl p-6 sticky top-6">
               <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5">Compliance Score</div>
@@ -864,7 +1206,6 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
                 </div>
               </div>
 
-              {/* Critical pending */}
               {criticalPending.length > 0 && (
                 <div className="bg-red-900/30 border border-red-700/50 rounded-2xl p-4 mb-4">
                   <div className="text-xs font-bold text-red-400 uppercase mb-2">🚨 Critical Pending</div>
@@ -874,7 +1215,6 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
                 </div>
               )}
 
-              {/* Key deadlines */}
               {(deadlines.le_due || deadlines.cd_due) && (
                 <div className="space-y-2 mb-4">
                   {deadlines.le_due && (
@@ -899,11 +1239,29 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
               )}
 
               {aiAnalysis?.riskLevel && (
-                <div className={'rounded-2xl p-3 border text-center ' + (aiAnalysis.riskLevel === 'LOW' ? 'bg-emerald-900/30 border-emerald-700/50' : aiAnalysis.riskLevel === 'MEDIUM' ? 'bg-amber-900/30 border-amber-700/50' : 'bg-red-900/30 border-red-700/50')}>
+                <div className={'rounded-2xl p-3 border text-center mb-4 ' + (aiAnalysis.riskLevel === 'LOW' ? 'bg-emerald-900/30 border-emerald-700/50' : aiAnalysis.riskLevel === 'MEDIUM' ? 'bg-amber-900/30 border-amber-700/50' : 'bg-red-900/30 border-red-700/50')}>
                   <div className="text-xs font-bold text-slate-400 uppercase mb-0.5">AI Risk Level</div>
                   <div className={'font-black ' + (aiAnalysis.riskLevel === 'LOW' ? 'text-emerald-300' : aiAnalysis.riskLevel === 'MEDIUM' ? 'text-amber-300' : 'text-red-300')}>{aiAnalysis.riskLevel}</div>
                 </div>
               )}
+
+              {/* Trigger Lead Shield sidebar status */}
+              <div className={'rounded-2xl p-3 border text-center ' + (tlsSentAll ? 'bg-emerald-900/30 border-emerald-700/50' : 'bg-amber-900/30 border-amber-700/50')}>
+                <div className="text-xs font-bold text-slate-400 uppercase mb-1">🛡️ Trigger Lead Shield™</div>
+                {tlsDisplayBorrowers.map(b => (
+                  <div key={b.key} className="flex items-center justify-between px-1 py-0.5">
+                    <span className="text-xs text-slate-300">{b.label}</span>
+                    <span className={'text-xs font-bold ' + (tlsSentMap[b.key] ? 'text-emerald-400' : 'text-amber-400')}>
+                      {tlsSentMap[b.key] ? '✓ Sent' : '⏳ Pending'}
+                    </span>
+                  </div>
+                ))}
+                {!tlsSentAll && (
+                  <button onClick={() => setActiveTab(4)} className="mt-2 text-xs text-amber-300 hover:text-amber-200 underline font-semibold">
+                    Generate Letters →
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Key Rules */}

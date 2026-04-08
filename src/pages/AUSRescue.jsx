@@ -13,9 +13,10 @@ import { extractProfileFromScenario } from '../engines/programRuleEngine';
 import AUSRunCounter from '../components/AUSRunCounter';
 import WhatIfSimulator from '../components/WhatIfSimulator';
 import { runSonnetReasoning, mergeReasoningResults } from '../services/ausRescueReasoning';
+import DealAdvisor from '../components/DealAdvisor';
 
 // ── DOWNLOAD COUNTER ──────────────────────────────────────────────────────────
-// AUSRescue.jsx download counter: 35
+// AUSRescue.jsx download counter: 33
 
 // ── PROGRAMS ──────────────────────────────────────────────────────────────────
 const PROGRAMS = {
@@ -64,22 +65,6 @@ const DUPLICATE_FLAGS = [
   { label:'Closed or paid account still in DTI',              detail:'Paid-off or recently closed accounts may still show a minimum payment in AUS.',                                            fix:'Pull payoff/closure letter. Zero out the payment in LOS. Rapid rescore if needed to update tradeline status.' },
   { label:'Business debt included in personal DTI (self-employed)', detail:'Business loans or lines of credit that appear on personal credit but are paid by the business should be excluded.', fix:'Provide 12 months of business bank statements showing the business making all payments on the account from business funds.' },
   { label:'Rental property debt without rental income offset', detail:'If a rental property PITIA is in DTI but the rental income is not being counted, the net obligation is artificially inflated.', fix:'Document rental income via current signed lease plus 2-year Schedule E. Use net rental income to offset the full PITIA obligation.' },
-  { label:'Joint account double-counted across multiple co-borrowers', detail:'When co-borrowers share a joint account (same creditor + same balance), AUS counts the monthly payment in DTI for EACH borrower — doubling the obligation. This is one of the most common underwriter errors on multi-borrower files.', fix:'Identify all joint accounts by comparing creditor names and balances across all borrower credit reports. Each joint account should appear in DTI only ONCE. Document with creditor letter confirming the account is joint and remove the duplicate payment from DTI.' },
-  { label:"Co-borrower assets missing from funds-to-close calculation", detail:"AUS may only count assets tied to the primary borrower. Co-borrower assets entered under the wrong borrower in the LOS will not be counted — causing a false 'inadequate funds' finding.", fix:"Pull all co-borrower asset statements. Verify each account is entered under the CORRECT borrower in your LOS. Re-run AUS after correcting — the 'Ineligible' status should clear if co-borrower assets cover the shortage." },
-];
-
-// Maps Haiku-detected keywords → DUPLICATE_FLAGS index
-const DUPLICATE_FLAG_MAPPING = [
-  { index: 0, keywords: ['authorized user', 'au account', 'au tradeline'] },
-  { index: 1, keywords: ['student loan', 'deferred', 'idr', 'income-driven'] },
-  { index: 2, keywords: ['vehicle lease', 'car lease', 'auto lease'] },
-  { index: 3, keywords: ['child support', 'alimony', 'support obligation'] },
-  { index: 4, keywords: ['co-signed', 'cosigned', 'co-signed debt'] },
-  { index: 5, keywords: ['closed account', 'paid account', 'paid off account'] },
-  { index: 6, keywords: ['business debt', 'business loan', 'schedule c', 'self-employed debt'] },
-  { index: 7, keywords: ['rental property', 'rental income', 'schedule e', 'rental debt'] },
-  { index: 8, keywords: ['joint account', 'joint tradeline', 'same creditor', 'both borrowers', 'multiple borrowers', 'double-counted', 'double counted', 'co-borrower account'] },
-  { index: 9, keywords: ['missing assets', 'co-borrower assets', 'funds shortage', 'inadequate funds', 'insufficient funds', 'available funds', 'funds to close'] },
 ];
 
 const IMPACT_BADGE = { critical:'bg-red-100 text-red-700 border border-red-200', high:'bg-orange-100 text-orange-700 border border-orange-200', medium:'bg-yellow-100 text-yellow-700 border border-yellow-200', low:'bg-slate-100 text-slate-500 border border-slate-200' };
@@ -135,16 +120,10 @@ export default function AUSRescue() {
   const [submissionNumber, setSubmissionNumber] = useState(null);
   const [caseFileId, setCaseFileId]             = useState(null);
   const [ausEngineDetected, setAusEngineDetected] = useState(null);
-  const [borrowerCreditScores, setBorrowerCreditScores] = useState([]);
-  const [qualifyingCreditScore, setQualifyingCreditScore] = useState(null);
-  const [scoreWriteBackDone, setScoreWriteBackDone] = useState(false);
   const [sonnetResults, setSonnetResults]       = useState(null);
   const [sonnetLoading, setSonnetLoading]       = useState(false);
   const [sonnetError, setSonnetError]           = useState('');
-  const [aiDetectedFlags, setAiDetectedFlags]   = useState([]);
-  const [pathToApproval, setPathToApproval]     = useState(null);
-  const [pathLoading, setPathLoading]           = useState(false);
-  const [pushbackMessage, setPushbackMessage]   = useState('');
+  const [enrichedParseData, setEnrichedParseData] = useState(null);
 
   const { reportFindings } = useDecisionRecord(selectedScenarioId);
   const [savedRecordId, setSavedRecordId]     = useState(null);
@@ -336,7 +315,7 @@ export default function AUSRescue() {
   };
 
   const parsePDFWithClaude = async (file) => {
-    setIsParsing(true); setParseError(''); setParseResult(null);
+    setIsParsing(true); setParseError(''); setParseResult(null); setEnrichedParseData(null);
     addLog(`Parsing: ${file.name}`);
     try {
       const base64Data = await new Promise((resolve, reject) => {
@@ -347,79 +326,158 @@ export default function AUSRescue() {
       });
       const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
       if (!apiKey) throw new Error('VITE_ANTHROPIC_API_KEY not set in .env file');
+
+      const PARSE_PROMPT = `You are parsing a DU or LPA AUS findings PDF. Return ONLY a valid JSON object — no markdown fences, no explanation, nothing else before or after the JSON.
+
+Extract these fields exactly as shown. Use null for missing fields. Use actual numbers (not strings) for numeric fields.
+
+{
+  "ausEngine": "du",
+  "recommendation": "Approve/Ineligible",
+  "finding": "Approve/Ineligible",
+  "program": "conventional",
+  "loanPurpose": "Refinance",
+  "refiPurpose": "Limited Cash-Out",
+  "loanType": "Conventional",
+  "loanTerm": 360,
+  "loanAmount": 183000,
+  "appraisedValue": 325000,
+  "ltv": 57.0,
+  "cltv": 57.0,
+  "noteRate": 6.625,
+  "borrowerName": "Tabitha Henderson",
+  "propertyAddress": "6510 Carriage Ln, Stone Mountain, GA 30087",
+  "propertyType": "Detached",
+  "occupancy": "Primary Residence",
+  "creditScore": 639,
+  "allCreditScores": [531, 639, 644],
+  "backEndDTI": 41.9,
+  "frontEndDTI": 41.9,
+  "reservesMonths": 5,
+  "monthlyIncome": 4152.27,
+  "totalHousingPayment": 1739.59,
+  "cashBack": 682.38,
+  "isVeteran": false,
+  "isSelfEmployed": false,
+  "submissionNumber": 3,
+  "caseFileId": "1721702784",
+  "ineligibilityReasons": ["Cash taken out exceeds LCOR threshold per MSG 1772", "Does not meet minimum credit standards per MSG 3895"],
+  "duMessageIds": ["0007", "0633", "1772", "2375", "3629", "3895"],
+  "duMessages": [
+    {"id": "0633", "summary": "Loan may be eligible as cash-out refinance instead of limited cash-out"},
+    {"id": "1772", "summary": "Cash taken out exceeds the greater of 1% of loan amount or $2000 for LCOR"},
+    {"id": "3895", "summary": "Does not satisfy Fannie Mae minimum credit standards"}
+  ],
+  "liabilitiesToPayoff": [
+    {"creditor": "Carrington Mortgage Services", "balance": 137211.26, "payment": 821},
+    {"creditor": "Chrysler Capital", "balance": 27013, "payment": 848}
+  ],
+  "riskFactors": ["Borderline credit score 639", "Payment history unverifiable on Carrington"],
+  "strengths": ["Combined Loan-to-Value Ratio"],
+  "detectedIssues": ["credit"],
+  "secondJob": false,
+  "hasSalariedIncome": true
+}
+
+CRITICAL RULES:
+- loanPurpose: if document says "Loan Purpose: Refinance" it is NOT a purchase — use "Refinance"
+- refiPurpose: look for "Refi Purpose" field — use exact value like "Limited Cash-Out" or "Cash-Out"
+- cashBack: look for "Cash Back" dollar amount in the Funds section (e.g. $682.38)
+- duMessageIds: list every MSG ID number you find in the document
+- duMessages: write a plain-English summary for each MSG ID — especially 0633, 1772, 3629, 3895
+- liabilitiesToPayoff: list every creditor shown in the payoff table
+- allCreditScores: list all three bureau scores if shown
+- All numbers must be actual JSON numbers, not strings`;
+
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001', max_tokens: 2000,
+          model: 'claude-haiku-4-5-20251001', max_tokens: 3000,
           messages: [{ role:'user', content:[
             { type:'document', source:{ type:'base64', media_type:'application/pdf', data:base64Data } },
-            { type:'text', text:'You are parsing a DU or LPA AUS findings document. Carefully read every message, condition, table, and flag. Return ONLY valid JSON, no markdown:\n{"ausEngine":"du"|"lpa"|"fha_total"|"gus","finding":"FULL exact finding — e.g. Refer/Ineligible, Accept/Eligible, Approve/Eligible, Refer/Eligible — never abbreviate","program":"fha"|"conventional"|"homeready"|"homepossible"|"va"|"usda"|"nonqm","creditScore":number|null,"borrowerCreditScores":[{"borrower":"full name","scores":[n,n,n],"middle":number}],"backEndDTI":number|null,"frontEndDTI":number|null,"reservesMonths":number|null,"downPaymentPct":number|null,"interestRate":number|null,"isVeteran":boolean,"isSelfEmployed":boolean,"submissionNumber":number|null,"caseFileId":string|null,"detectedIssues":[],"riskFactors":["every risk or red flag message found in the document"],"ineligibleReasons":["every specific reason the loan was found Ineligible, e.g. inadequate funds to close, exceeds loan limit, credit score below minimum"],"duplicateDebtIndicators":["CRITICAL — look at the liabilities/debts table. If the SAME creditor name AND SAME balance appears for MULTIPLE different borrowers, that is a joint account being double-counted in DTI — flag it. Also flag: authorized user accounts in DTI, student loan showing both deferred and payment, vehicle lease appearing twice, child support as both judgment and payment, co-signed debts, closed/paid accounts still in DTI, business debt on personal report, rental PITIA without income offset, funds shortage that may indicate missing co-borrower assets not entered in LOS. Return plain English e.g. WFBNA CARD $2557/$81mo appears on both Josiane AND Belot — joint account double-counted in DTI or Funds shortage $17759 — verify all co-borrower assets entered under correct borrower in LOS"]}' }
+            { type:'text', text: PARSE_PROMPT }
           ] }],
         }),
       });
       if (!response.ok) { const e = await response.json().catch(() => ({})); throw new Error(e.error?.message || `API error ${response.status}`); }
-      const data   = await response.json();
-      const raw    = data.content?.[0]?.text || '';
-      const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+      const data = await response.json();
+      const raw  = data.content?.[0]?.text || '';
+
+      // Robust JSON extraction — handles truncation and markdown fences
+      let parsed;
+      try {
+        const cleaned = raw.replace(/```json|```/g, '').trim();
+        parsed = JSON.parse(cleaned);
+      } catch {
+        // Try to extract just the JSON object if there's extra text
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (match) {
+          try {
+            parsed = JSON.parse(match[0]);
+          } catch {
+            // Last resort: truncated JSON — try to close it
+            const partial = match[0];
+            const fixAttempts = [
+              partial + '"}]}',
+              partial + '"]}',
+              partial + '"}',
+              partial + '}',
+            ];
+            let fixed = false;
+            for (const attempt of fixAttempts) {
+              try { parsed = JSON.parse(attempt); fixed = true; break; } catch {}
+            }
+            if (!fixed) throw new Error(`JSON parse failed. Raw response: ${raw.slice(0, 200)}`);
+          }
+        } else {
+          throw new Error('No JSON found in response');
+        }
+      }
+
       const engineToProgram = { du:'conventional', lpa:'conventional', fha_total:'fha' };
       const validKeys = Object.keys(PROGRAMS);
       const detectedProgram = (parsed.program && validKeys.includes(parsed.program)) ? parsed.program : (engineToProgram[parsed.ausEngine] || 'conventional');
-      const findingMap = { 'approve/eligible':'Approve/Eligible','refer/eligible':'Refer/Eligible','refer with caution':'Refer with Caution','ineligible':'Ineligible','accept/eligible':'Accept/Eligible','accept':'Accept','caution':'Caution','refer':'Refer','approved':'Approved','declined':'Declined' };
-      const normalizedFinding = findingMap[parsed.finding?.toLowerCase().trim()] || parsed.finding || '';
+      const findingMap = { 'approve/eligible':'Approve/Eligible','refer/eligible':'Refer/Eligible','refer with caution':'Refer with Caution','ineligible':'Ineligible','accept/eligible':'Accept/Eligible','accept':'Accept','caution':'Caution','refer':'Refer','approved':'Approved','declined':'Declined','approve/ineligible':'Approve/Ineligible' };
+      const normalizedFinding = findingMap[parsed.finding?.toLowerCase().trim()] || findingMap[parsed.recommendation?.toLowerCase().trim()] || parsed.finding || '';
+
       setProgram(detectedProgram);
       setFinding(normalizedFinding, detectedProgram);
       setProfile(prev => ({
         ...prev,
-        creditScore: parsed.creditScore?.toString()    || prev.creditScore,
-        dti:         parsed.backEndDTI?.toString()      || prev.dti,
-        frontEndDTI: parsed.frontEndDTI?.toString()     || prev.frontEndDTI,
-        reserves:    parsed.reservesMonths?.toString()  || prev.reserves,
-        downPayment: parsed.downPaymentPct?.toString()  || prev.downPayment,
-        interestRate:parsed.interestRate?.toString()    || prev.interestRate,
-        isVeteran:   parsed.isVeteran === true,
+        creditScore:    parsed.creditScore?.toString()    || prev.creditScore,
+        dti:            parsed.backEndDTI?.toString()      || prev.dti,
+        frontEndDTI:    parsed.frontEndDTI?.toString()     || prev.frontEndDTI,
+        reserves:       parsed.reservesMonths?.toString()  || prev.reserves,
+        downPayment:    parsed.loanPurpose === 'Purchase' ? (parsed.downPaymentPct?.toString() || prev.downPayment) : prev.downPayment,
+        interestRate:   (parsed.noteRate || parsed.interestRate)?.toString() || prev.interestRate,
+        isVeteran:      parsed.isVeteran === true,
         isSelfEmployed: parsed.isSelfEmployed || prev.isSelfEmployed,
       }));
       if (parsed.detectedIssues?.length) setSelectedCats(parsed.detectedIssues.filter(i => i in CATS));
-      // ── Multi-borrower credit score analysis ────────────────────────────
-      if (parsed.borrowerCreditScores && parsed.borrowerCreditScores.length > 0) {
-        setScoreWriteBackDone(false);
-        const withMiddles = parsed.borrowerCreditScores.map(b => {
-          const sorted = [...(b.scores||[])].sort((a,z)=>a-z);
-          const middle = sorted.length >= 3 ? sorted[1] : (sorted[0] || b.middle || 0);
-          return { ...b, computedMiddle: middle };
-        });
-        const lowestMiddle = Math.min(...withMiddles.map(b => b.computedMiddle));
-        const qualifyingBorrower = withMiddles.find(b => b.computedMiddle === lowestMiddle);
-        setBorrowerCreditScores(withMiddles);
-        setQualifyingCreditScore({ score: lowestMiddle, borrower: qualifyingBorrower?.borrower || '', all: withMiddles });
-        setProfile(prev => ({ ...prev, creditScore: String(lowestMiddle) }));
-        addLog(`🎯 Qualifying score: ${lowestMiddle} — ${qualifyingBorrower?.borrower || ''}`);
-      }
-      // Auto-populate AUS run counter from PDF
       if (parsed.submissionNumber != null) setSubmissionNumber(parsed.submissionNumber);
       if (parsed.caseFileId)               setCaseFileId(parsed.caseFileId);
       if (parsed.ausEngine)                setAusEngineDetected(parsed.ausEngine);
-      // ── AI Duplicate Debt Auto-Detection ──────────────────────────────
-      const indicators = parsed.duplicateDebtIndicators || [];
-      if (indicators.length > 0) {
-        const autoFlaggedIndices = new Set();
-        indicators.forEach(indicator => {
-          const lc = indicator.toLowerCase();
-          DUPLICATE_FLAG_MAPPING.forEach(({ index, keywords }) => {
-            if (keywords.some(kw => lc.includes(kw))) autoFlaggedIndices.add(index);
-          });
-        });
-        const flagArr = [...autoFlaggedIndices];
-        setAiDetectedFlags(flagArr);
-        setFlaggedDuplicates(prev => [...new Set([...prev, ...flagArr])]);
-        if (flagArr.length > 0) {
-          addLog(`🤖 AI detected ${flagArr.length} potential duplicate debt issue${flagArr.length > 1 ? 's' : ''}`);
-          setActiveTab('duplicates');
-        }
-      }
-      const fieldsFound = [normalizedFinding && 'Finding', parsed.creditScore && 'Credit Score', parsed.backEndDTI && 'DTI', parsed.frontEndDTI && 'Front-End DTI', parsed.downPaymentPct && 'Down Payment', parsed.interestRate && 'Interest Rate', parsed.reservesMonths && 'Reserves', parsed.submissionNumber && `Submission #${parsed.submissionNumber}`, parsed.detectedIssues?.length && `${parsed.detectedIssues.length} issue categories`, indicators.length > 0 && `${indicators.length} duplicate debt flag${indicators.length > 1 ? 's' : ''} detected`].filter(Boolean);
-      setParseResult({ fileName: file.name, fieldsFound, riskFactors: parsed.riskFactors || [], duplicateDebtIndicators: indicators, ineligibleReasons: parsed.ineligibleReasons || [] });
+
+      // Store full enriched data for DealAdvisor
+      setEnrichedParseData(parsed);
+
+      const fieldsFound = [
+        normalizedFinding && 'Finding',
+        parsed.loanPurpose && `Loan Purpose: ${parsed.loanPurpose}`,
+        parsed.refiPurpose && `Refi Type: ${parsed.refiPurpose}`,
+        parsed.creditScore && `Credit Score: ${parsed.creditScore}`,
+        parsed.backEndDTI && `DTI: ${parsed.backEndDTI}%`,
+        parsed.loanAmount && `Loan: $${parsed.loanAmount?.toLocaleString()}`,
+        parsed.appraisedValue && `Value: $${parsed.appraisedValue?.toLocaleString()}`,
+        parsed.ltv && `LTV: ${parsed.ltv}%`,
+        parsed.reservesMonths && `Reserves: ${parsed.reservesMonths} mo`,
+        parsed.submissionNumber && `Submission #${parsed.submissionNumber}`,
+        parsed.duMessageIds?.length && `${parsed.duMessageIds.length} DU Messages`,
+        parsed.ineligibilityReasons?.length && `${parsed.ineligibilityReasons.length} ineligibility reason(s)`,
+      ].filter(Boolean);
+      setParseResult({ fileName: file.name, fieldsFound, riskFactors: parsed.riskFactors || [] });
+      addLog(`Parsed: ${parsed.loanPurpose || 'Unknown purpose'} | ${normalizedFinding} | FICO ${parsed.creditScore} | DTI ${parsed.backEndDTI}%`);
     } catch (err) {
       setParseError(err.message.includes('VITE_ANTHROPIC_API_KEY') ? 'Add VITE_ANTHROPIC_API_KEY to your .env file to enable PDF parsing' : `Parse failed: ${err.message}`);
       addLog(`Parse failed: ${err.message}`);
@@ -433,74 +491,6 @@ export default function AUSRescue() {
     if (file.size > 10 * 1024 * 1024) { setParseError('File too large — max 10MB'); return; }
     parsePDFWithClaude(file);
     e.target.value = '';
-  };
-
-  const handleScoreWriteBack = async () => {
-    if (!qualifyingCreditScore || !selectedScenarioId) return;
-    try {
-      await updateDoc(doc(db, 'scenarios', selectedScenarioId), { creditScore: qualifyingCreditScore.score, updated_at: new Date() });
-      setScoreWriteBackDone(true);
-      addLog(`✅ Scenario updated: qualifying score ${qualifyingCreditScore.score}`);
-    } catch (err) { addLog(`Score write-back failed: ${err.message}`); }
-  };
-
-  const generatePathToApproval = async () => {
-    if (!currentFinding || !profile.creditScore || !profile.dti) return;
-    setPathLoading(true);
-    addLog('AI: Analyzing path to approval…');
-    try {
-      const ineligibleReasons = parseResult?.ineligibleReasons || [];
-      const duplicates = parseResult?.duplicateDebtIndicators || [];
-      const prompt = `You are a senior FHA underwriter. Analyze this AUS finding and give a specific step-by-step path to flip it to an approval.
-
-LOAN: ${PROGRAMS[program]?.label} | Finding: ${currentFinding} | FICO: ${profile.creditScore} | DTI: ${profile.dti}% | Down: ${profile.downPayment || 'N/A'}% | Rate: ${profile.interestRate || 'N/A'}%
-
-INELIGIBLE REASONS: ${ineligibleReasons.length > 0 ? ineligibleReasons.join('; ') : 'None (Refer only)'}
-DUPLICATE DEBTS DETECTED: ${duplicates.length > 0 ? duplicates.join('; ') : 'None'}
-RISK FLAGS: ${parseResult?.riskFactors?.join(', ') || 'None'}
-
-Return ONLY valid JSON:
-{"verdict":"one sentence — can this be rescued and how hard","primaryBlockers":["each blocker"],"steps":[{"priority":1,"action":"title","detail":"what exactly to do","impact":"what this changes in AUS","effort":"Easy|Moderate|Hard","timeframe":"Same Day|1-3 Days|1-2 Weeks"}],"expectedOutcome":"what finding becomes after all steps","manualUWPath":"manual underwrite path with compensating factors if AUS still refers"}`;
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 1500, messages: [{ role: 'user', content: prompt }] }),
-      });
-      const data = await response.json();
-      const raw = data.content?.map(b => b.text || '').join('') ?? '';
-      const result = JSON.parse(raw.replace(/```json|```/g, '').trim());
-      setPathToApproval(result);
-      addLog(`AI Path: ${result.expectedOutcome}`);
-    } catch (err) { addLog(`Path to Approval error: ${err.message}`); }
-    finally { setPathLoading(false); }
-  };
-
-  const generatePushbackMessage = () => {
-    if (flaggedDuplicates.length === 0) return;
-    const bDisplayName = bName || 'the borrower';
-    const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-    let msg = `Subject: AUS Findings Review — Potential Duplicate Debt in DTI — ${bDisplayName}\n\nDate: ${today}\n\n`;
-    msg += `Hi,\n\nAfter reviewing the AUS findings for ${bDisplayName}`;
-    if (profile.creditScore) msg += ` (FICO ${profile.creditScore}, DTI ${profile.dti}%)`;
-    msg += `, I've identified ${flaggedDuplicates.length} potential duplicate debt item${flaggedDuplicates.length > 1 ? 's' : ''} that may have caused the ${currentFinding || 'adverse'} finding.\n\nITEMS FOR REVIEW:\n${'─'.repeat(40)}\n`;
-    flaggedDuplicates.forEach((idx, i) => {
-      const flag = DUPLICATE_FLAGS[idx];
-      const aiTag = aiDetectedFlags.includes(idx) ? ' [🤖 AI DETECTED IN FINDINGS]' : ' [LO FLAGGED]';
-      msg += `\n${i + 1}. ${flag.label}${aiTag}\n   Issue: ${flag.detail}\n   Fix: ${flag.fix}\n`;
-    });
-    if (parseResult?.duplicateDebtIndicators?.length > 0) {
-      msg += `\nAI-DETECTED SPECIFICS FROM AUS PDF:\n`;
-      parseResult.duplicateDebtIndicators.forEach((d, i) => { msg += `  ${i+1}. ${d}\n`; });
-    }
-    msg += `\n${'─'.repeat(40)}\nCorrecting these items may materially reduce the qualifying DTI and change the AUS outcome. Please review and advise.\n\nThank you,\n[Loan Officer Name]\n[NMLS #]\n\n— Generated by LoanBeacons™ AUS Rescue™ | Patent Pending`;
-    setPushbackMessage(msg);
-    addLog(`📋 Push-back message generated (${flaggedDuplicates.length} items)`);
-  };
-
-  const copyPushback = () => {
-    navigator.clipboard.writeText(pushbackMessage).catch(() => {});
-    addLog('Push-back message copied to clipboard');
-    alert('Push-back message copied to clipboard!');
   };
 
   const isPositive = currentFinding && PROGRAMS[program]?.positiveFindings?.includes(currentFinding);
@@ -622,34 +612,6 @@ Return ONLY valid JSON:
                     {parseResult && !isParsing && (<button onClick={() => setParseResult(null)} className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 rounded border border-slate-200">Clear</button>)}
                   </div>
                 </div>
-                {qualifyingCreditScore && (
-                  <div className="mt-3 border-t border-emerald-200 pt-3">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Credit Scores — All Borrowers</p>
-                    <div className="space-y-1 mb-2">
-                      {qualifyingCreditScore.all?.map((b, i) => (
-                        <div key={i} className={`flex items-center justify-between text-xs rounded-lg px-2.5 py-1.5 ${b.computedMiddle === qualifyingCreditScore.score ? 'bg-amber-50 border border-amber-300' : 'bg-gray-50 border border-gray-100'}`}>
-                          <span className="font-medium text-gray-700 truncate">{b.borrower}</span>
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            <span className="text-gray-400 text-[10px]">{b.scores?.join(' / ')}</span>
-                            <span className={`font-bold ${b.computedMiddle === qualifyingCreditScore.score ? 'text-amber-700' : 'text-gray-600'}`}>
-                              {b.computedMiddle === qualifyingCreditScore.score ? '⭐ ' : ''}{b.computedMiddle}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-xs font-bold text-amber-700">Qualifying Score: {qualifyingCreditScore.score}</p>
-                        <p className="text-[10px] text-gray-400">{qualifyingCreditScore.borrower} — lowest middle</p>
-                      </div>
-                      {selectedScenarioId && !scoreWriteBackDone && (
-                        <button onClick={handleScoreWriteBack} className="text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-lg">Update Scenario</button>
-                      )}
-                      {scoreWriteBackDone && <span className="text-xs font-bold text-emerald-600">✅ Scenario Updated</span>}
-                    </div>
-                  </div>
-                )}
                 {parseResult?.riskFactors?.length > 0 && (
                   <div className="mt-3 border-t border-emerald-200 pt-3">
                     <p className="text-xs font-bold text-emerald-700 mb-1.5">Risk factors found in findings:</p>
@@ -762,7 +724,7 @@ Return ONLY valid JSON:
 
             {/* Tab Nav */}
             <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-0">
-              {[{k:'strategies',l:'🎯 Strategies'},{k:'programs',l:'📊 Program Comparison'},{k:'migration',l:'🔄 Migration Engine'},{k:'whatif',l:'⚡ What-If Simulator'},{k:'duplicates',l:'🔍 Duplicate Debt Detector'}].map(t => (
+              {[{k:'strategies',l:'🎯 Strategies'},{k:'programs',l:'📊 Program Comparison'},{k:'migration',l:'🔄 Migration Engine'},{k:'whatif',l:'⚡ What-If Simulator'},{k:'duplicates',l:'🔍 Duplicate Debt Detector'},{k:'dealadvisor',l:'⚡ Deal Advisor™'}].map(t => (
                 <button key={t.k} onClick={() => setActiveTab(t.k)} className={`px-4 py-2 text-sm font-semibold rounded-t-lg border-b-2 transition-all ${activeTab === t.k ? 'border-indigo-500 text-indigo-600 bg-indigo-50' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{t.l}</button>
               ))}
             </div>
@@ -793,67 +755,6 @@ Return ONLY valid JSON:
                     </div>
                   </div>
                 )}
-                {/* ── PATH TO APPROVAL — AI Analysis ───────────────── */}
-                {needsRescue && (
-                  <div className="mb-4">
-                    <div className="bg-slate-900 rounded-xl border border-slate-700 p-4 flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-bold text-white">💡 How Do I Get This Approved?</p>
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          {pathToApproval ? `AI analysis complete — ${pathToApproval.expectedOutcome}` : 'Get a step-by-step AI analysis to flip this finding to an approval.'}
-                        </p>
-                      </div>
-                      <button onClick={generatePathToApproval} disabled={pathLoading}
-                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors">
-                        {pathLoading ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Analyzing…</> : pathToApproval ? '🔁 Re-analyze' : '💡 Get Approval Path'}
-                      </button>
-                    </div>
-                    {pathToApproval && (
-                      <div className="mt-3 space-y-3">
-                        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                          <p className="text-xs font-bold text-blue-700 uppercase tracking-wide mb-1">AI Verdict</p>
-                          <p className="text-sm font-semibold text-blue-900">{pathToApproval.verdict}</p>
-                          {pathToApproval.primaryBlockers?.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              {pathToApproval.primaryBlockers.map((b, i) => (
-                                <span key={i} className="text-xs bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded-full">🚫 {b}</span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          {pathToApproval.steps?.map((step, i) => (
-                            <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-                              <div className="flex items-start gap-3">
-                                <div className="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-black flex items-center justify-center flex-shrink-0">{step.priority}</div>
-                                <div className="flex-1">
-                                  <div className="flex flex-wrap items-center gap-2 mb-1">
-                                    <p className="text-sm font-bold text-gray-900">{step.action}</p>
-                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${step.effort === 'Easy' ? 'bg-green-100 text-green-700 border-green-200' : step.effort === 'Hard' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>{step.effort}</span>
-                                    <span className="text-[10px] text-gray-400">⏱ {step.timeframe}</span>
-                                  </div>
-                                  <p className="text-xs text-gray-600 leading-relaxed">{step.detail}</p>
-                                  <p className="text-xs text-blue-600 font-semibold mt-1.5">📈 {step.impact}</p>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
-                          <p className="text-xs font-bold text-emerald-700 uppercase tracking-wide mb-1">Expected Outcome</p>
-                          <p className="text-sm font-bold text-emerald-800">{pathToApproval.expectedOutcome}</p>
-                          {pathToApproval.manualUWPath && (
-                            <div className="mt-2 pt-2 border-t border-emerald-200">
-                              <p className="text-xs font-bold text-emerald-700 mb-1">Manual Underwrite Path</p>
-                              <p className="text-xs text-emerald-700">{pathToApproval.manualUWPath}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
                 <div className="flex flex-wrap gap-2 mb-4">
                   {Object.entries(CATS).map(([key, cat]) => (
                     <button key={key} onClick={() => toggleCat(key)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${selectedCats.includes(key) ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-600 hover:border-indigo-300'}`}>
@@ -1047,54 +948,21 @@ Return ONLY valid JSON:
             {/* ── DUPLICATE DEBT DETECTOR TAB ─────────────────────────── */}
             {activeTab === 'duplicates' && (
               <div className="space-y-3">
-
-                {/* AI Alert Banner */}
-                {aiDetectedFlags.length > 0 && (
-                  <div className="bg-red-950 border border-red-700 rounded-xl p-4">
-                    <div className="flex items-start gap-3">
-                      <span className="text-xl flex-shrink-0">🤖</span>
-                      <div className="flex-1">
-                        <p className="text-sm font-bold text-red-200">AI Detected {aiDetectedFlags.length} Potential Duplicate Debt Issue{aiDetectedFlags.length > 1 ? 's' : ''} in the AUS Findings</p>
-                        <p className="text-xs text-red-300 mt-1">These were found in the AUS PDF and may have caused or contributed to the {currentFinding || 'adverse'} finding. The underwriter may have made an error. Review each item below and use the push-back message to notify them.</p>
-                        {parseResult?.duplicateDebtIndicators?.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            {parseResult.duplicateDebtIndicators.map((item, i) => (
-                              <p key={i} className="text-xs text-red-300 flex gap-2"><span className="text-red-500 flex-shrink-0">⚠</span>{item}</p>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Header */}
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
                   <p className="text-sm font-bold text-amber-800">🔍 Duplicate Debt Detector</p>
-                  <p className="text-xs text-amber-700 mt-1">
-                    {aiDetectedFlags.length > 0
-                      ? `${aiDetectedFlags.length} issue${aiDetectedFlags.length > 1 ? 's' : ''} auto-flagged by AI from your AUS PDF · Review below · Generate push-back message for the underwriter`
-                      : 'Upload an AUS PDF to auto-detect issues. Or manually flag items below. Flagged items generate a professional push-back message to send to the underwriter.'}
-                  </p>
+                  <p className="text-xs text-amber-700 mt-1">Flag any debts that may be double-counted in DTI. Each flag includes the fix. Flagged items are included in LO Notes export.</p>
                 </div>
-
-                {/* Flag Cards */}
-                {DUPLICATE_FLAGS.map((flag, idx) => {
-                  const isChecked = flaggedDuplicates.includes(idx);
-                  const isAI = aiDetectedFlags.includes(idx);
-                  return (
-                    <div key={idx} onClick={() => toggleDup(idx)} className={`bg-white rounded-xl border shadow-sm p-4 cursor-pointer transition-all hover:border-amber-300 ${isChecked ? 'border-amber-400 bg-amber-50/30' : 'border-gray-100'} ${isAI ? 'ring-2 ring-red-200' : ''}`}>
-                      <div className="flex items-start gap-3">
-                        <span className={`mt-0.5 w-5 h-5 rounded flex-shrink-0 flex items-center justify-center border-2 ${isChecked ? 'bg-amber-500 border-amber-500 text-white' : 'border-gray-300'}`}>
-                          {isChecked && <span className="text-xs font-black">✔</span>}
+                {DUPLICATE_FLAGS.map((flag, idx) => (
+                  <div key={idx} onClick={() => toggleDup(idx)} className={`bg-white rounded-xl border shadow-sm p-4 cursor-pointer transition-all hover:border-amber-300 ${flaggedDuplicates.includes(idx) ? 'border-amber-400 bg-amber-50/30' : 'border-gray-100'}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 flex-1">
+                        <span className={`mt-0.5 w-5 h-5 rounded flex-shrink-0 flex items-center justify-center border-2 ${flaggedDuplicates.includes(idx) ? 'bg-amber-500 border-amber-500 text-white' : 'border-gray-300'}`}>
+                          {flaggedDuplicates.includes(idx) && <span className="text-xs font-black">✔</span>}
                         </span>
-                        <div className="flex-1">
-                          <div className="flex flex-wrap items-center gap-2 mb-0.5">
-                            <p className="text-sm font-bold text-gray-800">{flag.label}</p>
-                            {isAI && <span className="text-[10px] font-bold bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded-full">🤖 AI Detected</span>}
-                          </div>
-                          <p className="text-xs text-gray-500">{flag.detail}</p>
-                          {isChecked && (
+                        <div>
+                          <p className="text-sm font-bold text-gray-800">{flag.label}</p>
+                          <p className="text-xs text-gray-500 mt-1">{flag.detail}</p>
+                          {flaggedDuplicates.includes(idx) && (
                             <div className="mt-2 p-2 bg-amber-100 rounded-lg">
                               <p className="text-xs font-semibold text-amber-800">Fix: <span className="font-normal">{flag.fix}</span></p>
                             </div>
@@ -1102,33 +970,50 @@ Return ONLY valid JSON:
                         </div>
                       </div>
                     </div>
-                  );
-                })}
-
-                {/* Push-Back Message Generator */}
+                  </div>
+                ))}
                 {flaggedDuplicates.length > 0 && (
-                  <div className="bg-white rounded-xl border border-amber-200 p-4 space-y-3">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div>
-                        <p className="text-sm font-bold text-amber-800">{flaggedDuplicates.length} item{flaggedDuplicates.length > 1 ? 's' : ''} flagged</p>
-                        <p className="text-xs text-gray-500 mt-0.5">Generate a professional push-back message to send to the underwriter.</p>
-                      </div>
-                      <button onClick={generatePushbackMessage} className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors">
-                        📋 Generate Push-Back Message
-                      </button>
-                    </div>
-                    {pushbackMessage && (
-                      <div className="space-y-2">
-                        <textarea readOnly value={pushbackMessage} rows={14}
-                          className="w-full text-xs font-mono text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3 resize-none focus:outline-none" />
-                        <button onClick={copyPushback} className="w-full py-2 text-xs font-bold text-amber-700 border border-amber-300 rounded-lg hover:bg-amber-50 transition-colors">
-                          📋 Copy to Clipboard
-                        </button>
-                      </div>
-                    )}
+                  <div className="bg-white rounded-xl border border-amber-200 p-4">
+                    <p className="text-sm font-bold text-amber-800">{flaggedDuplicates.length} flag{flaggedDuplicates.length > 1 ? 's' : ''} identified</p>
+                    <p className="text-xs text-gray-500 mt-1">These are included in your LO Notes export on the Strategies tab.</p>
                   </div>
                 )}
               </div>
+            )}
+
+            {/* ── DEAL ADVISOR™ TAB ────────────────────────────────────── */}
+            {activeTab === 'dealadvisor' && (
+              <DealAdvisor
+                parsedFindings={enrichedParseData}
+                strategies={relevantStrategies
+                  .filter(s => {
+                    const isPrimaryResidence = (enrichedParseData?.occupancy || '').toLowerCase().includes('primary') || !profile.isInvestmentProperty;
+                    // Exclude DSCR for primary residences — DSCR is investment-only
+                    if (isPrimaryResidence && s.title?.toLowerCase().includes('dscr')) return false;
+                    return true;
+                  })
+                  .map(s => {
+                    // Strip DSCR from combined Non-QM strategy name/description for primary residences
+                    const isPrimary = (enrichedParseData?.occupancy || '').toLowerCase().includes('primary') || !profile.isInvestmentProperty;
+                    const name = isPrimary
+                      ? s.title.replace(/\s*\/\s*DSCR/gi, '').replace(/\s*,\s*DSCR/gi, '').trim()
+                      : s.title;
+                    return {
+                      name,
+                      approvalProbability: s.probability[program] || 0,
+                      description:         s.detail,
+                      cost:                s.cost,
+                      timeframe:           s.timeline,
+                      risk:                s.risk,
+                      category:            s.category,
+                      bestFor:             s.bestFor,
+                      programWarning:      s.programWarning || null,
+                    };
+                  })}
+                scenarioId={selectedScenarioId}
+                borrowerName={enrichedParseData?.borrowerName || bName || 'Borrower'}
+                loName="George Chevalier"
+              />
             )}
 
           </div>

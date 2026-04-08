@@ -100,40 +100,40 @@ const T = {
 };
 
 const S = {
-  page: { minHeight: "100vh", backgroundColor: T.bg, fontFamily: T.fontBody, color: T.textPrimary, paddingBottom: "80px" },
-  header: { background: `linear-gradient(180deg, #0d1117 0%, rgba(13,17,23,0.95) 100%)`, borderBottom: `1px solid ${T.border}`, padding: "20px 24px 16px", position: "sticky", top: 0, zIndex: 100, backdropFilter: "blur(12px)" },
+  page: { minHeight: "100vh", backgroundColor: "#f8fafc", fontFamily: T.fontBody, color: "#1e293b", paddingBottom: "80px" },
+  header: { background: "linear-gradient(to bottom right, #0f172a, #1e1b4b)", borderBottom: "1px solid #1e293b", padding: "20px 24px 16px", position: "sticky", top: 0, zIndex: 100 },
   headerInner: { maxWidth: "1280px", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px" },
   logoGroup: { display: "flex", alignItems: "center", gap: "12px" },
   logoIcon: { width: "32px", height: "32px", borderRadius: "8px", background: `linear-gradient(135deg, ${T.amber} 0%, ${T.amberLight} 100%)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", flexShrink: 0 },
-  logoText: { fontFamily: T.fontDisplay, fontWeight: 700, fontSize: "16px", color: T.textPrimary, letterSpacing: "-0.3px" },
+  logoText: { fontFamily: T.fontDisplay, fontWeight: 700, fontSize: "16px", color: "#ffffff", letterSpacing: "-0.3px" },
   logoSubtext: { fontFamily: T.fontMono, fontSize: "10px", color: T.textAmber, letterSpacing: "0.08em", textTransform: "uppercase", marginTop: "1px" },
   headerMeta: { display: "flex", alignItems: "center", gap: "16px" },
-  engineBadge: { fontFamily: T.fontMono, fontSize: "10px", color: T.textMuted, letterSpacing: "0.06em", padding: "3px 8px", border: `1px solid ${T.border}`, borderRadius: T.radiusSm },
+  engineBadge: { fontFamily: T.fontMono, fontSize: "10px", color: "#94a3b8", letterSpacing: "0.06em", padding: "3px 8px", border: "1px solid #334155", borderRadius: T.radiusSm },
   body: { maxWidth: "1280px", margin: "0 auto", padding: "32px 24px" },
   formSection: { marginBottom: "32px" },
-  formCard: { backgroundColor: T.bgCard, border: `1px solid ${T.border}`, borderRadius: T.radiusLg, overflow: "hidden" },
-  formCardHeader: { padding: "18px 24px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" },
-  formCardTitle: { fontFamily: T.fontDisplay, fontWeight: 600, fontSize: "14px", color: T.textPrimary, display: "flex", alignItems: "center", gap: "8px" },
+  formCard: { backgroundColor: "#ffffff", border: "1px solid #e2e8f0", borderRadius: T.radiusLg, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
+  formCardHeader: { padding: "18px 24px 14px", borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" },
+  formCardTitle: { fontFamily: T.fontDisplay, fontWeight: 600, fontSize: "14px", color: "#1e293b", display: "flex", alignItems: "center", gap: "8px" },
   formCardTitleDot: { width: "6px", height: "6px", borderRadius: "50%", backgroundColor: T.amber, display: "inline-block" },
   formBody: { padding: "24px" },
   formGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "16px" },
   formGroup: { display: "flex", flexDirection: "column", gap: "6px" },
-  label: { fontFamily: T.fontMono, fontSize: "11px", color: T.textSecondary, letterSpacing: "0.06em", textTransform: "uppercase", display: "flex", alignItems: "center", gap: "6px" },
-  labelTag: { fontSize: "9px", padding: "1px 5px", borderRadius: "3px", backgroundColor: "#1a2332", color: T.textBlue, letterSpacing: "0.04em", border: `1px solid #1d6fa440` },
-  labelTagAmber: { backgroundColor: "#2a1a00", color: T.textAmber, border: `1px solid ${T.amberBorder}` },
-  input: { backgroundColor: T.bgInput, border: `1px solid ${T.borderLight}`, borderRadius: T.radius, padding: "9px 12px", fontSize: "14px", color: T.textPrimary, fontFamily: T.fontBody, outline: "none", transition: T.transition, width: "100%", boxSizing: "border-box" },
-  select: { backgroundColor: T.bgInput, border: `1px solid ${T.borderLight}`, borderRadius: T.radius, padding: "9px 12px", fontSize: "14px", color: T.textPrimary, fontFamily: T.fontBody, outline: "none", transition: T.transition, width: "100%", boxSizing: "border-box", cursor: "pointer" },
-  formDivider: { height: "1px", backgroundColor: T.border, margin: "20px 0" },
-  formSectionLabel: { fontFamily: T.fontMono, fontSize: "10px", color: T.textAmber, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px" },
+  label: { fontFamily: T.fontMono, fontSize: "11px", color: "#64748b", letterSpacing: "0.06em", textTransform: "uppercase", display: "flex", alignItems: "center", gap: "6px" },
+  labelTag: { fontSize: "9px", padding: "1px 5px", borderRadius: "3px", backgroundColor: "#eff6ff", color: "#3b82f6", letterSpacing: "0.04em", border: "1px solid #bfdbfe" },
+  labelTagAmber: { backgroundColor: "#fffbeb", color: T.amber, border: `1px solid ${T.amberBorder}` },
+  input: { backgroundColor: "#ffffff", border: "1px solid #cbd5e1", borderRadius: T.radius, padding: "9px 12px", fontSize: "14px", color: "#1e293b", fontFamily: T.fontBody, outline: "none", transition: T.transition, width: "100%", boxSizing: "border-box" },
+  select: { backgroundColor: "#ffffff", border: "1px solid #cbd5e1", borderRadius: T.radius, padding: "9px 12px", fontSize: "14px", color: "#1e293b", fontFamily: T.fontBody, outline: "none", transition: T.transition, width: "100%", boxSizing: "border-box", cursor: "pointer" },
+  formDivider: { height: "1px", backgroundColor: "#f1f5f9", margin: "20px 0" },
+  formSectionLabel: { fontFamily: T.fontMono, fontSize: "10px", color: T.amber, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "14px", display: "flex", alignItems: "center", gap: "8px" },
   toggleRow: { display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", userSelect: "none" },
-  toggleTrack: (a) => ({ width: "36px", height: "20px", borderRadius: "10px", backgroundColor: a ? T.amber : T.borderLight, position: "relative", transition: T.transition, flexShrink: 0, cursor: "pointer" }),
-  toggleThumb: (a) => ({ position: "absolute", top: "3px", left: a ? "19px" : "3px", width: "14px", height: "14px", borderRadius: "50%", backgroundColor: a ? T.bg : T.textMuted, transition: T.transition }),
-  toggleLabel: { fontSize: "13px", color: T.textPrimary },
-  txToggle: { display: "flex", backgroundColor: T.bg, border: `1px solid ${T.borderLight}`, borderRadius: T.radius, overflow: "hidden" },
-  txToggleBtn: (a) => ({ flex: 1, padding: "8px 10px", fontSize: "12px", fontFamily: T.fontMono, fontWeight: a ? 600 : 400, color: a ? T.bg : T.textSecondary, backgroundColor: a ? T.amber : "transparent", border: "none", cursor: "pointer", transition: T.transition }),
-  submitBtn: (l) => ({ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", padding: "13px 28px", backgroundColor: l ? T.amberBg : T.amber, color: l ? T.amberLight : T.bg, border: `1px solid ${l ? T.amberBorder : T.amber}`, borderRadius: T.radius, fontFamily: T.fontDisplay, fontWeight: 700, fontSize: "14px", cursor: l ? "not-allowed" : "pointer", transition: T.transition, minWidth: "200px" }),
-  clearBtn: { padding: "13px 20px", backgroundColor: "transparent", color: T.textSecondary, border: `1px solid ${T.borderLight}`, borderRadius: T.radius, fontFamily: T.fontBody, fontSize: "13px", cursor: "pointer" },
-  formFooter: { padding: "16px 24px", borderTop: `1px solid ${T.border}`, display: "flex", alignItems: "center", gap: "12px" },
+  toggleTrack: (a) => ({ width: "36px", height: "20px", borderRadius: "10px", backgroundColor: a ? T.amber : "#cbd5e1", position: "relative", transition: T.transition, flexShrink: 0, cursor: "pointer" }),
+  toggleThumb: (a) => ({ position: "absolute", top: "3px", left: a ? "19px" : "3px", width: "14px", height: "14px", borderRadius: "50%", backgroundColor: "#ffffff", transition: T.transition }),
+  toggleLabel: { fontSize: "13px", color: "#1e293b" },
+  txToggle: { display: "flex", backgroundColor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: T.radius, overflow: "hidden" },
+  txToggleBtn: (a) => ({ flex: 1, padding: "8px 10px", fontSize: "12px", fontFamily: T.fontMono, fontWeight: a ? 600 : 400, color: a ? "#ffffff" : "#64748b", backgroundColor: a ? T.amber : "transparent", border: "none", cursor: "pointer", transition: T.transition }),
+  submitBtn: (l) => ({ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", padding: "13px 28px", backgroundColor: l ? "#fef3c7" : T.amber, color: l ? T.amberLight : "#ffffff", border: `1px solid ${l ? T.amberBorder : T.amber}`, borderRadius: T.radius, fontFamily: T.fontDisplay, fontWeight: 700, fontSize: "14px", cursor: l ? "not-allowed" : "pointer", transition: T.transition, minWidth: "200px" }),
+  clearBtn: { padding: "13px 20px", backgroundColor: "transparent", color: "#64748b", border: "1px solid #e2e8f0", borderRadius: T.radius, fontFamily: T.fontBody, fontSize: "13px", cursor: "pointer" },
+  formFooter: { padding: "16px 24px", borderTop: "1px solid #f1f5f9", display: "flex", alignItems: "center", gap: "12px", backgroundColor: "#fafafa" },
   resultsHeader: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px", marginBottom: "24px", flexWrap: "wrap" },
   resultsTitle: { fontFamily: T.fontDisplay, fontWeight: 700, fontSize: "20px", color: T.textPrimary, letterSpacing: "-0.4px" },
   resultsMeta: { fontSize: "12px", color: T.textSecondary, fontFamily: T.fontMono, marginTop: "4px" },
@@ -166,13 +166,13 @@ if (typeof document !== "undefined" && !document.getElementById("lender-match-st
   const s = document.createElement("style");
   s.id = "lender-match-styles";
   s.textContent = `
-    @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&family=DM+Serif+Display&display=swap');
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes fadeSlideIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
     .lm-result-row { animation: fadeSlideIn 0.2s ease forwards; }
     .lm-input:focus { border-color: ${T.amber} !important; box-shadow: 0 0 0 3px ${T.amber}20 !important; }
     .lm-select:focus { border-color: ${T.amber} !important; }
-    .lm-btn-clear:hover { background-color: ${T.bgCard} !important; color: ${T.textPrimary} !important; }
+    .lm-btn-clear:hover { background-color: #f1f5f9 !important; color: #1e293b !important; }
     .lm-btn-submit:hover:not(:disabled) { background-color: ${T.amberLight} !important; }
     .lm-ineligible-toggle:hover { color: ${T.textPrimary} !important; }
   `;
@@ -287,6 +287,49 @@ export default function LenderMatch() {
   const [savedLenderName, setSavedLenderName] = useState(null);
   // Borrower display info (loaded from scenario, not part of engine form)
   const [borrowerDisplay, setBorrowerDisplay] = useState({ name: '', address: '', firstTimeBuyer: false });
+  // Web search for Non-QM lenders
+  const [webSearchLoading, setWebSearchLoading] = useState(false);
+  const [webResults, setWebResults]             = useState(null);
+  const [webSearchDone, setWebSearchDone]       = useState(false);
+
+  const searchNonQMLendersOnline = useCallback(async () => {
+    setWebSearchLoading(true);
+    try {
+      const fico = form.creditScore || 'mid-600s';
+      const ltv  = form.loanAmount && form.propertyValue
+        ? ((form.loanAmount / form.propertyValue) * 100).toFixed(0) + '%'
+        : 'under 80%';
+      const state = form.state || 'nationwide';
+      const query = `Non-QM mortgage lenders 2025 ${form.transactionType} credit score ${fico} LTV ${ltv} ${state} ${form.incomeDocType !== 'fullDoc' ? form.incomeDocType : ''} ${form.creditEvent !== 'none' ? form.creditEvent : ''}`.trim();
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1200,
+          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+          system: 'You are a mortgage industry researcher. Search for Non-QM wholesale lenders that match this borrower profile. Return ONLY a JSON array — no markdown, no preamble — of up to 6 lenders. Each object must have: {"name":"Lender Name","nmls":"NMLS# if found","specialty":"their Non-QM niche","website":"url","minFICO":"minimum credit score","whyGood":"1 sentence why this lender fits this specific profile"}',
+          messages: [{ role: 'user', content: `Search for Non-QM wholesale lenders for: ${query}. Return JSON array only.` }],
+        }),
+      });
+      const data = await res.json();
+      const textBlocks = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+      const match = textBlocks.match(/\[[\s\S]*\]/);
+      if (match) setWebResults(JSON.parse(match[0]));
+      else setWebResults([]);
+    } catch (err) {
+      console.warn('Non-QM web search failed:', err.message);
+      setWebResults([]);
+    } finally {
+      setWebSearchLoading(false);
+      setWebSearchDone(true);
+    }
+  }, [form]);
 
   const resultsRef = useRef(null);
   const { getAeInfo } = useLenderProfiles();
@@ -335,6 +378,7 @@ export default function LenderMatch() {
   // ── Run engine ────────────────────────────────────────────────────────────
   const handleRun = useCallback(async () => {
     setLoading(true); setError(null); setSelectedLender(null);
+    setWebResults(null); setWebSearchDone(false);
     try {
       const raw = {
         ...form,
@@ -622,21 +666,33 @@ export default function LenderMatch() {
         {/* ── RESULTS ── */}
         {results && !loading && (
           <div ref={resultsRef}>
-            <div style={S.resultsHeader}>
-              <div>
-                <div style={S.resultsTitle}>Match Results</div>
-                <div style={S.resultsMeta}>{results.scenarioSummary}</div>
-              </div>
-              <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
-                <ConfidenceBarInline confidence={results.confidence} />
-                <OverlayRiskBadgeInline risk={results.overlayRisk} />
+
+            {/* ── Results transition banner — bridges light form to dark results ── */}
+            <div style={{ background:"linear-gradient(to bottom, #f8fafc 0%, #0f172a 100%)", padding:"32px 0 0 0", marginBottom:"0" }}>
+              <div style={{ background:"#0f172a", borderRadius:"16px 16px 0 0", padding:"24px 28px 20px", border:"1px solid #1e293b", borderBottom:"none" }}>
+                <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:"16px", flexWrap:"wrap" }}>
+                  <div>
+                    <p style={{ fontFamily:T.fontMono, fontSize:"10px", color:T.amber, letterSpacing:"0.12em", textTransform:"uppercase", marginBottom:"6px" }}>Match Results</p>
+                    <p style={{ fontFamily:T.fontDisplay, fontWeight:700, fontSize:"20px", color:"#ffffff", letterSpacing:"-0.4px", margin:0 }}>
+                      {results.agencySection?.totalEligible??0} Agency · {results.nonQMSection?.totalEligible??0} Alternative Path eligible
+                    </p>
+                    <p style={{ fontFamily:T.fontMono, fontSize:"11px", color:"#94a3b8", marginTop:"4px" }}>{results.scenarioSummary}</p>
+                  </div>
+                  <div style={{ display:"flex", gap:"8px", flexWrap:"wrap", alignItems:"center" }}>
+                    <ConfidenceBarInline confidence={results.confidence} />
+                    <OverlayRiskBadgeInline risk={results.overlayRisk} />
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div style={S.statsRow}>
-              <div style={S.statChip}><div style={S.statChipDot(T.blueLight)} />{results.agencySection?.totalEligible??0} Agency eligible</div>
-              <div style={S.statChip}><div style={S.statChipDot(T.amber)} />{results.nonQMSection?.totalEligible??0} Alternative Path eligible</div>
-            </div>
+            {/* ── Dark results panel ── */}
+            <div style={{ backgroundColor:"#0d1117", border:"1px solid #1e293b", borderTop:"none", borderRadius:"0 0 16px 16px", padding:"0 28px 28px", marginBottom:"32px" }}>
+
+              <div style={{ ...S.statsRow, paddingTop:"20px" }}>
+                <div style={S.statChip}><div style={S.statChipDot(T.blueLight)} />{results.agencySection?.totalEligible??0} Agency eligible</div>
+                <div style={S.statChip}><div style={S.statChipDot(T.amber)} />{results.nonQMSection?.totalEligible??0} Alternative Path eligible</div>
+              </div>
 
             {/* Agency */}
             <div style={S.agencyHeader}>
@@ -700,6 +756,72 @@ export default function LenderMatch() {
               </div>
               {showIneligible.nonqm && <div style={{border:`1px solid ${T.border}`,borderTop:"none",borderRadius:`0 0 ${T.radius} ${T.radius}`,overflow:"hidden"}}>{(results.nonQMSection?.ineligible||[]).map((r,i)=><IneligibleLenderRow key={i} result={r} />)}</div>}
             </>)}
+
+            {/* ── WEB SEARCH FOR MORE NON-QM LENDERS ── */}
+            {(results.nonQMSection?.totalEligible ?? 0) <= 2 && !webSearchDone && (
+              <div style={{ marginTop: "24px", background: "#161b22", border: `1px solid ${T.border}`, borderRadius: "12px", padding: "20px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
+                <div>
+                  <p style={{ fontFamily: T.fontDisplay, fontWeight: 600, fontSize: "14px", color: T.textPrimary, marginBottom: "4px" }}>
+                    🔍 Only {results.nonQMSection?.totalEligible ?? 0} Non-QM lender{(results.nonQMSection?.totalEligible ?? 0) !== 1 ? "s" : ""} in your library match this profile
+                  </p>
+                  <p style={{ fontFamily: T.fontBody, fontSize: "12px", color: T.textSecondary }}>
+                    Search the internet for additional Non-QM lenders that fit this scenario? Results are suggestions only — verify before contacting.
+                  </p>
+                </div>
+                <button
+                  onClick={searchNonQMLendersOnline}
+                  disabled={webSearchLoading}
+                  style={{ padding: "10px 22px", backgroundColor: webSearchLoading ? T.amberBg : T.amber, color: webSearchLoading ? T.amberLight : "#0d1117", border: `1px solid ${T.amberBorder}`, borderRadius: T.radius, fontFamily: T.fontDisplay, fontWeight: 700, fontSize: "13px", cursor: webSearchLoading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: "8px", whiteSpace: "nowrap", transition: T.transition }}
+                >
+                  {webSearchLoading
+                    ? <><div style={{ width: "12px", height: "12px", border: `2px solid ${T.amberBorder}`, borderTop: `2px solid ${T.amberLight}`, borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />Searching...</>
+                    : <>🌐 Search for More Lenders</>}
+                </button>
+              </div>
+            )}
+
+            {/* ── WEB SEARCH RESULTS ── */}
+            {webSearchDone && webResults !== null && (
+              <div style={{ marginTop: "24px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "14px 20px", backgroundColor: "#161b22", border: `1px solid ${T.border}`, borderBottom: "none", borderRadius: `${T.radiusLg} ${T.radiusLg} 0 0` }}>
+                  <div style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: T.amberLight, boxShadow: `0 0 8px ${T.amberLight}60` }} />
+                  <span style={{ fontFamily: T.fontDisplay, fontWeight: 700, fontSize: "13px", color: T.textPrimary }}>Web Search Results</span>
+                  <span style={{ fontFamily: T.fontMono, fontSize: "10px", color: T.textMuted, marginLeft: "4px" }}>Non-QM · Found online</span>
+                  <span style={{ marginLeft: "8px", fontFamily: T.fontMono, fontSize: "9px", letterSpacing: "0.08em", padding: "2px 7px", backgroundColor: T.amberBg, border: `1px solid ${T.amberBorder}`, borderRadius: "3px", color: T.amberLight }}>⚠️ VERIFY BEFORE CONTACTING</span>
+                  <span style={{ marginLeft: "auto", fontFamily: T.fontMono, fontSize: "10px", color: T.textMuted }}>{webResults.length} found</span>
+                </div>
+                {webResults.length === 0 ? (
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: `0 0 ${T.radiusLg} ${T.radiusLg}`, padding: "32px 24px", textAlign: "center", backgroundColor: T.bgCard }}>
+                    <p style={{ fontSize: "13px", color: T.textMuted, fontFamily: T.fontBody }}>No additional lenders found. Try adjusting the search criteria.</p>
+                  </div>
+                ) : (
+                  <div style={{ border: `1px solid ${T.border}`, borderRadius: `0 0 ${T.radiusLg} ${T.radiusLg}`, overflow: "hidden", backgroundColor: T.bgCard }}>
+                    {webResults.map((l, i) => (
+                      <div key={i} style={{ padding: "14px 20px", borderTop: i > 0 ? `1px solid ${T.border}` : "none", display: "flex", alignItems: "flex-start", gap: "16px" }}>
+                        <div style={{ width: "36px", height: "36px", borderRadius: "8px", backgroundColor: T.amberBg, border: `1px solid ${T.amberBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", flexShrink: 0 }}>🌐</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "3px" }}>
+                            <span style={{ fontFamily: T.fontDisplay, fontWeight: 700, fontSize: "13px", color: T.textPrimary }}>{l.name}</span>
+                            {l.nmls && <span style={{ fontFamily: T.fontMono, fontSize: "10px", color: T.textMuted }}>NMLS: {l.nmls}</span>}
+                            {l.minFICO && <span style={{ fontFamily: T.fontMono, fontSize: "10px", padding: "1px 6px", backgroundColor: T.greenBg, border: `1px solid ${T.greenBorder}`, borderRadius: "3px", color: T.greenLight }}>Min FICO: {l.minFICO}</span>}
+                          </div>
+                          {l.specialty && <p style={{ fontSize: "11px", color: T.textSecondary, fontFamily: T.fontMono, marginBottom: "3px" }}>{l.specialty}</p>}
+                          {l.whyGood  && <p style={{ fontSize: "12px", color: T.textSecondary, fontFamily: T.fontBody, fontStyle: "italic" }}>{l.whyGood}</p>}
+                        </div>
+                        {l.website && (
+                          <a href={l.website} target="_blank" rel="noopener noreferrer"
+                            style={{ fontFamily: T.fontMono, fontSize: "11px", color: T.blueLight, textDecoration: "none", flexShrink: 0, padding: "4px 10px", border: `1px solid ${T.blue}40`, borderRadius: "6px", backgroundColor: T.blueBg }}>
+                            Visit →
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            </div>{/* /dark results panel */}
           </div>
         )}
       </main>
