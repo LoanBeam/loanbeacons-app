@@ -253,6 +253,8 @@ export default function QualifyingIntel() {
   const [scenario,  setScenario]  = useState(null);
   const [loading,   setLoading]   = useState(!!scenarioId);
   const [scenarios, setScenarios] = useState([]);
+  const [search,    setSearch]    = useState('');
+  const [showAll,   setShowAll]   = useState(false);
 
   // Income
   const [incomes,            setIncomes]            = useState([{ id: 1, type: 'w2_salary', gross: '', note: '', nonTaxableConfirmed: false }]);
@@ -395,32 +397,148 @@ export default function QualifyingIntel() {
     </div>
   );
 
-  if (!scenarioId) return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-2xl mx-auto px-4">
-        <button onClick={() => navigate('/')} className="text-blue-600 hover:text-blue-700 mb-4 flex items-center gap-2 text-sm">← Back to Dashboard</button>
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-black text-sm">02</div>
-          <div><h1 className="text-2xl font-bold text-gray-900">Qualifying Intelligence™</h1><p className="text-sm text-gray-500">Stage 1 — Pre-Structure & Initial Analysis</p></div>
+  if (!scenarioId) {
+    const query = search.toLowerCase().trim();
+    const sorted = [...scenarios].sort((a, b) => {
+      const tA = a.updatedAt?.seconds || a.createdAt?.seconds || 0;
+      const tB = b.updatedAt?.seconds || b.createdAt?.seconds || 0;
+      return tB - tA;
+    });
+    const filtered = query
+      ? sorted.filter(s => {
+          const name = (s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim()).toLowerCase();
+          return name.includes(query);
+        })
+      : sorted;
+    const displayed = query ? filtered : showAll ? filtered : filtered.slice(0, 5);
+    const hasMore   = !query && !showAll && filtered.length > 5;
+
+    return (
+      <div className="min-h-screen bg-slate-50">
+        {/* ── Hero Banner ── */}
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-10">
+          <div className="max-w-2xl mx-auto">
+            <button onClick={() => navigate('/')}
+              className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">
+              ← Back to Dashboard
+            </button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">02</div>
+              <div>
+                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 1 — Pre-Structure & Initial Analysis</span>
+                <h1 className="text-2xl font-bold text-white mt-0.5">Qualifying Intelligence™</h1>
+              </div>
+            </div>
+            <p className="text-indigo-300 text-sm leading-relaxed mb-5">
+              Analyze borrower DTI, income qualification, and program eligibility across FHA, Conventional, VA, USDA, HomeReady, and Home Possible — with built-in student loan payment engine and compensating factor documentation.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {['DTI Analysis', 'Income Gross-Up', 'Student Loan Engine', 'Program Fit Matrix', 'Compensating Factors', 'Doc Checklist'].map(tag => (
+                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-indigo-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="font-bold text-gray-800 mb-1">Select a Scenario</h2>
-          <p className="text-sm text-gray-500 mb-4">Choose a scenario to run qualifying analysis</p>
-          {scenarios.length === 0
-            ? <p className="text-gray-400 text-sm">No scenarios found. Create one in Scenario Creator first.</p>
-            : <div className="space-y-2">
-                {scenarios.map(s => (
-                  <button key={s.id} onClick={() => navigate(`/qualifying-intel?scenarioId=${s.id}`)}
-                    className="w-full text-left p-4 border border-gray-200 rounded-xl hover:border-indigo-400 hover:bg-indigo-50 transition-all">
-                    <div className="font-semibold text-gray-800">{s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || 'Unnamed'}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">${parseFloat(s.loanAmount || 0).toLocaleString()} · {s.loanType || '--'} · Credit: {s.creditScore || '--'}</div>
+
+        {/* ── Scenario Selector ── */}
+        <div className="max-w-2xl mx-auto px-6 py-8">
+          <div className="mb-5">
+            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">Select a Scenario</h2>
+            <p className="text-xs text-slate-400">Search by name or pick from your most recent files.</p>
+          </div>
+
+          {/* Search Bar */}
+          <div className="relative mb-4">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+            <input
+              type="text"
+              value={search}
+              onChange={e => { setSearch(e.target.value); setShowAll(false); }}
+              placeholder="Search borrower name…"
+              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition-all"
+            />
+            {search && (
+              <button onClick={() => setSearch('')}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>
+            )}
+          </div>
+
+          {/* Scenario Cards */}
+          {scenarios.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-3xl mb-3">📂</p>
+              <p className="text-sm font-semibold text-slate-600">No scenarios found</p>
+              <p className="text-xs text-slate-400 mt-1">Create one in Scenario Creator first.</p>
+              <button onClick={() => navigate('/scenario-creator')}
+                className="mt-4 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline">
+                → Go to Scenario Creator
+              </button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-2xl mb-2">🔍</p>
+              <p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p>
+              <button onClick={() => setSearch('')} className="mt-2 text-xs text-indigo-500 hover:underline">Clear search</button>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {!query && !showAll && (
+                <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-1">
+                  Recently Updated
+                </p>
+              )}
+              {displayed.map(s => {
+                const name    = s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || 'Unnamed Scenario';
+                const amount  = parseFloat(s.loanAmount || 0);
+                const program = s.loanType || null;
+                const credit  = s.creditScore || null;
+                const stage   = s.stage || null;
+                return (
+                  <button key={s.id}
+                    onClick={() => navigate(`/qualifying-intel?scenarioId=${s.id}`)}
+                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-indigo-300 hover:shadow-md hover:bg-indigo-50/30 transition-all group">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-indigo-700 transition-colors">{name}</div>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                          {amount > 0 && (
+                            <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>
+                          )}
+                          {program && (
+                            <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{program}</span>
+                          )}
+                          {credit && (
+                            <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 px-2 py-0.5 rounded-full font-mono">FICO {credit}</span>
+                          )}
+                          {stage && (
+                            <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full font-medium">{stage}</span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-slate-300 group-hover:text-indigo-400 text-lg transition-colors shrink-0">→</span>
+                    </div>
                   </button>
-                ))}
-              </div>}
+                );
+              })}
+
+              {hasMore && (
+                <button onClick={() => setShowAll(true)}
+                  className="w-full text-center text-xs font-bold text-indigo-500 hover:text-indigo-700 py-3 border border-dashed border-indigo-200 rounded-2xl hover:bg-indigo-50 transition-all">
+                  View all {filtered.length} scenarios
+                </button>
+              )}
+              {showAll && filtered.length > 5 && (
+                <button onClick={() => setShowAll(false)}
+                  className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">
+                  ↑ Show less
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   const borrower        = scenario ? `${scenario.firstName || ''} ${scenario.lastName || ''}`.trim() || scenario.borrowerName : null;
   const coBorrowerNames = scenario?.coBorrowers?.filter(cb => cb.firstName || cb.lastName).map(cb => `${cb.firstName || ''} ${cb.lastName || ''}`.trim()) || [];

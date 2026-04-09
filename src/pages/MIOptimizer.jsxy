@@ -649,6 +649,7 @@ function MIOptimizer() {
                 </div>
               </div>
             )}
+          </>
         </div>
         <CanonicalSequenceBar currentModuleKey="MI_OPTIMIZER" scenarioId={scenarioId} recordId={savedRecordId} />
       </div>

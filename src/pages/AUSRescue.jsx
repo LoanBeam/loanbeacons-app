@@ -108,7 +108,7 @@ export default function AUSRescue() {
   const [showAllFindings, setShowAllFindings] = useState(false);
   const [profile, setProfile] = useState({ creditScore:'', dti:'', frontEndDTI:'', reserves:'', downPayment:'', interestRate:'', isVeteran:false, isRuralProperty:false, isSelfEmployed:false, hasRecentBankruptcy:false, inCensusEligibleTract:false, exceedsIncomeLimit:false, isRehabProperty:false, isInvestmentProperty:false, isJumboLoan:false, isHighAssetBorrower:false });
   const [selectedCats, setSelectedCats]       = useState([]);
-  const [activeTab, setActiveTab]             = useState('strategies');
+  const [activeTab, setActiveTab]             = useState('dealadvisor');
   const [flaggedDuplicates, setFlaggedDuplicates] = useState([]);
   const [auditLog, setAuditLog]               = useState([]);
   const [expandedId, setExpandedId]           = useState(null);
@@ -124,6 +124,11 @@ export default function AUSRescue() {
   const [sonnetLoading, setSonnetLoading]       = useState(false);
   const [sonnetError, setSonnetError]           = useState('');
   const [enrichedParseData, setEnrichedParseData] = useState(null);
+  const [matchedScenario, setMatchedScenario]     = useState(null);   // auto-matched from PDF
+  const [matchConfirmed, setMatchConfirmed]       = useState(false);  // LO confirmed the match
+  const [matchWriting, setMatchWriting]           = useState(false);  // writing back to Firestore
+  const [matchWritten, setMatchWritten]           = useState(false);  // write-back complete
+  const [showScenarioPicker, setShowScenarioPicker] = useState(false); // manual override picker
 
   const { reportFindings } = useDecisionRecord(selectedScenarioId);
   const [savedRecordId, setSavedRecordId]     = useState(null);
@@ -176,6 +181,67 @@ export default function AUSRescue() {
     if (sc) {
       setProfile(prev => ({ ...prev, creditScore: sc.creditScore || '', dti: sc.backDti || sc.dti || '', downPayment: '' }));
       addLog(`Loaded: ${sc.scenarioName || id}`);
+    }
+  };
+
+  // ── Write AUS findings back to scenario in Firestore ─────────────────────
+  const writeAUSFindingsToScenario = async (scenarioId, parsed, finding) => {
+    if (!scenarioId) return;
+    setMatchWriting(true);
+    try {
+      await updateDoc(doc(db, 'scenarios', scenarioId), {
+        ausLastFinding:      finding || '',
+        ausLastRunAt:        serverTimestamp(),
+        ausSubmissionNumber: parsed.submissionNumber || null,
+        ausCaseFileId:       parsed.caseFileId || null,
+        ausEngine:           parsed.ausEngine || null,
+        ausPrimaryBlocker:   parsed.ineligibilityReasons?.[0] || null,
+        ausDTI:              parsed.backEndDTI || null,
+        ausLTV:              parsed.ltv || null,
+        ausCreditScore:      parsed.creditScore || null,
+        ausLoanPurpose:      parsed.loanPurpose || null,
+        ausRefiPurpose:      parsed.refiPurpose || null,
+        ausDUMessageIds:     parsed.duMessageIds || [],
+        // Also update core scenario fields if they were empty
+        creditScore:         parsed.creditScore || null,
+        backDti:             parsed.backEndDTI || null,
+        frontDti:            parsed.frontEndDTI || null,
+        interestRate:        (parsed.noteRate || parsed.interestRate) || null,
+      });
+      setMatchWritten(true);
+      addLog(`✓ AUS findings written to scenario`);
+    } catch (err) {
+      console.error('AUS write-back failed:', err);
+      addLog(`Write-back failed: ${err.message}`);
+    } finally {
+      setMatchWriting(false);
+    }
+  };
+
+  // ── Confirm matched scenario and write findings ───────────────────────────
+  const handleConfirmMatch = () => {
+    setMatchConfirmed(true);
+    setShowScenarioPicker(false);
+    if (matchedScenario && enrichedParseData) {
+      writeAUSFindingsToScenario(matchedScenario.id, enrichedParseData, currentFinding);
+    }
+  };
+
+  const handleRejectMatch = () => {
+    setMatchedScenario(null);
+    setMatchConfirmed(false);
+    setShowScenarioPicker(true);
+  };
+
+  const handleManualScenarioSelect = id => {
+    const sc = scenarios.find(s => s.id === id);
+    if (!sc) return;
+    setMatchedScenario(sc);
+    setSelectedScenarioId(sc.id);
+    setMatchConfirmed(true);
+    setShowScenarioPicker(false);
+    if (enrichedParseData) {
+      writeAUSFindingsToScenario(sc.id, enrichedParseData, currentFinding);
     }
   };
 
@@ -462,6 +528,32 @@ CRITICAL RULES:
       // Store full enriched data for DealAdvisor
       setEnrichedParseData(parsed);
 
+      // ── Auto-match borrower to scenario ──────────────────────────────────
+      // If we already have a scenario from URL, use it directly
+      if (scenarioIdFromUrl && scenarioDoc) {
+        setMatchedScenario(scenarioDoc);
+        setMatchConfirmed(true);
+        writeAUSFindingsToScenario(scenarioDoc.id, parsed, normalizedFinding);
+      } else {
+        // Try to match by borrower name from parsed PDF
+        const parsedName = (parsed.borrowerName || '').toLowerCase().trim();
+        if (parsedName && scenarios.length > 0) {
+          const match = scenarios.find(s => {
+            const scenName = `${s.firstName || ''} ${s.lastName || ''}`.toLowerCase().trim();
+            const scenAlt  = (s.borrowerName || s.scenarioName || '').toLowerCase().trim();
+            return parsedName.includes(scenName.split(' ')[0]) ||
+                   scenName.includes(parsedName.split(' ')[0]) ||
+                   parsedName === scenName ||
+                   parsedName === scenAlt;
+          });
+          if (match) {
+            setMatchedScenario(match);
+            setSelectedScenarioId(match.id);
+            setMatchConfirmed(false); // show confirm UI
+          }
+        }
+      }
+
       const fieldsFound = [
         normalizedFinding && 'Finding',
         parsed.loanPurpose && `Loan Purpose: ${parsed.loanPurpose}`,
@@ -522,67 +614,74 @@ CRITICAL RULES:
   const bDTI  = scenarioDoc?.backDti || profile.dti;
   const bPrice = scenarioDoc?.propertyValue;
 
+
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* Decision Record Banner */}
       {selectedScenarioId && <DecisionRecordBanner scenarioId={selectedScenarioId} moduleKey="AUS_RESCUE" />}
 
-      {/* ── PAGE HEADER ──────────────────────────────────────────────────── */}
+      {/* ── PAGE HEADER ── */}
       <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white px-6 py-5">
         <div className="max-w-7xl mx-auto">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex items-center gap-3 mb-1">
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase">Stage 2 — Lender Fit</span>
-                <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">Module 8</span>
-                <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">v2.5</span>
-              </div>
-            </div>
+          <div className="flex items-center gap-3 mb-2">
+            <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase">Stage 2 — Lender Fit</span>
+            <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">Module 8</span>
+            <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">v3.0</span>
           </div>
-          <h1 className="text-2xl font-bold">AUS Rescue™</h1>
-          <p className="text-indigo-200 text-sm mt-0.5">Rule Engine · 11 Programs · 23 Strategies · Path Scoring Engine · Program Migration Engine</p>
-
-          <div className="mt-4 flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <label className="text-slate-300 text-sm">Scenario:</label>
-              {loading ? <span className="text-slate-400 text-sm">Loading…</span> : (
-                <select value={selectedScenarioId} onChange={e => handleScenarioSelect(e.target.value)} className="bg-slate-800 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 min-w-[200px]">
-                  <option value="">— Select Scenario —</option>
-                  {scenarios.map(s => <option key={s.id} value={s.id}>{s.scenarioName || s.borrowerName || s.id.slice(0, 8)}</option>)}
+          <h1 className="text-2xl font-bold" style={{ fontFamily: "'DM Serif Display', serif" }}>AUS Rescue™</h1>
+          <p className="text-indigo-200 text-sm mt-0.5">Upload your DU or LP findings — Deal Advisor™ takes it from there.</p>
+          <div className="mt-4 flex items-center gap-3 flex-wrap">
+            {/* Show matched scenario or prompt to upload */}
+            {matchedScenario && matchConfirmed ? (
+              <div className="flex items-center gap-3 bg-emerald-900/40 border border-emerald-600/40 rounded-xl px-4 py-2">
+                <span className="text-emerald-400 text-sm">✓</span>
+                <div>
+                  <p className="text-white text-sm font-semibold">{`${matchedScenario.firstName || ''} ${matchedScenario.lastName || ''}`.trim() || matchedScenario.scenarioName}</p>
+                  <p className="text-emerald-300 text-xs">{matchWriting ? 'Saving findings to scenario…' : matchWritten ? 'AUS findings saved to scenario' : 'Matched scenario'}</p>
+                </div>
+                <button onClick={() => setShowScenarioPicker(true)} className="text-slate-400 hover:text-slate-200 text-xs ml-2 underline">Change</button>
+              </div>
+            ) : matchedScenario && !matchConfirmed ? (
+              <div className="flex items-center gap-3 bg-amber-900/40 border border-amber-600/40 rounded-xl px-4 py-2 flex-wrap">
+                <span className="text-amber-400 text-sm">🔍</span>
+                <div>
+                  <p className="text-white text-sm font-semibold">Matched: {`${matchedScenario.firstName || ''} ${matchedScenario.lastName || ''}`.trim() || matchedScenario.scenarioName}</p>
+                  <p className="text-amber-300 text-xs">Is this the correct scenario?</p>
+                </div>
+                <div className="flex gap-2 ml-2">
+                  <button onClick={handleConfirmMatch} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">✓ Yes, save findings</button>
+                  <button onClick={handleRejectMatch} className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">✗ Wrong scenario</button>
+                </div>
+              </div>
+            ) : showScenarioPicker ? (
+              <div className="flex items-center gap-2">
+                <select onChange={e => handleManualScenarioSelect(e.target.value)} defaultValue="" className="bg-slate-800 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 min-w-[220px]">
+                  <option value="" disabled>— Select correct scenario —</option>
+                  {scenarios.map(s => <option key={s.id} value={s.id}>{`${s.firstName || ''} ${s.lastName || ''}`.trim() || s.scenarioName || s.id.slice(0, 8)}</option>)}
                 </select>
-              )}
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <label className="text-slate-300 text-sm">Program:</label>
-              {Object.entries(PROGRAMS).map(([key, p]) => {
-                const hasFinding = !!programFindings[key];
-                return (
-                  <button key={key} onClick={() => { setProgram(key); setCurrentFinding(programFindings[key] || ''); addLog(`Program: ${p.label}`); }} className={`relative px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${program === key ? 'bg-white text-slate-900 border-white shadow-md' : 'border-slate-600 text-slate-300 hover:border-slate-400'}`}>
-                    {p.label}
-                    {hasFinding && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-indigo-400" title="Finding entered" />}
-                  </button>
-                );
-              })}
-            </div>
+                <button onClick={() => setShowScenarioPicker(false)} className="text-slate-400 hover:text-slate-200 text-xs">Cancel</button>
+              </div>
+            ) : (
+              <p className="text-slate-400 text-sm">Upload a DU or LP PDF above — borrower auto-matches to scenario</p>
+            )}
           </div>
         </div>
       </div>
 
-      {/* ── BORROWER INFO BANNER ─────────────────────────────────────────── */}
+      {/* ── BORROWER BANNER ── */}
       {(bName || bAddr || bFico) && (
         <div className="bg-[#1B3A6B] px-6 py-3">
           <div className="max-w-7xl mx-auto">
             <p className="text-[11px] font-semibold text-blue-300 uppercase tracking-widest mb-1">Borrower Scenario — AUS Rescue™</p>
             <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
-              {bName && <span className="text-white font-bold text-base">{bName}</span>}
-              {bAddr && <span className="text-blue-200 text-sm">{bAddr}</span>}
+              {bName  && <span className="text-white font-bold text-base">{bName}</span>}
+              {bAddr  && <span className="text-blue-200 text-sm">{bAddr}</span>}
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-blue-100">
-                {bFico   && <span>FICO <strong className="text-white">{bFico}</strong></span>}
-                {bLoan   && <span>Loan <strong className="text-white">{bLoan}</strong></span>}
-                {bPrice  && <span>Value <strong className="text-white">${Number(bPrice).toLocaleString()}</strong></span>}
-                {bDTI    && <span>DTI <strong className="text-white">{bDTI}%</strong></span>}
+                {bFico  && <span>FICO <strong className="text-white">{bFico}</strong></span>}
+                {bLoan  && <span>Loan <strong className="text-white">{bLoan}</strong></span>}
+                {bPrice && <span>Value <strong className="text-white">${Number(bPrice).toLocaleString()}</strong></span>}
+                {bDTI   && <span>DTI <strong className="text-white">{bDTI}%</strong></span>}
               </div>
             </div>
           </div>
@@ -592,89 +691,67 @@ CRITICAL RULES:
       <div className="max-w-7xl mx-auto px-4 py-6 pb-24">
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
 
-          {/* ── LEFT: INPUT + STATUS ────────────────────────────────────── */}
-          <div className="xl:col-span-1 space-y-5">
+          {/* ── LEFT SIDEBAR ── */}
+          <div className="xl:col-span-1 space-y-4">
 
-            {/* Step 1: Upload / Profile */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-              <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Step 1 — Loan Profile & AUS Finding</h2>
-
-              {/* PDF Upload */}
-              <div className={`border-2 border-dashed rounded-xl p-4 transition-all ${isParsing ? 'border-indigo-400 bg-indigo-50/40' : parseResult ? 'border-emerald-400 bg-emerald-50/40' : 'border-slate-200 hover:border-indigo-300 bg-slate-50 hover:bg-indigo-50/20'}`}>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-bold text-slate-700">{isParsing ? 'Parsing AUS findings…' : parseResult ? `Parsed: ${parseResult.fileName}` : '📑 Upload DU or LPA Findings PDF'}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">{isParsing ? 'AI is reading the document and auto-filling fields…' : parseResult ? `Fields extracted: ${parseResult.fieldsFound.join(' · ')}` : 'Start here — upload your AUS findings PDF and fields will auto-populate below'}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isParsing && <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />}
-                    {!isParsing && (<label className="cursor-pointer"><input type="file" accept="application/pdf" onChange={handleFileUpload} className="hidden" /><span className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-sm">📄 {parseResult ? 'Upload New PDF' : 'Upload PDF'}</span></label>)}
-                    {parseResult && !isParsing && (<button onClick={() => setParseResult(null)} className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 rounded border border-slate-200">Clear</button>)}
-                  </div>
+            {/* PDF Upload */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <div className="bg-slate-900 px-5 py-4">
+                <p className="text-white font-bold text-sm" style={{ fontFamily: "'DM Serif Display', serif" }}>Step 1 — Upload Findings</p>
+                <p className="text-slate-400 text-xs mt-0.5">DU or LP PDF · fields auto-populate</p>
+              </div>
+              <div className="p-4">
+                <div className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${isParsing ? 'border-indigo-400 bg-indigo-50/40' : parseResult ? 'border-emerald-400 bg-emerald-50/40' : 'border-slate-200 hover:border-indigo-300 bg-slate-50'}`}>
+                  {isParsing ? (
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-sm text-indigo-600 font-semibold">Reading findings…</span>
+                    </div>
+                  ) : parseResult ? (
+                    <div>
+                      <p className="text-sm font-bold text-emerald-700">✓ {parseResult.fileName}</p>
+                      <p className="text-xs text-emerald-600 mt-1">{parseResult.fieldsFound.slice(0, 4).join(' · ')}</p>
+                      {currentFinding && (
+                        <p className={`text-xs font-black mt-2 ${['Accept/Eligible','Approve/Eligible','Accept'].includes(currentFinding) ? 'text-emerald-600' : currentFinding.includes('Ineligible') ? 'text-red-600' : 'text-amber-600'}`}>
+                          {currentFinding.includes('Ineligible') ? '🚫' : '✅'} {currentFinding}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-2xl mb-1">📑</p>
+                      <p className="text-sm font-semibold text-slate-600">Upload DU or LPA PDF</p>
+                      <p className="text-xs text-slate-400 mt-0.5">Fields auto-fill · Deal Advisor activates</p>
+                    </div>
+                  )}
                 </div>
-                {parseResult?.riskFactors?.length > 0 && (
-                  <div className="mt-3 border-t border-emerald-200 pt-3">
-                    <p className="text-xs font-bold text-emerald-700 mb-1.5">Risk factors found in findings:</p>
-                    <div className="flex flex-wrap gap-1.5">{parseResult.riskFactors.map((r, i) => (<span key={i} className="text-xs bg-white border border-emerald-200 text-emerald-700 px-2 py-0.5 rounded-full">⚠ {r}</span>))}</div>
+                <div className="flex gap-2 mt-3">
+                  {!isParsing && (
+                    <label className="flex-1 cursor-pointer">
+                      <input type="file" accept="application/pdf" onChange={handleFileUpload} className="hidden" />
+                      <span className="flex items-center justify-center gap-1.5 w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-colors shadow-sm">
+                        📄 {parseResult ? 'Upload New PDF' : 'Upload PDF'}
+                      </span>
+                    </label>
+                  )}
+                  {parseResult && !isParsing && (
+                    <button onClick={() => { setParseResult(null); setEnrichedParseData(null); }} className="text-xs text-slate-400 hover:text-slate-600 px-3 py-2 rounded-xl border border-slate-200">Clear</button>
+                  )}
+                </div>
+                {parseError && (
+                  <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+                    <p className="text-xs text-red-600">{parseError}</p>
+                    <button onClick={() => setParseError('')} className="text-red-400 text-xs">✕</button>
                   </div>
                 )}
-                {parseError && (<div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center justify-between gap-2"><p className="text-xs text-red-600">{parseError}</p><button onClick={() => setParseError('')} className="text-red-400 hover:text-red-600 text-xs shrink-0">✕</button></div>)}
               </div>
-
-              <p className="text-xs text-slate-400 mt-1.5 ml-1">Or fill in the fields manually below ↓</p>
-
-              {/* Compensating Factors Header */}
-              <div className="mb-3 mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                <p className="text-xs font-bold text-amber-800 uppercase tracking-wide">⚡ Compensating Factors & Loan Profile</p>
-                <p className="text-xs text-amber-700 mt-0.5">These fields power the Rule Engine and Path Scoring. More data = better program rankings and stronger strategy recommendations.</p>
-              </div>
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                {[{k:'creditScore',l:'Credit Score',ph:'720',hint:null},{k:'dti',l:'Back-End DTI %',ph:'47',hint:null},{k:'frontEndDTI',l:'Front-End DTI %',ph:'32',hint:null},{k:'reserves',l:'Reserves (months)',ph:'5',hint:'Months of PITI borrower has saved'},{k:'downPayment',l:'Down Payment %',ph:'7.5',hint:null},{k:'interestRate',l:'Interest Rate %',ph:'7.250',hint:null}].map(f => (
-                  <div key={f.k}>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1">{f.l}</label>
-                    <input type="text" inputMode="decimal" placeholder={f.ph} value={profile[f.k]} onChange={e => setProfile(prev => ({ ...prev, [f.k]: e.target.value }))} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 focus:ring-2 focus:ring-indigo-300 focus:border-transparent" />
-                    {f.hint && <p className="text-[10px] text-slate-400 mt-0.5 italic">{f.hint}</p>}
-                  </div>
-                ))}
-              </div>
-
-              {/* Checkboxes */}
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                {[{k:'isVeteran',l:'Veteran / VA Eligible'},{k:'isRuralProperty',l:'Rural Property (USDA)'},{k:'isSelfEmployed',l:'Self-Employed'},{k:'isRehabProperty',l:'Rehab / Renovation'},{k:'isInvestmentProperty',l:'Investment Property'},{k:'isJumboLoan',l:'Jumbo Loan'},{k:'isHighAssetBorrower',l:'High Asset Borrower'},{k:'inCensusEligibleTract',l:'Low-Income Census Tract'},{k:'hasRecentBankruptcy',l:'Recent Bankruptcy'},{k:'exceedsIncomeLimit',l:'Exceeds Income Limit'}].map(f => (
-                  <label key={f.k} className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={profile[f.k]} onChange={e => setProfile(prev => ({ ...prev, [f.k]: e.target.checked }))} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-300" />
-                    <span className="text-xs text-slate-600">{f.l}</span>
-                  </label>
-                ))}
-              </div>
-
-              {/* AUS Finding — auto-populated from PDF parse, shown read-only */}
-              {currentFinding && (
-                <div className="mt-2 p-3 rounded-lg border border-slate-200 bg-slate-50">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">AUS Finding (from PDF)</p>
-                  <p className={`text-sm font-black ${['Accept/Eligible','Approve/Eligible','Accept'].includes(currentFinding) ? 'text-emerald-600' : currentFinding.includes('Ineligible') ? 'text-red-600' : 'text-amber-600'}`}>
-                    {['Accept/Eligible','Approve/Eligible','Accept'].includes(currentFinding) ? '✅' : currentFinding.includes('Ineligible') ? '🚫' : '⚠️'} {currentFinding}
-                  </p>
-                  <button onClick={() => setFinding('')} className="text-[10px] text-slate-400 hover:text-slate-600 mt-1 underline">Clear</button>
-                </div>
-              )}
-              {!currentFinding && (
-                <div className="mt-2">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">AUS Finding <span className="font-normal text-slate-400">(upload PDF above to auto-populate)</span></p>
-                  <div className="flex flex-wrap gap-2">
-                    {(PROGRAMS[program]?.findings || []).map(f => (
-                      <button key={f} onClick={() => setFinding(f)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${currentFinding === f ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'border-slate-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-600'}`}>{f}</button>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
 
-            {/* Feasibility + Save */}
+            {/* Feasibility Score */}
             {ruleResults && (
-              <div className={`bg-gradient-to-br ${FEAS_STYLE[ruleResults.feasibilityLabel]?.banner || 'from-slate-900 to-slate-800 border-slate-600'} border rounded-xl p-5 text-white shadow-lg`}>
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Fix Feasibility Score</span>
+              <div className={`bg-gradient-to-br ${FEAS_STYLE[ruleResults.feasibilityLabel]?.banner || 'from-slate-900 to-slate-800 border-slate-600'} border rounded-2xl p-5 text-white shadow-lg`}>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Fix Feasibility</span>
                   <span className={`text-xs font-bold px-2 py-1 rounded-full border ${FEAS_STYLE[ruleResults.feasibilityLabel]?.badge}`}>
                     {FEAS_STYLE[ruleResults.feasibilityLabel]?.dot} {ruleResults.feasibilityLabel}
                   </span>
@@ -682,155 +759,119 @@ CRITICAL RULES:
                 <div className="text-4xl font-black mb-1">{ruleResults.feasibilityScore}<span className="text-lg text-slate-400">%</span></div>
                 {ruleResults.primaryBlocker && (
                   <div className="mt-3 p-3 bg-black/20 rounded-lg">
-                    <p className="text-xs font-bold text-slate-300 mb-1">
-                      {isPositive ? 'PRIMARY OPTIMIZATION TARGET' : 'PRIMARY BLOCKER'}
-                    </p>
+                    <p className="text-xs font-bold text-slate-300 mb-1">PRIMARY BLOCKER</p>
                     <p className={`text-sm font-bold ${BLOCKER_COLOR[ruleResults.primaryBlocker.type] || 'text-amber-400'}`}>{ruleResults.primaryBlocker.label}</p>
-                    <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-                      {isPositive
-                        ? `${ruleResults.primaryBlocker.label} is not blocking approval — addressing it will improve pricing tier and program options.`
-                        : ruleResults.primaryBlocker.detail}
-                    </p>
                   </div>
                 )}
-                <button onClick={handleSaveToRecord} disabled={recordSaving || !currentFinding} className="mt-4 w-full bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold text-sm py-2.5 rounded-lg transition-colors">
+                <button onClick={handleSaveToRecord} disabled={recordSaving || !currentFinding} className="mt-4 w-full bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold text-sm py-2.5 rounded-xl transition-colors">
                   {recordSaving ? 'Saving…' : '💾 Save to Decision Record'}
                 </button>
-                {savedRecordId && <p className="text-xs text-emerald-400 mt-2 text-center">✔ Saved to Decision Record</p>}
+                {savedRecordId && <p className="text-xs text-emerald-400 mt-2 text-center">✔ Saved</p>}
               </div>
             )}
 
-            {/* AUS Run Counter — auto-populated from PDF parse */}
-            <AUSRunCounter
-              submissionNumber={submissionNumber}
-              program={program}
-              caseFileId={caseFileId}
-              ausEngine={ausEngineDetected}
-            />
+            {/* AUS Run Counter */}
+            <AUSRunCounter submissionNumber={submissionNumber} program={program} caseFileId={caseFileId} ausEngine={ausEngineDetected} />
 
-            {/* Audit Log */}
-            {auditLog.length > 0 && (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Session Log</p>
-                <div className="space-y-1 max-h-40 overflow-y-auto">
-                  {auditLog.map((l, i) => <p key={i} className="text-xs text-slate-500"><span className="text-slate-400">{l.time}</span> {l.msg}</p>)}
+            {/* Edit Profile — collapsed */}
+            <details className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden group">
+              <summary className="px-5 py-4 flex items-center justify-between cursor-pointer select-none list-none">
+                <div>
+                  <p className="text-sm font-bold text-slate-700">Edit Loan Profile</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Override auto-populated fields</p>
                 </div>
-              </div>
-            )}
-          </div>
-
-          {/* ── RIGHT: RESULTS ───────────────────────────────────────────── */}
-          <div className="xl:col-span-3 space-y-5">
-
-            {/* Tab Nav */}
-            <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-0">
-              {[{k:'strategies',l:'🎯 Strategies'},{k:'programs',l:'📊 Program Comparison'},{k:'migration',l:'🔄 Migration Engine'},{k:'whatif',l:'⚡ What-If Simulator'},{k:'duplicates',l:'🔍 Duplicate Debt Detector'},{k:'dealadvisor',l:'⚡ Deal Advisor™'}].map(t => (
-                <button key={t.k} onClick={() => setActiveTab(t.k)} className={`px-4 py-2 text-sm font-semibold rounded-t-lg border-b-2 transition-all ${activeTab === t.k ? 'border-indigo-500 text-indigo-600 bg-indigo-50' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{t.l}</button>
-              ))}
-            </div>
-
-            {/* ── STRATEGIES TAB ───────────────────────────────────────── */}
-            {activeTab === 'strategies' && (
-              <div>
-                {currentFinding && (
-                  <div className={`rounded-xl p-4 mb-4 border ${isPositive ? 'bg-emerald-50 border-emerald-200' : needsRescue ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{isPositive ? '✅' : needsRescue ? '🚨' : '🔎'}</span>
-                      <div>
-                        <p className={`text-sm font-bold ${isPositive ? 'text-emerald-800' : needsRescue ? 'text-red-800' : 'text-gray-700'}`}>
-                          {isPositive
-                            ? `${PROGRAMS[program]?.label} — Already Approved (${currentFinding})`
-                            : needsRescue
-                              ? `${PROGRAMS[program]?.label} — Rescue Required (${currentFinding})`
-                              : 'Select an AUS finding to activate strategies'}
-                        </p>
-                        <p className={`text-xs mt-0.5 ${isPositive ? 'text-emerald-700' : needsRescue ? 'text-red-600' : 'text-gray-500'}`}>
-                          {isPositive
-                            ? 'Loan is approved on this program. Strategies below focus on optimization — improving pricing, reserves, and long-term borrower position.'
-                            : needsRescue
-                              ? 'Loan needs rescue. Strategies below are ranked by approval lift probability for this program.'
-                              : 'Strategies will rank by approval lift once a finding is selected.'}
-                        </p>
-                      </div>
+                <span className="text-slate-400 text-xs">▼</span>
+              </summary>
+              <div className="px-5 pb-5 border-t border-slate-100">
+                <div className="grid grid-cols-2 gap-3 mt-4">
+                  {[{k:'creditScore',l:'Credit Score',ph:'720'},{k:'dti',l:'Back-End DTI %',ph:'47'},{k:'frontEndDTI',l:'Front DTI %',ph:'32'},{k:'reserves',l:'Reserves (mo)',ph:'5'},{k:'downPayment',l:'Down Payment %',ph:'7.5'},{k:'interestRate',l:'Interest Rate %',ph:'7.250'}].map(f => (
+                    <div key={f.k}>
+                      <label className="block text-xs font-semibold text-slate-400 mb-1">{f.l}</label>
+                      <input type="text" inputMode="decimal" placeholder={f.ph} value={profile[f.k]} onChange={e => setProfile(prev => ({ ...prev, [f.k]: e.target.value }))} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 focus:ring-2 focus:ring-indigo-300 focus:border-transparent" />
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-4">
+                  {[{k:'isVeteran',l:'Veteran / VA'},{k:'isRuralProperty',l:'Rural (USDA)'},{k:'isSelfEmployed',l:'Self-Employed'},{k:'isRehabProperty',l:'Rehab / Reno'},{k:'isInvestmentProperty',l:'Investment'},{k:'isJumboLoan',l:'Jumbo Loan'},{k:'isHighAssetBorrower',l:'High Asset'},{k:'inCensusEligibleTract',l:'Low-Income Tract'},{k:'hasRecentBankruptcy',l:'Bankruptcy'},{k:'exceedsIncomeLimit',l:'Exceeds Income Limit'}].map(f => (
+                    <label key={f.k} className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={profile[f.k]} onChange={e => setProfile(prev => ({ ...prev, [f.k]: e.target.checked }))} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-300" />
+                      <span className="text-xs text-slate-600">{f.l}</span>
+                    </label>
+                  ))}
+                </div>
+                {!currentFinding && (
+                  <div className="mt-4">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Manual AUS Finding</p>
+                    <div className="flex flex-wrap gap-2">
+                      {(PROGRAMS[program]?.findings || []).map(f => (
+                        <button key={f} onClick={() => setFinding(f)} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 text-slate-600 hover:border-indigo-300 transition-all">{f}</button>
+                      ))}
                     </div>
                   </div>
                 )}
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {Object.entries(CATS).map(([key, cat]) => (
-                    <button key={key} onClick={() => toggleCat(key)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${selectedCats.includes(key) ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-600 hover:border-indigo-300'}`}>
-                      <span>{cat.icon}</span>{cat.label}
-                    </button>
-                  ))}
-                  {selectedCats.length > 0 && <button onClick={() => setSelectedCats([])} className="px-3 py-1.5 rounded-full text-xs font-semibold border border-gray-200 text-gray-400 hover:border-red-300 hover:text-red-400">✕ Clear</button>}
-                </div>
-                {relevantStrategies.length === 0 ? (
-                  <div className="bg-white rounded-xl p-10 text-center text-gray-400 text-sm border border-gray-100">No strategies match selected filters.</div>
-                ) : (
-                  <div className="space-y-3">
-                    {(showAllFindings ? relevantStrategies : relevantStrategies.slice(0, 8)).map(s => {
-                      const prob = s.probability[program] || 0;
-                      const isExpanded = expandedId === s.id;
-                      return (
-                        <div key={s.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:border-indigo-200 transition-all">
-                          <div className="p-4 cursor-pointer" onClick={() => setExpandedId(isExpanded ? null : s.id)}>
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-start gap-3 flex-1 min-w-0">
-                                <span className="text-xl flex-shrink-0 mt-0.5">{s.icon}</span>
-                                <div className="min-w-0">
-                                  <div className="flex flex-wrap items-center gap-2 mb-1">
-                                    <h3 className="text-sm font-bold text-gray-900">{s.title}</h3>
-                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${IMPACT_BADGE[s.impact]}`}>{s.impact.toUpperCase()}</span>
-                                    {s.programWarning && <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-medium">⚠️ {s.programWarning}</span>}
-                                  </div>
-                                  <div className="flex flex-wrap gap-2 text-xs text-gray-500">
-                                    <span>💰 {s.cost}</span>
-                                    <span>⏱ {s.timeline}</span>
-                                    <span>⚡ {s.risk} risk</span>
-                                    <span className="text-gray-400 italic">{s.bestFor}</span>
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="flex-shrink-0 text-right">
-                                <div className={`text-xl font-black ${pColor(prob)}`}>{prob}%</div>
-                                <div className="text-[10px] text-gray-400">approval lift</div>
-                                <div className="w-16 h-1.5 bg-gray-100 rounded-full mt-1">
-                                  <div className={`h-full rounded-full ${pBar(prob)}`} style={{ width: `${prob}%` }} />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                          {isExpanded && (
-                            <div className="px-4 pb-4 pt-0 border-t border-gray-100">
-                              <p className="text-xs text-gray-600 leading-relaxed mt-3">{s.detail}</p>
-                              <div className="mt-3 p-3 bg-indigo-50 rounded-lg">
-                                <p className="text-xs font-bold text-indigo-700">Best for: <span className="font-normal">{s.bestFor}</span></p>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                    {relevantStrategies.length > 8 && (
-                      <button onClick={() => setShowAllFindings(v => !v)} className="w-full py-2.5 text-sm font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded-xl hover:border-indigo-300 transition-all bg-white">
-                        {showAllFindings ? '▲ Show Less' : `▼ Show All ${relevantStrategies.length} Strategies`}
-                      </button>
-                    )}
+                {currentFinding && (
+                  <div className="mt-4 p-3 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
+                    <p className={`text-sm font-black ${currentFinding.includes('Ineligible') ? 'text-red-600' : 'text-emerald-600'}`}>
+                      {currentFinding.includes('Ineligible') ? '🚫' : '✅'} {currentFinding}
+                    </p>
+                    <button onClick={() => setFinding('')} className="text-[10px] text-slate-400 hover:text-slate-600 underline">Clear</button>
                   </div>
                 )}
-                {ruleResults && (
-                  <button onClick={generateNotes} className="mt-4 w-full py-2.5 text-sm font-semibold text-slate-600 hover:text-slate-800 border border-slate-200 rounded-xl hover:border-slate-300 transition-all bg-white">
-                    📋 Copy LO Notes to Clipboard
-                  </button>
-                )}
               </div>
+            </details>
+
+          </div>
+
+          {/* ── MAIN CONTENT ── */}
+          <div className="xl:col-span-3 space-y-5">
+
+            {/* Tabs — Deal Advisor first */}
+            <div className="flex flex-wrap gap-2 border-b border-gray-200 pb-0">
+              {[
+                {k:'dealadvisor', l:'⚡ Deal Advisor™', primary: true},
+                {k:'programs',   l:'📊 Program Comparison'},
+                {k:'migration',  l:'🔄 Migration Engine'},
+                {k:'duplicates', l:'🔍 Duplicate Detector'},
+                {k:'strategies', l:'📋 Strategies'},
+              ].map(t => (
+                <button key={t.k} onClick={() => setActiveTab(t.k)}
+                  className={`px-4 py-2 text-sm font-semibold rounded-t-lg border-b-2 transition-all ${
+                    activeTab === t.k
+                      ? t.primary ? 'border-amber-500 text-amber-600 bg-amber-50' : 'border-indigo-500 text-indigo-600 bg-indigo-50'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}>
+                  {t.l}
+                </button>
+              ))}
+            </div>
+
+            {/* ── DEAL ADVISOR™ ── */}
+            {activeTab === 'dealadvisor' && (
+              <DealAdvisor
+                parsedFindings={enrichedParseData}
+                strategies={relevantStrategies
+                  .filter(s => {
+                    const isPrimary = (enrichedParseData?.occupancy || '').toLowerCase().includes('primary') || !profile.isInvestmentProperty;
+                    if (isPrimary && s.title?.toLowerCase().includes('dscr')) return false;
+                    return true;
+                  })
+                  .map(s => {
+                    const isPrimary = (enrichedParseData?.occupancy || '').toLowerCase().includes('primary') || !profile.isInvestmentProperty;
+                    const name = isPrimary ? s.title.replace(/\s*\/\s*DSCR/gi, '').replace(/\s*,\s*DSCR/gi, '').trim() : s.title;
+                    return { name, approvalProbability: s.probability[program] || 0, description: s.detail, cost: s.cost, timeframe: s.timeline, risk: s.risk, category: s.category, bestFor: s.bestFor, programWarning: s.programWarning || null };
+                  })}
+                scenarioId={selectedScenarioId}
+                borrowerName={enrichedParseData?.borrowerName || bName || 'Borrower'}
+                loName="George Chevalier"
+              />
             )}
 
-            {/* ── PROGRAM COMPARISON TAB ───────────────────────────────── */}
+            {/* ── PROGRAM COMPARISON ── */}
             {activeTab === 'programs' && (
               <div>
                 {scoredPrograms.length === 0 ? (
                   <div className="bg-white rounded-xl p-10 text-center border border-gray-100">
-                    <p className="text-gray-400 text-sm">Enter Credit Score and DTI to see program comparison.</p>
+                    <p className="text-gray-400 text-sm">Upload a PDF or enter Credit Score and DTI to see program comparison.</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -840,48 +881,22 @@ CRITICAL RULES:
                       return (
                         <div key={prog.key || idx} className={`bg-white rounded-xl border shadow-sm overflow-hidden ${isTop ? 'border-indigo-300 ring-2 ring-indigo-100' : 'border-gray-100'}`}>
                           <div className="p-4">
-                            <div className="flex items-start justify-between gap-3 mb-3">
+                            <div className="flex items-start justify-between gap-3 mb-2">
                               <div>
                                 <div className="flex items-center gap-2 mb-1">
                                   {isTop && <span className="text-[10px] font-bold bg-indigo-600 text-white px-2 py-0.5 rounded-full">TOP PATH</span>}
                                   <h3 className="text-base font-bold text-gray-900">{prog.label}</h3>
                                   <span className="text-xs text-gray-400">{prog.agency}</span>
                                 </div>
-                                {prog.finding && (
-                                  <span className={`inline-block text-xs font-bold px-2 py-0.5 rounded ${PROGRAMS[prog.key]?.positiveFindings?.includes(prog.finding) ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                                    {prog.finding}
-                                  </span>
-                                )}
+                                {prog.finding && <span className={`inline-block text-xs font-bold px-2 py-0.5 rounded ${PROGRAMS[prog.key]?.positiveFindings?.includes(prog.finding) ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{prog.finding}</span>}
                               </div>
-                              <div className="text-right flex-shrink-0">
-                                <div className={`text-3xl font-black ${pColor(prob)}`}>{prob}%</div>
-                                <div className="text-[10px] text-gray-400">approval probability</div>
+                              <div className="text-right shrink-0">
+                                <div className={`text-2xl font-black ${pColor(prob)}`}>{prob}%</div>
+                                <div className="text-xs text-gray-400">approval</div>
                               </div>
                             </div>
-                            <div className="w-full h-2 bg-gray-100 rounded-full mb-3">
-                              <div className={`h-full rounded-full transition-all ${pBar(prob)}`} style={{ width: `${prob}%` }} />
-                            </div>
-                            <div className="grid grid-cols-3 gap-2 text-xs">
-                              <div className="bg-gray-50 rounded-lg p-2">
-                                <p className="text-gray-400 text-[10px] font-semibold uppercase">Path Score</p>
-                                <p className="font-bold text-gray-800">{prog.pathScore || 0}/100 <span className="text-gray-400 font-normal">({getDimLabel(prog.pathScore || 0)})</span></p>
-                              </div>
-                              <div className="bg-gray-50 rounded-lg p-2">
-                                <p className="text-gray-400 text-[10px] font-semibold uppercase">Likelihood</p>
-                                <p className={`font-bold ${prog.likelihood === 'High' ? 'text-emerald-600' : prog.likelihood === 'Medium' ? 'text-amber-600' : 'text-red-500'}`}>{prog.likelihood || '—'}</p>
-                              </div>
-                              <div className="bg-gray-50 rounded-lg p-2">
-                                <p className="text-gray-400 text-[10px] font-semibold uppercase">Max DTI</p>
-                                <p className="font-bold text-gray-800">{PROGRAMS[prog.key]?.maxDTI || '—'}%</p>
-                              </div>
-                            </div>
-                            {(prog.strengths?.length > 0 || prog.blockers?.length > 0) && (
-                              <div className="mt-3 flex flex-wrap gap-1.5">
-                                {prog.strengths?.slice(0, 3).map((s, i) => <span key={i} className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">✔ {s}</span>)}
-                                {prog.blockers?.slice(0, 2).map((b, i) => <span key={i} className="text-[10px] bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded-full">✗ {b}</span>)}
-                              </div>
-                            )}
-                            {prog.notes && <p className="text-xs text-gray-500 mt-2 italic">{prog.notes}</p>}
+                            {prog.blockers?.length > 0 && <div className="space-y-1 mb-2">{prog.blockers.map((b, i) => <p key={i} className="text-xs text-red-600 flex gap-1"><span>✗</span>{b}</p>)}</div>}
+                            {prog.strengths?.length > 0 && <div className="space-y-1">{prog.strengths.map((s, i) => <p key={i} className="text-xs text-emerald-600 flex gap-1"><span>✓</span>{s}</p>)}</div>}
                           </div>
                         </div>
                       );
@@ -891,136 +906,118 @@ CRITICAL RULES:
               </div>
             )}
 
-            {/* ── MIGRATION ENGINE TAB — ProgramMigrationEngine component ─ */}
+            {/* ── MIGRATION ENGINE ── */}
             {activeTab === 'migration' && (
-              <div className="space-y-4">
-                {/* Sonnet AI Trigger Bar */}
-                <div className="bg-slate-900 rounded-xl border border-slate-700 p-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                   <div>
-                    <p className="text-sm font-bold text-white">✨ Sonnet AI Reasoning Layer</p>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      {sonnetResults
-                        ? `Analysis complete — Feasibility: ${sonnetResults.feasibility} · ${sonnetResults.primaryBlocker}`
-                        : 'Refine rule engine seed probabilities with compensating factor reasoning and AUS behavioral analysis.'}
-                    </p>
-                    {sonnetError && <p className="text-xs text-red-400 mt-1">⚠ {sonnetError}</p>}
+                    <p className="text-xs font-bold text-indigo-600 uppercase tracking-widest">Program Migration Engine</p>
+                    <p className="text-sm text-slate-500 mt-0.5">AI-powered program ranking</p>
                   </div>
-                  <button
-                    onClick={runAISonnetAnalysis}
-                    disabled={sonnetLoading || !pmeProfile?.fico}
-                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-sm"
-                  >
-                    {sonnetLoading
-                      ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Analyzing…</>
-                      : sonnetResults ? '🔁 Re-run Analysis' : '🧠 Run AI Analysis'}
+                  <button onClick={runAISonnetAnalysis} disabled={sonnetLoading || !pmeProfile?.fico} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors">
+                    {sonnetLoading ? <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />Analyzing…</> : sonnetResults ? '🔁 Re-run' : '🧠 Run AI Analysis'}
                   </button>
                 </div>
-                {/* Sonnet Recommendation Banner */}
                 {sonnetResults?.overallRecommendation && (
-                  <div className="bg-indigo-950 border border-indigo-700 rounded-xl p-4">
+                  <div className="bg-indigo-950 border border-indigo-700 rounded-xl p-4 mb-4">
                     <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1">AI Recommendation</p>
                     <p className="text-sm text-indigo-100">{sonnetResults.overallRecommendation}</p>
-                    {sonnetResults.feasibilityRationale && (
-                      <p className="text-xs text-indigo-300 mt-2 italic">{sonnetResults.feasibilityRationale}</p>
-                    )}
                   </div>
                 )}
                 <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-                  <ProgramMigrationEngine
-                    profile={pmeProfile}
-                    sonnetResults={sonnetResults}
-                    sonnetLoading={sonnetLoading}
-                    onSelectProgram={(prog) => addLog(`PME: Selected ${prog.programName} (${prog.approvalProbability}%)`)}
-                  />
+                  <ProgramMigrationEngine profile={pmeProfile} sonnetResults={sonnetResults} sonnetLoading={sonnetLoading} onSelectProgram={(prog) => addLog(`PME: Selected ${prog.programName} (${prog.approvalProbability}%)`)} />
                 </div>
               </div>
             )}
 
-            {/* ── WHAT-IF SIMULATOR TAB ────────────────────────────────── */}
-            {activeTab === 'whatif' && (
-              <WhatIfSimulator
-                baseProfile={pmeProfile}
-                loanAmount={scenarioDoc?.loanAmount || null}
-                interestRate={+profile.interestRate || scenarioDoc?.interestRate || null}
-              />
-            )}
-
-            {/* ── DUPLICATE DEBT DETECTOR TAB ─────────────────────────── */}
+            {/* ── DUPLICATE DETECTOR ── */}
             {activeTab === 'duplicates' && (
               <div className="space-y-3">
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
                   <p className="text-sm font-bold text-amber-800">🔍 Duplicate Debt Detector</p>
-                  <p className="text-xs text-amber-700 mt-1">Flag any debts that may be double-counted in DTI. Each flag includes the fix. Flagged items are included in LO Notes export.</p>
+                  <p className="text-xs text-amber-700 mt-1">Flag debts that may be double-counted in DTI. Each flag includes the fix.</p>
                 </div>
                 {DUPLICATE_FLAGS.map((flag, idx) => (
                   <div key={idx} onClick={() => toggleDup(idx)} className={`bg-white rounded-xl border shadow-sm p-4 cursor-pointer transition-all hover:border-amber-300 ${flaggedDuplicates.includes(idx) ? 'border-amber-400 bg-amber-50/30' : 'border-gray-100'}`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3 flex-1">
-                        <span className={`mt-0.5 w-5 h-5 rounded flex-shrink-0 flex items-center justify-center border-2 ${flaggedDuplicates.includes(idx) ? 'bg-amber-500 border-amber-500 text-white' : 'border-gray-300'}`}>
-                          {flaggedDuplicates.includes(idx) && <span className="text-xs font-black">✔</span>}
-                        </span>
-                        <div>
-                          <p className="text-sm font-bold text-gray-800">{flag.label}</p>
-                          <p className="text-xs text-gray-500 mt-1">{flag.detail}</p>
-                          {flaggedDuplicates.includes(idx) && (
-                            <div className="mt-2 p-2 bg-amber-100 rounded-lg">
-                              <p className="text-xs font-semibold text-amber-800">Fix: <span className="font-normal">{flag.fix}</span></p>
-                            </div>
-                          )}
-                        </div>
+                    <div className="flex items-start gap-3">
+                      <span className={`mt-0.5 w-5 h-5 rounded flex-shrink-0 flex items-center justify-center border-2 ${flaggedDuplicates.includes(idx) ? 'bg-amber-500 border-amber-500 text-white' : 'border-gray-300'}`}>
+                        {flaggedDuplicates.includes(idx) && <span className="text-xs font-black">✔</span>}
+                      </span>
+                      <div>
+                        <p className="text-sm font-bold text-gray-800">{flag.label}</p>
+                        <p className="text-xs text-gray-500 mt-1">{flag.detail}</p>
+                        {flaggedDuplicates.includes(idx) && <div className="mt-2 p-2 bg-amber-100 rounded-lg"><p className="text-xs font-semibold text-amber-800">Fix: <span className="font-normal">{flag.fix}</span></p></div>}
                       </div>
                     </div>
                   </div>
                 ))}
-                {flaggedDuplicates.length > 0 && (
-                  <div className="bg-white rounded-xl border border-amber-200 p-4">
-                    <p className="text-sm font-bold text-amber-800">{flaggedDuplicates.length} flag{flaggedDuplicates.length > 1 ? 's' : ''} identified</p>
-                    <p className="text-xs text-gray-500 mt-1">These are included in your LO Notes export on the Strategies tab.</p>
-                  </div>
-                )}
               </div>
             )}
 
-            {/* ── DEAL ADVISOR™ TAB ────────────────────────────────────── */}
-            {activeTab === 'dealadvisor' && (
-              <DealAdvisor
-                parsedFindings={enrichedParseData}
-                strategies={relevantStrategies
-                  .filter(s => {
-                    const isPrimaryResidence = (enrichedParseData?.occupancy || '').toLowerCase().includes('primary') || !profile.isInvestmentProperty;
-                    // Exclude DSCR for primary residences — DSCR is investment-only
-                    if (isPrimaryResidence && s.title?.toLowerCase().includes('dscr')) return false;
-                    return true;
-                  })
-                  .map(s => {
-                    // Strip DSCR from combined Non-QM strategy name/description for primary residences
-                    const isPrimary = (enrichedParseData?.occupancy || '').toLowerCase().includes('primary') || !profile.isInvestmentProperty;
-                    const name = isPrimary
-                      ? s.title.replace(/\s*\/\s*DSCR/gi, '').replace(/\s*,\s*DSCR/gi, '').trim()
-                      : s.title;
-                    return {
-                      name,
-                      approvalProbability: s.probability[program] || 0,
-                      description:         s.detail,
-                      cost:                s.cost,
-                      timeframe:           s.timeline,
-                      risk:                s.risk,
-                      category:            s.category,
-                      bestFor:             s.bestFor,
-                      programWarning:      s.programWarning || null,
-                    };
+            {/* ── STRATEGIES (reference) ── */}
+            {activeTab === 'strategies' && (
+              <div>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4">
+                  <p className="text-sm font-semibold text-slate-700">📋 Strategy Reference Library</p>
+                  <p className="text-xs text-slate-500 mt-1">All 23 strategies ranked by approval probability. Deal Advisor™ selects the right ones automatically — this is for manual reference.</p>
+                </div>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {Object.entries(CATS).map(([key, cat]) => (
+                    <button key={key} onClick={() => toggleCat(key)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${selectedCats.includes(key) ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-600 hover:border-indigo-300'}`}>
+                      <span>{cat.icon}</span>{cat.label}
+                    </button>
+                  ))}
+                  {selectedCats.length > 0 && <button onClick={() => setSelectedCats([])} className="px-3 py-1.5 rounded-full text-xs font-semibold border border-gray-200 text-gray-400">✕ Clear</button>}
+                </div>
+                <div className="space-y-3">
+                  {(showAllFindings ? relevantStrategies : relevantStrategies.slice(0, 8)).map(s => {
+                    const prob = s.probability[program] || 0;
+                    const isExpanded = expandedId === s.id;
+                    return (
+                      <div key={s.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:border-indigo-200 transition-all">
+                        <div className="p-4 cursor-pointer" onClick={() => setExpandedId(isExpanded ? null : s.id)}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-start gap-3 flex-1 min-w-0">
+                              <span className="text-xl flex-shrink-0 mt-0.5">{s.icon}</span>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2 mb-1">
+                                  <h3 className="text-sm font-bold text-gray-900">{s.title}</h3>
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${IMPACT_BADGE[s.impact]}`}>{s.impact.toUpperCase()}</span>
+                                </div>
+                                <div className="flex flex-wrap gap-2 text-xs text-gray-500">
+                                  <span>💰 {s.cost}</span><span>⏱ {s.timeline}</span><span>⚡ {s.risk} risk</span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex-shrink-0 text-right">
+                              <div className={`text-xl font-black ${pColor(prob)}`}>{prob}%</div>
+                              <div className="text-[10px] text-gray-400">approval lift</div>
+                            </div>
+                          </div>
+                        </div>
+                        {isExpanded && (
+                          <div className="px-4 pb-4 pt-0 border-t border-gray-100">
+                            <p className="text-xs text-gray-600 leading-relaxed mt-3">{s.detail}</p>
+                            <div className="mt-3 p-3 bg-indigo-50 rounded-lg"><p className="text-xs font-bold text-indigo-700">Best for: <span className="font-normal">{s.bestFor}</span></p></div>
+                          </div>
+                        )}
+                      </div>
+                    );
                   })}
-                scenarioId={selectedScenarioId}
-                borrowerName={enrichedParseData?.borrowerName || bName || 'Borrower'}
-                loName="George Chevalier"
-              />
+                  {relevantStrategies.length > 8 && (
+                    <button onClick={() => setShowAllFindings(v => !v)} className="w-full py-2.5 text-sm font-semibold text-indigo-600 border border-indigo-200 rounded-xl bg-white">
+                      {showAllFindings ? '▲ Show Less' : `▼ Show All ${relevantStrategies.length} Strategies`}
+                    </button>
+                  )}
+                </div>
+                {ruleResults && <button onClick={generateNotes} className="mt-4 w-full py-2.5 text-sm font-semibold text-slate-600 border border-slate-200 rounded-xl bg-white">📋 Copy LO Notes to Clipboard</button>}
+              </div>
             )}
 
           </div>
         </div>
       </div>
 
-      {/* ── CANONICAL SEQUENCE BAR ──────────────────────────────────────── */}
       <CanonicalSequenceBar currentModuleKey="AUS_RESCUE" scenarioId={selectedScenarioId} recordId={displayRecordId} />
     </div>
   );

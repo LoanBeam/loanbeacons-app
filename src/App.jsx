@@ -13,6 +13,7 @@ import AUSRescue from './pages/AUSRescue'
 import RehabIntelligence from './modules/RehabIntelligence';
 import Admin from './pages/Admin'
 import AESharePage from './pages/AESharePage'
+import ProcessorSharePage from './pages/ProcessorSharePage'
 import LenderMatch from './modules/LenderMatch'
 import DPAIntelligence from './modules/DPAIntelligence';
 import VAIRRRL from './modules/VAIRRRL'
@@ -38,7 +39,7 @@ import ComplianceIntel from './pages/ComplianceIntel'
 import FloodIntel from './pages/FloodIntel'
 import BankStatementIntel from './pages/BankStatementIntel'
 
-const STANDALONE_ROUTES = ['/ae-share']
+const STANDALONE_ROUTES = ['/ae-share', '/processor-share']
 
 function AppShell() {
   const location = useLocation()
@@ -68,6 +69,7 @@ function AppShell() {
         <Route path="/admin" element={<Admin />} />
         <Route path="/lender-intake" element={<LenderIntakeForm />} />
         <Route path="/lender-intake/:token" element={<LenderIntakeForm />} />
+        <Route path="/processor-share/:token" element={<ProcessorSharePage />} />
         <Route path="/ae-share/:token" element={<AESharePage />} />
         <Route path="/decision-records" element={<DecisionRecordDashboard />} />
         <Route path="/decision-records/:id" element={<DecisionRecordDetail />} />
