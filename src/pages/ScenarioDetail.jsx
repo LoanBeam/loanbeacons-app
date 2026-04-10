@@ -363,6 +363,8 @@ function ScenarioDetail() {
           <a href={`/fha-streamline?${params}`}                className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📋 FHA Streamline™</a>
           <a href={`/va-irrrl?${params}`}                      className="inline-flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🎖️ VA IRRRL™</a>
           <a href={`/usda-intelligence?${params}`}             className="inline-flex items-center gap-2 bg-lime-600 hover:bg-lime-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🌾 USDA Intelligence™</a>
+          <a href={`/conventional-refi?scenarioId=${s.id}`}    className="inline-flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white font-semibold px-4 py-2 rounded-lg text-sm">🔄 Conventional Refi Intel™</a>
+          <a href={`/conventional-refi?scenarioId=${s.id}`}    className="inline-flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white font-semibold px-4 py-2 rounded-lg text-sm">🔄 Conventional Refi Intel™</a>
           <a href={`/rate-buydown?${params}`}                  className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💰 Rate Buydown™</a>
           <a href={`/arm-structure?${params}`}                 className="inline-flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📈 ARM Structure™</a>
           <a href={`/mi-optimizer?${params}`}                  className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🛡️ MI Optimizer™</a>

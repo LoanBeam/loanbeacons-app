@@ -38,6 +38,7 @@ import DisclosureIntel from './pages/DisclosureIntel'
 import ComplianceIntel from './pages/ComplianceIntel'
 import FloodIntel from './pages/FloodIntel'
 import BankStatementIntel from './pages/BankStatementIntel'
+import ConventionalRefiIntel from './pages/ConventionalRefiIntel';
 
 const STANDALONE_ROUTES = ['/ae-share', '/processor-share']
 
@@ -89,6 +90,7 @@ function AppShell() {
         <Route path="/intelligent-checklist" element={<IntelligentChecklist />} />
         <Route path="/piggyback-optimizer" element={<PiggybackOptimizer />} />
         <Route path="/bank-statement-intel" element={<BankStatementIntel />} />
+        <Route path="/conventional-refi" element={<ConventionalRefiIntel />} />
       </Routes>
       {!isStandalone && <Footer />}
     </div>

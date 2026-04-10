@@ -134,6 +134,16 @@ const modules = {
       path: '/usda-intelligence',
       color: 'green',
     },
+    {
+      id: 'conventional-refi-intel',
+      title: 'Conventional Refi Intelligence™',
+      icon: '🔄',
+      description: 'RefiNow™ and Refi Possible℠ eligibility screener with AMI check, loan ownership lookup, and borrower letter.',
+      badge: 'NEW',
+      status: 'live',
+      path: '/conventional-refi',
+      color: 'blue',
+    },
   ],
   stage3: [
     {
