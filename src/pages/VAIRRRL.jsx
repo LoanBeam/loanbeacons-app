@@ -3,6 +3,7 @@
 // Updated: March 2026 — v3.4: Net Commission Calculator tab added
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams, useNavigate as useRRNavigate } from 'react-router-dom';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
@@ -114,8 +115,8 @@ const S = {
   badgeGold:  { background: 'rgba(249,200,70,0.25)', color: '#f9c846' },
   scenarioRow: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' },
   headerSelect: { background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6, color: '#fff', padding: '6px 10px', fontSize: 13, minWidth: 220, cursor: 'pointer' },
-  tabBar: { display: 'flex', gap: 3, flexWrap: 'wrap', borderBottom: '2px solid #e0e7ef', marginBottom: 20 },
-  tab: (active) => ({ padding: '8px 10px', borderRadius: '8px 8px 0 0', border: 'none', background: active ? '#0d3b6e' : 'transparent', color: active ? '#fff' : '#6b7a8d', fontWeight: active ? 700 : 500, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', marginBottom: active ? -2 : 0, borderBottom: active ? '2px solid #0d3b6e' : 'none', transition: 'all 0.15s' }),
+  tabBar: { display: 'flex', gap: 2, flexWrap: 'nowrap', overflowX: 'auto', borderBottom: '2px solid #e0e7ef', marginBottom: 20, scrollbarWidth: 'none' },
+  tab: (active) => ({ padding: '8px 9px', borderRadius: '8px 8px 0 0', border: 'none', background: active ? '#0d3b6e' : 'transparent', color: active ? '#fff' : '#6b7a8d', fontWeight: active ? 700 : 500, fontSize: 11.5, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0, marginBottom: active ? -2 : 0, borderBottom: active ? '2px solid #0d3b6e' : 'none', transition: 'all 0.15s' }),
   card: { background: '#fff', borderRadius: 10, border: '1px solid #e0e7ef', padding: 20, marginBottom: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' },
   cardTitle: { fontSize: 15, fontWeight: 700, color: '#0d3b6e', marginBottom: 14, borderBottom: '1px solid #f0f4f8', paddingBottom: 10 },
   grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 },
@@ -534,6 +535,13 @@ export default function VAIRRRL() {
   const updateRO = (id, field, val) => setRateOptions(prev => prev.map(o => o.id === id ? { ...o, [field]: val } : o));
   const removeRO = (id) => setRateOptions(prev => prev.filter(o => o.id !== id));
   const navigate = (path) => { window.location.href = path; };
+
+  // ── Standard scenario picker (aligns with all other modules) ──────────────
+  const [searchParams] = useSearchParams();
+  const rrNavigate     = useRRNavigate();
+  const urlScenarioId  = searchParams.get('scenarioId');
+  const [pickerSearch,  setPickerSearch]  = useState('');
+  const [pickerShowAll, setPickerShowAll] = useState(false);
 
   const runTaxCalc = () => {
     const fmv = parseFloat(taxFMV) || 0;
@@ -1794,6 +1802,96 @@ export default function VAIRRRL() {
     ),
   };
 
+  // ── Scenario picker page (shown when no scenarioId in URL) ───────────────
+  if (!urlScenarioId) {
+    const q         = pickerSearch.toLowerCase().trim();
+    const sorted    = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || b.created_at?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || a.created_at?.seconds || 0));
+    const filtered  = q ? sorted.filter(s => (s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || s.borrowerName || '').toLowerCase().includes(q)) : sorted;
+    const displayed = q ? filtered : pickerShowAll ? filtered : filtered.slice(0, 5);
+    const hasMore   = !q && !pickerShowAll && filtered.length > 5;
+    return (
+      <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-10">
+          <div className="max-w-2xl mx-auto">
+            <button onClick={() => rrNavigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">11</div>
+              <div>
+                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Module 11 — VA Streamline</span>
+                <h1 className="text-2xl font-bold text-white mt-0.5">VA IRRRL</h1>
+              </div>
+            </div>
+            <p className="text-indigo-300 text-sm leading-relaxed mb-5">Interest Rate Reduction Refinance Loan — Benefit test, NTB worksheet, funding fee, closing cost estimator, and net commission calculator.</p>
+            <div className="flex flex-wrap gap-2">
+              {['Benefit Test', 'NTB Worksheet', 'Funding Fee', 'Rate Shop', 'Closing Cost Estimator', 'Net Commission'].map(tag => (
+                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-indigo-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="max-w-2xl mx-auto px-6 py-8">
+          <div className="mb-5">
+            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">Select a Scenario</h2>
+            <p className="text-xs text-slate-400">Search by name or pick from your most recent files.</p>
+          </div>
+          <div className="relative mb-4">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+            <input type="text" value={pickerSearch} onChange={e => { setPickerSearch(e.target.value); setPickerShowAll(false); }} placeholder="Search veteran name…"
+              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition-all" />
+            {pickerSearch && <button onClick={() => setPickerSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>}
+          </div>
+          {scenarios.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-3xl mb-3">📂</p>
+              <p className="text-sm font-semibold text-slate-600">No scenarios found</p>
+              <p className="text-xs text-slate-400 mt-1">Create one in Scenario Creator first.</p>
+              <button onClick={() => rrNavigate('/scenario-creator')} className="mt-4 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline">→ Go to Scenario Creator</button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-2xl mb-2">🔍</p>
+              <p className="text-sm font-semibold text-slate-600">No matches for "{pickerSearch}"</p>
+              <button onClick={() => setPickerSearch('')} className="mt-2 text-xs text-indigo-500 hover:underline">Clear search</button>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {!q && !pickerShowAll && <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-1">Recently Updated</p>}
+              {displayed.map(s => {
+                const sName  = s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || s.borrowerName || 'Unnamed Scenario';
+                const amount = parseFloat(s.loanAmount || s.currentLoanAmount || 0);
+                return (
+                  <button key={s.id} onClick={() => rrNavigate('/va-irrrl?scenarioId=' + s.id)}
+                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-indigo-300 hover:bg-indigo-50/30 hover:shadow-md transition-all group">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-indigo-700 transition-colors">{sName}</div>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                          {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
+                          {s.loanType && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
+                          {(s.streetAddress || s.city) && <span className="text-xs text-slate-400">{[s.streetAddress, s.city, s.state].filter(Boolean).join(', ')}</span>}
+                        </div>
+                      </div>
+                      <span className="text-slate-300 group-hover:text-indigo-400 text-lg transition-colors shrink-0">→</span>
+                    </div>
+                  </button>
+                );
+              })}
+              {hasMore && (
+                <button onClick={() => setPickerShowAll(true)} className="w-full text-center text-xs font-bold text-indigo-500 hover:text-indigo-700 py-3 border border-dashed border-indigo-200 rounded-2xl hover:bg-indigo-50 transition-all">
+                  View all {filtered.length} scenarios
+                </button>
+              )}
+              {pickerShowAll && filtered.length > 5 && (
+                <button onClick={() => setPickerShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={S.container}>
       <div style={S.header}>
@@ -1811,17 +1909,11 @@ export default function VAIRRRL() {
           </div>
         </div>
         <div style={S.scenarioRow}>
-          <span style={{ fontSize: 12, opacity: 0.75 }}>Load Scenario:</span>
-          <select style={S.headerSelect} value={selectedScenId} onChange={e => handleScenarioSelect(e.target.value)}>
-            <option value="">— Select a scenario —</option>
-            {scenarios.map(s => (
-              <option key={s.id} value={s.id}>
-                {s.borrowerName || s.borrower_name || ((s.firstName||'') + ' ' + (s.lastName||'')).trim() || s.scenarioName || 'Unnamed'} · {s.propertyAddress?.split(',')[0] || s.streetAddress || 'No address'}
-              </option>
-            ))}
-          </select>
-          {loadingScenarios && <span style={{ fontSize: 12, opacity: 0.65 }}>Loading...</span>}
-          {veteranName && <span style={{ fontSize: 12, opacity: 0.85 }}>🎖️ {veteranName}</span>}
+          {veteranName && <span style={{ fontSize: 13, opacity: 0.9, fontWeight: 600 }}>🎖️ {veteranName}</span>}
+          {propertyAddress && <span style={{ fontSize: 12, opacity: 0.7 }}>{propertyAddress.split(',').slice(0, 2).join(',')}</span>}
+          <button onClick={() => rrNavigate('/va-irrrl')} style={{ fontSize: 12, opacity: 0.7, background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.75)', cursor: 'pointer', textDecoration: 'underline' }}>
+            Change scenario →
+          </button>
           <button
             onClick={handleSave}
             style={{
@@ -1842,7 +1934,25 @@ export default function VAIRRRL() {
       </div>
 
       <div style={S.tabBar}>
-        {TABS.map(t => <button key={t.id} style={S.tab(activeTab === t.id)} onClick={() => { handleSave(); setActiveTab(t.id); }}>{t.label}</button>)}
+        {TABS.map(t => {
+          const isNetComm = t.id === 'net-commission';
+          const isActive  = activeTab === t.id;
+          const base = S.tab(isActive);
+          const netCommStyle = isNetComm ? {
+            ...base,
+            background:   isActive ? '#7a5a00' : 'rgba(249,200,70,0.12)',
+            color:        isActive ? '#f9c846' : '#b38f00',
+            borderBottom: isActive ? '2px solid #f9c846' : 'none',
+            fontWeight:   700,
+            borderLeft:   '2px solid rgba(249,200,70,0.3)',
+            marginLeft:   4,
+          } : base;
+          return (
+            <button key={t.id} style={netCommStyle} onClick={() => { handleSave(); setActiveTab(t.id); }}>
+              {isNetComm ? '💰 ' + t.label : t.label}
+            </button>
+          );
+        })}
       </div>
 
       {tabRenderers[activeTab]?.()}
