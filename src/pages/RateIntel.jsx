@@ -297,7 +297,8 @@ export default function RateIntel() {
   const navigate = useNavigate();
   const scenarioId = searchParams.get('scenarioId');
 
-  const { reportFindings, savedRecordId, setSavedRecordId } = useDecisionRecord('RATE_INTEL', scenarioId);
+  const { reportFindings } = useDecisionRecord(scenarioId);
+  const [savedRecordId, setSavedRecordId] = useState(null);
   const [recordSaving, setRecordSaving] = useState(false);
 
   const [scenario, setScenario] = useState(null);
@@ -436,11 +437,11 @@ export default function RateIntel() {
       if (lockAdj > 0.25) riskFlags.push({ field: 'lockPeriod', message: 'Extended lock period adds ' + lockAdj + '% to rate', severity: 'MEDIUM' });
       if (dti && dti > 43) riskFlags.push({ field: 'dti', message: 'P&I-only DTI at ' + dti.toFixed(1) + '% — total DTI will be higher', severity: 'HIGH' });
       if (marketTrend === 'rising' && !rateLockDate) riskFlags.push({ field: 'lock', message: 'Rising market selected but no lock date recorded', severity: 'MEDIUM' });
-      const writtenId = await reportFindings({
-        verdict: trendObj ? trendObj.rec : (rate > 0 ? 'Rate Analysis Complete' : 'Incomplete'),
-        summary: 'Rate Intelligence — ' + (rate > 0 ? fmtPct(rate) + ' note rate' : 'no rate') + '. ' + lockPeriod + '-day lock' + (lockAdj !== 0 ? ' (' + (lockAdj > 0 ? '+' : '') + lockAdj + '%)' : ' at par') + '.' + (trendObj ? ' Market: ' + trendObj.label + '. Rec: ' + trendObj.rec + '.' : '') + (lenderCreditAmt > 0 ? ' Lender credit: ' + fmt0(lenderCreditAmt) + '.' : '') + (aiAnalysis ? ' AI analysis: ' + (aiAnalysis.verdict || '') + '.' : ''),
-        riskFlags,
-        findings: {
+      const writtenId = await reportFindings(
+        'RATE_INTEL',
+        {
+          verdict: trendObj ? trendObj.rec : (rate > 0 ? 'Rate Analysis Complete' : 'Incomplete'),
+          summary: 'Rate Intelligence — ' + (rate > 0 ? fmtPct(rate) + ' note rate' : 'no rate') + '. ' + lockPeriod + '-day lock' + (lockAdj !== 0 ? ' (' + (lockAdj > 0 ? '+' : '') + lockAdj + '%)' : ' at par') + '.' + (trendObj ? ' Market: ' + trendObj.label + '. Rec: ' + trendObj.rec + '.' : '') + (lenderCreditAmt > 0 ? ' Lender credit: ' + fmt0(lenderCreditAmt) + '.' : '') + (aiAnalysis ? ' AI analysis: ' + (aiAnalysis.verdict || '') + '.' : ''),
           noteRate: rate, adjustedRate: parseFloat(adjustedRate.toFixed(3)),
           lockPeriod, lockAdj, monthlyPI: parseFloat(currentPI.toFixed(2)),
           loanAmount: loan, termMonths: term, monthlyIncome: income,
@@ -451,12 +452,11 @@ export default function RateIntel() {
           selectedBuydown: selectedBuydown || null, buydownCost: buydownCostNum || null,
           floatDownOption, rateLockDate: rateLockDate || null, expirationDate: expirationDate || null,
           loNotes: notes,
+          completeness: { rateEntered: rate > 0, lockPeriodSet: true, marketTrendSet: !!marketTrend, aiAnalysisRun: !!aiAnalysis, lockDatesSet: !!(rateLockDate && expirationDate) },
         },
-        completeness: {
-          rateEntered: rate > 0, lockPeriodSet: true, marketTrendSet: !!marketTrend,
-          aiAnalysisRun: !!aiAnalysis, lockDatesSet: !!(rateLockDate && expirationDate),
-        },
-      });
+        [],
+        riskFlags,
+      );
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
     setRecordSaving(false);

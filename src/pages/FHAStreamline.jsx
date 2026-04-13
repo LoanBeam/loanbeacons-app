@@ -834,7 +834,7 @@ export default function FHAStreamline() {
 
               <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0f4c81', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6, marginTop: 4 }}>PREPAIDS (Section F)</div>
               <div><label style={S.label}>Per Diem Days</label><input style={S.input} type="number" value={ccPerDiemDays} onChange={e => setCcPerDiemDays(e.target.value)} placeholder="15" /></div>
-              <div><label style={S.inputRO} style={S.label}>Per Diem Interest ($)</label><input style={S.inputRO} value={ccPerDiemTotal > 0 ? fmtDollar(ccPerDiemTotal) : '—'} readOnly /></div>
+              <div><label style={{...S.inputRO, ...S.label}}>Per Diem Interest ($)</label><input style={S.inputRO} value={ccPerDiemTotal > 0 ? fmtDollar(ccPerDiemTotal) : '—'} readOnly /></div>
               <div><label style={S.label}>HOI Annual Premium ($)</label><input style={S.input} type="number" value={ccHOIPremiumAnnual} onChange={e => setCcHOIPremiumAnnual(e.target.value)} placeholder="e.g. 1200" /></div>
 
               <div style={{ gridColumn: '1 / -1', fontSize: 12, fontWeight: 700, color: '#0f4c81', letterSpacing: '0.05em', borderBottom: '1px solid #f0f4f8', paddingBottom: 6, marginTop: 4 }}>INITIAL ESCROW SETUP (Section G)</div>
@@ -843,12 +843,12 @@ export default function FHAStreamline() {
                 <input style={S.input} type="number" value={taxMonthlyEst > 0 ? taxMonthlyEst.toFixed(2) : ''} readOnly placeholder="Run Property Tax Calculator below" />
               </div>
               <div><label style={S.label}>Tax Reserve Months</label><input style={S.input} type="number" value={ccTaxMonthsRes} onChange={e => setCcTaxMonthsRes(e.target.value)} placeholder="3" /></div>
-              <div><label style={S.inputRO} style={S.label}>Tax Reserve Total ($)</label><input style={S.inputRO} value={ccTaxReserve > 0 ? fmtDollar(ccTaxReserve) : '—'} readOnly /></div>
+              <div><label style={{...S.inputRO, ...S.label}}>Tax Reserve Total ($)</label><input style={S.inputRO} value={ccTaxReserve > 0 ? fmtDollar(ccTaxReserve) : '—'} readOnly /></div>
               <div><label style={S.label}>HOI Monthly ($)</label><input style={S.input} type="number" value={ccHOIMonthly} onChange={e => setCcHOIMonthly(e.target.value)} placeholder="e.g. 100" /></div>
               <div><label style={S.label}>HOI Reserve Months</label><input style={S.input} type="number" value={ccHOIMonthsRes} onChange={e => setCcHOIMonthsRes(e.target.value)} placeholder="3" /></div>
-              <div><label style={S.inputRO} style={S.label}>HOI Reserve Total ($)</label><input style={S.inputRO} value={ccHOIReserve > 0 ? fmtDollar(ccHOIReserve) : '—'} readOnly /></div>
+              <div><label style={{...S.inputRO, ...S.label}}>HOI Reserve Total ($)</label><input style={S.inputRO} value={ccHOIReserve > 0 ? fmtDollar(ccHOIReserve) : '—'} readOnly /></div>
               <div><label style={S.label}>MIP Reserve Months</label><input style={S.input} type="number" value={ccMIPMonthsRes} onChange={e => setCcMIPMonthsRes(e.target.value)} placeholder="1" /></div>
-              <div><label style={S.inputRO} style={S.label}>MIP Reserve Total ($)</label><input style={S.inputRO} value={ccMIPReserve > 0 ? fmtDollar(ccMIPReserve) : '—'} readOnly /></div>
+              <div><label style={{...S.inputRO, ...S.label}}>MIP Reserve Total ($)</label><input style={S.inputRO} value={ccMIPReserve > 0 ? fmtDollar(ccMIPReserve) : '—'} readOnly /></div>
             </div>
 
             {/* Section subtotals */}

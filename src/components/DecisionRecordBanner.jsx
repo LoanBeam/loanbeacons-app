@@ -6,7 +6,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-export default function DecisionRecordBanner({ recordId, moduleName = 'This module', onSave }) {
+export default function DecisionRecordBanner({ recordId, savedRecordId, moduleName, moduleKey, onSave }) {
+  recordId = recordId || savedRecordId;
+  moduleName = moduleName || (moduleKey ? moduleKey.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'This module');
   const navigate = useNavigate();
   const [status, setStatus] = useState('idle'); // idle | saving | saved
 

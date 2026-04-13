@@ -230,7 +230,8 @@ export default function CollateralIntel() {
   const navigate = useNavigate();
   const scenarioId = searchParams.get('scenarioId');
 
-  const { reportFindings, savedRecordId, setSavedRecordId } = useDecisionRecord('COLLATERAL_INTEL', scenarioId);
+  const { reportFindings } = useDecisionRecord(scenarioId);
+  const [savedRecordId, setSavedRecordId] = useState(null);
   const [recordSaving, setRecordSaving] = useState(false);
 
   const [scenario, setScenario]       = useState(null);
@@ -397,13 +398,23 @@ export default function CollateralIntel() {
       highFlags.forEach((f)     => riskFlags.push({ field: f.id, message: f.label, severity: 'MEDIUM' }));
       if (appraisalConcerns?.overallRisk === 'CRITICAL' || appraisalConcerns?.overallRisk === 'HIGH') riskFlags.push({ field: 'appraisalReview', message: 'Appraisal review: ' + appraisalConcerns.overallRisk + ' risk — ' + (appraisalConcerns.concerns?.length || 0) + ' concerns', severity: appraisalConcerns.overallRisk === 'CRITICAL' ? 'HIGH' : 'MEDIUM' });
       if (appraisalConcerns?.flipRisk?.detected) riskFlags.push({ field: 'flipRisk', message: 'Flip risk: ' + (appraisalConcerns.flipRisk.summary || ''), severity: 'HIGH' });
-      const writtenId = await reportFindings({
-        verdict: overallVerdict === 'CLEAR' ? 'Collateral Clear' : overallVerdict === 'CRITICAL' ? 'Critical Issues — ' + criticalFlags.length + ' flag(s)' : 'Review Required — ' + flaggedItems.length + ' flag(s)',
-        summary: 'Collateral Intelligence — ' + (propType?.label || 'Property') + '. LTV: ' + (ltv || 'N/A') + '%. ' + (flaggedItems.length > 0 ? flaggedItems.length + ' condition flag(s). ' : '') + (appraisalData ? 'Appraisal: ' + fmt0(appraisalData.appraisedValue) + '. ' : '') + (appraisalConcerns?.overallRisk ? 'Risk: ' + appraisalConcerns.overallRisk + '.' : ''),
+      const writtenId = await reportFindings(
+        'PROPERTY_INTEL',
+        {
+          verdict: overallVerdict === 'CLEAR' ? 'Collateral Clear' : overallVerdict === 'CRITICAL' ? 'Critical Issues — ' + criticalFlags.length + ' flag(s)' : 'Review Required — ' + flaggedItems.length + ' flag(s)',
+          summary: 'Collateral Intelligence — ' + (propType?.label || 'Property') + '. LTV: ' + (ltv || 'N/A') + '%. ' + (flaggedItems.length > 0 ? flaggedItems.length + ' condition flag(s). ' : '') + (appraisalData ? 'Appraisal: ' + fmt0(appraisalData.appraisedValue) + '. ' : '') + (appraisalConcerns?.overallRisk ? 'Risk: ' + appraisalConcerns.overallRisk + '.' : ''),
+          propertyType, occupancy, yearBuilt: parseInt(yearBuilt) || null, sqft: parseInt(sqft) || null,
+          purchasePrice: parseFloat(purchasePrice) || null, estimatedValue: parseFloat(estimatedValue) || null,
+          loanAmount: parseFloat(loanAmount) || null, loanType, ltv: ltv ? parseFloat(ltv) : null,
+          eligiblePrograms: eligible, flaggedItems: flaggedItems.map((f) => f.id),
+          criticalFlagCount: criticalFlags.length, condoProjectApproved: isCondo ? condoProjectApproved : null,
+          preIs78, appraisalData: appraisalData || null, appraisalConcerns: appraisalConcerns || null,
+          loNotes, flipRisk: appraisalConcerns?.flipRisk || null,
+          completeness: { propertyTypeSet: !!propertyType, occupancySet: !!occupancy, loanAmountEntered: !!loanAmount, appraisalReviewed: !!appraisalData },
+        },
+        [],
         riskFlags,
-        findings: { propertyType, occupancy, yearBuilt: parseInt(yearBuilt) || null, sqft: parseInt(sqft) || null, purchasePrice: parseFloat(purchasePrice) || null, estimatedValue: parseFloat(estimatedValue) || null, loanAmount: parseFloat(loanAmount) || null, loanType, ltv: ltv ? parseFloat(ltv) : null, eligiblePrograms: eligible, flaggedItems: flaggedItems.map((f) => f.id), criticalFlagCount: criticalFlags.length, condoProjectApproved: isCondo ? condoProjectApproved : null, preIs78, appraisalData: appraisalData || null, appraisalConcerns: appraisalConcerns || null, loNotes, flipRisk: appraisalConcerns?.flipRisk || null },
-        completeness: { propertyTypeSet: !!propertyType, occupancySet: !!occupancy, loanAmountEntered: !!loanAmount, appraisalReviewed: !!appraisalData },
-      });
+      );
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
     setRecordSaving(false);
@@ -1008,7 +1019,7 @@ export default function CollateralIntel() {
           </div>
         </div>
       </div>
-      <CanonicalSequenceBar currentModuleKey="COLLATERAL_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
+      <CanonicalSequenceBar currentModuleKey="PROPERTY_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
     </div>
   );
 }

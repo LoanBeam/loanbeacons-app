@@ -839,7 +839,7 @@ export default function LenderMatch() {
         />
       )}
 
-      <CanonicalSequenceBar currentModuleKey="LENDER_MATCH" scenarioId={scenarioIdParam} recordId={null} />
+      <CanonicalSequenceBar currentModuleKey="LENDER_MATCH" scenarioId={scenarioIdParam} recordId={savedRecordId} />
     </div>
   );
 }

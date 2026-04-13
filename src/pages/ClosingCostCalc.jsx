@@ -562,7 +562,8 @@ export default function ClosingCostCalc() {
   const navigate = useNavigate();
   const scenarioId = searchParams.get('scenarioId');
 
-  const { reportFindings, savedRecordId, setSavedRecordId } = useDecisionRecord('CLOSING_COST', scenarioId);
+  const { reportFindings } = useDecisionRecord(scenarioId);
+  const [savedRecordId, setSavedRecordId] = useState(null);
   const [recordSaving, setRecordSaving] = useState(false);
 
   const [scenario, setScenario] = useState(null);
@@ -724,19 +725,24 @@ export default function ClosingCostCalc() {
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
-      const writtenId = await reportFindings({
-        verdict: 'Closing Cost Estimate — ' + fmt0(netCashToClose) + ' estimated cash to close',
-        summary: 'Closing Cost Calculator — ' + (loanType || 'Loan') + ' in ' + (state || 'N/A') + '. Loan: ' + fmt0(loanAmount) + '. Total buyer costs: ' + fmt0(totalBuyerFees) + '. Seller credits: ' + fmt0(sellerCredits) + '. Net cash to close: ' + fmt0(netCashToClose) + '. Estimate quality: ' + estimateQuality + '%.',
-        riskFlags: netCashToClose > loanAmount * 0.05 ? [{ field: 'cashToClose', message: 'Cash to close exceeds 5% of loan amount — verify borrower has sufficient reserves', severity: 'MEDIUM' }] : [],
-        findings: {
+      const riskFlags = netCashToClose > loanAmount * 0.05
+        ? [{ flag_code: 'CASH_TO_CLOSE_HIGH', source_module: 'CLOSING_COST_CALC', severity: 'MEDIUM', detail: 'Cash to close exceeds 5% of loan amount — verify borrower has sufficient reserves' }]
+        : [];
+      const writtenId = await reportFindings(
+        'CLOSING_COST_CALC',
+        {
+          verdict: 'Closing Cost Estimate — ' + fmt0(netCashToClose) + ' estimated cash to close',
+          summary: 'Closing Cost Calculator — ' + (loanType || 'Loan') + ' in ' + (state || 'N/A') + '. Loan: ' + fmt0(loanAmount) + '. Total buyer costs: ' + fmt0(totalBuyerFees) + '. Seller credits: ' + fmt0(sellerCredits) + '. Net cash to close: ' + fmt0(netCashToClose) + '. Estimate quality: ' + estimateQuality + '%.',
           loanAmount, purchasePrice, loanType, state,
           totalBuyerFees, totalSellerFees, sellerCredits, netCashToClose, downPayment,
           estimateQuality, confirmedFees, totalFeeCount,
           feeBreakdown: Object.fromEntries(visibleFees.map((f) => [f.id, { amount: feeValues[f.id] || 0, payer: feePayers[f.id] || f.payer }])),
           aiEstimate: aiEstimate || null,
+          completeness: { scenarioLoaded: !!scenario, feesEntered: confirmedFees > 0, aiEstimateRun: !!aiEstimate },
         },
-        completeness: { scenarioLoaded: !!scenario, feesEntered: confirmedFees > 0, aiEstimateRun: !!aiEstimate },
-      });
+        [],
+        riskFlags,
+      );
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
     setRecordSaving(false);
@@ -891,7 +897,7 @@ export default function ClosingCostCalc() {
       <ScenarioHeader moduleTitle="Closing Cost Calculator™" moduleNumber="10" scenarioId={scenarioId} />
 
       <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
-        <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="CLOSING_COST" />
+        <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="CLOSING_COST_CALC" />
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
@@ -1220,7 +1226,7 @@ export default function ClosingCostCalc() {
         </div>
       </div>
 
-      <CanonicalSequenceBar currentModuleKey="CLOSING_COST" scenarioId={scenarioId} recordId={savedRecordId} />
+      <CanonicalSequenceBar currentModuleKey="CLOSING_COST_CALC" scenarioId={scenarioId} recordId={savedRecordId} />
     </div>
   );
 }
