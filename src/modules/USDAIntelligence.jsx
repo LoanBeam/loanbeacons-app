@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { db } from "../firebase/config";
 import { doc, getDoc } from "firebase/firestore";
 import { useDecisionRecord } from "../hooks/useDecisionRecord";
+import ModuleNav from '../components/ModuleNav';
 
 import DecisionRecordBanner from "../components/DecisionRecordBanner";
 import ScenarioHeader from "../components/ScenarioHeader";
@@ -563,7 +564,8 @@ If this is not a GUS findings document, return: {"error":"not a GUS findings doc
   };
 
   return (
-    <div style={{ fontFamily: "'DM Sans', sans-serif" }} className="min-h-screen bg-slate-900 text-slate-100">
+    <div style={{ fontFamily: "'DM Sans', sans-serif" }} className="min-h-screen bg-slate-900
+      <ModuleNav moduleNumber={13} /> text-slate-100">
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
       {/* Header */}

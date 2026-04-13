@@ -121,7 +121,7 @@ function FlipEligibilityTimeline({ priorDate, pctGain, loanType }) {
 
   return (
     <div className="mt-4 border-t border-slate-200 pt-4 space-y-2">
-      <ModuleNav moduleNumber={16} />
+      <ModuleNav moduleNumber={21} />
       <div className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-3">📅 Flip Rule — Eligibility by Program</div>
 
       {/* FHA */}

@@ -569,7 +569,7 @@ export default function FHAStreamline() {
   // ── JSX ───────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
-      <ModuleNav moduleNumber={10} />
+      <ModuleNav moduleNumber={11} />
 
       {/* Header */}
       <div className="bg-gradient-to-r from-blue-800 to-blue-600 text-white px-6 py-5">

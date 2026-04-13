@@ -18,7 +18,7 @@ const STEPS = ["Eligibility","Seasoning","Loan Type","Loan Details","Pricing & C
 function ProgressBar({cur}) {
   return (
     <div className="mb-8">
-      <ModuleNav moduleNumber={11} />
+      <ModuleNav moduleNumber={12} />
       <div className="flex items-start justify-between mb-2">
         {STEPS.map((s,i)=>(
           <div key={i} className="flex flex-col items-center" style={{width:`${100/STEPS.length}%`}}>

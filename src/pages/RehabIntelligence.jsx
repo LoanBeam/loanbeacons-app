@@ -366,7 +366,7 @@ function LetterCard({ title, icon, body, color = 'violet' }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className={'rounded-3xl border-2 overflow-hidden ' + (color === 'violet' ? 'border-violet-200 bg-violet-50' : 'border-blue-200 bg-blue-50')}>
-      <ModuleNav moduleNumber={20} />
+      <ModuleNav moduleNumber={18} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
         <div className="flex gap-2">

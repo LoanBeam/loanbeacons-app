@@ -934,7 +934,7 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
     const hasMore = !q && !showAll && filtered.length > 5;
     return (
       <div className="min-h-screen bg-slate-50">
-      <ModuleNav moduleNumber={7} />
+      <ModuleNav moduleNumber={6} />
         <div className="bg-gradient-to-br from-slate-900 to-violet-950 px-6 py-10">
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>

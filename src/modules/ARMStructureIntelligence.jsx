@@ -68,7 +68,7 @@ function getQualifyingRate(startRate, fullyIndexed, fixedYears, program) {
 function ProgressBar({cur}) {
   return (
     <div className="mb-8">
-      <ModuleNav moduleNumber={19} />
+      <ModuleNav moduleNumber={17} />
       <div className="flex items-start justify-between mb-2">
         {STEPS.map((s,i)=>(
           <div key={i} className="flex flex-col items-center" style={{width:`${100/STEPS.length}%`}}>

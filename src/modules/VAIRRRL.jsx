@@ -12,6 +12,7 @@ import VAIRRRLPricingCommission from './VAIRRRLPricingCommission';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import { MODULE_KEYS } from '../constants/decisionRecordConstants';
+import ModuleNav from '../components/ModuleNav';
 
 const functions = getFunctions(app);
 const auth = getAuth(app);
@@ -1894,6 +1895,7 @@ export default function VAIRRRL() {
 
   return (
     <div style={S.container}>
+      <ModuleNav moduleNumber={12} />
       <div style={S.header}>
         <div style={S.headerTop}>
           <div>

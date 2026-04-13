@@ -277,7 +277,7 @@ function MIOptimizer() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <ModuleNav moduleNumber={18} />
+      <ModuleNav moduleNumber={16} />
         <div className="text-center">
           <div className="text-4xl mb-4">🛡️</div>
           <div className="text-gray-600">Loading scenarios...</div>

@@ -10,6 +10,7 @@ import { app } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import { MODULE_KEYS } from '../constants/decisionRecordConstants';
+import ModuleNav from '../components/ModuleNav';
 
 const functions = getFunctions(app);
 const db        = getFirestore(app);
@@ -1593,6 +1594,7 @@ export default function FHAStreamline() {
   // ─────────────────────────────────────────────────────────────────────────────
   return (
     <div style={S.container}>
+      <ModuleNav moduleNumber={11} />
 
       {/* ── Header ── */}
       <div style={S.header}>

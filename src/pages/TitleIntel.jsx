@@ -314,7 +314,6 @@ STOP: any critical issue making closing impossible today. HIGH_RISK: 2+ HIGH ite
     const hasMore = !q && !showAll && filtered.length > 5;
     return (
       <div className="min-h-screen bg-slate-50">
-      <ModuleNav moduleNumber={17} />
         <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-10">
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
@@ -377,6 +376,7 @@ STOP: any critical issue making closing impossible today. HIGH_RISK: 2+ HIGH ite
 
   return (
     <div className="min-h-screen bg-slate-50 pb-16">
+      <ModuleNav moduleNumber={23} />
       <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-6 mb-6">
         <div className="max-w-6xl mx-auto">
           <div className="flex items-start justify-between">

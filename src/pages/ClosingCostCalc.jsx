@@ -400,7 +400,7 @@ function FeeTooltip({ fee, loanType }) {
   const loanTip = fee.loanTypeTips?.[loanType];
   return (
     <div className="relative inline-block">
-      <ModuleNav moduleNumber={23} />
+      <ModuleNav moduleNumber={20} />
       <button onClick={() => setOpen((v) => !v)}
         className="w-5 h-5 rounded-full bg-slate-200 hover:bg-indigo-200 text-slate-500 hover:text-indigo-700 text-xs font-black flex items-center justify-center transition-colors">
         ?

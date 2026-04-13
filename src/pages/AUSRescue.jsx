@@ -618,7 +618,7 @@ CRITICAL RULES:
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
-      <ModuleNav moduleNumber={8} />
+      <ModuleNav moduleNumber={10} />
 
       {selectedScenarioId && <DecisionRecordBanner scenarioId={selectedScenarioId} moduleKey="AUS_RESCUE" />}
 

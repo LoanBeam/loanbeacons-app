@@ -84,7 +84,7 @@ function LetterCard({ body }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="rounded-3xl border-2 border-cyan-200 bg-cyan-50 overflow-hidden">
-      <ModuleNav moduleNumber={25} />
+      <ModuleNav moduleNumber={26} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">📋 Flood Insurance Summary Letter</div>
         <div className="flex gap-2">

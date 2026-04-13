@@ -463,7 +463,7 @@ export default function RateIntel() {
 
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-      <ModuleNav moduleNumber={22} />
+      <ModuleNav moduleNumber={19} />
       <div className="text-center"><div className="text-5xl mb-4">🔒</div><div className="text-slate-500">Loading...</div></div>
     </div>
   );

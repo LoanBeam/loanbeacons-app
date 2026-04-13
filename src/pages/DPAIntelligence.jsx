@@ -632,7 +632,7 @@ function ProgramCard({ program, eligibility, lenderStatus, onLenderChange, stack
       borderRadius: 10, overflow: 'hidden', transition: 'border-color 0.2s, box-shadow 0.2s',
       boxShadow: stackSelected ? `0 0 0 2px ${C.blue}33` : 'none',
     }}>
-      <ModuleNav moduleNumber={15} />
+      <ModuleNav moduleNumber={9} />
       {/* Card Header */}
       <div style={{ padding: '14px 16px 12px', borderBottom: `1px solid ${C.border}` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
