@@ -5,11 +5,11 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import ModuleNav from '../components/ModuleNav';
 
 // ─── Income Methods ───────────────────────────────────────────────────────────
 const INCOME_METHODS = {
@@ -125,6 +125,7 @@ function SourceCard({ source, groupId, onUpdate, onRemove }) {
   if (!method) return null;
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 mb-4">
+      <ModuleNav moduleNumber={3} />
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <span className="text-xl">{method.icon}</span>
@@ -523,7 +524,6 @@ export default function IncomeAnalyzer() {
           </div>
         </div>
       </div>
-      <CanonicalSequenceBar currentModuleKey="INCOME_ANALYZER" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

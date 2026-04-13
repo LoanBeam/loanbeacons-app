@@ -9,8 +9,7 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 // ─── Attorney-closing states ──────────────────────────────────────────────────
 const ATTORNEY_STATES = ['GA','SC','NC','NY','MA','CT','RI','VT','NH','ME','WV','DE','VA','KY','TN','MS','AL'];
 const TRANSFER_TAX_STATES = ['CA','NY','NJ','PA','MD','VA','DC','FL','IL','CO','WA','OR','MN','CT','MA','RI','VT','NH','ME','HI','DE','GA','SC','NC','AL','MS','TN','KY','WV','IN','OH','MI','WI','MN','IA','MO','AR','LA'];
@@ -401,6 +400,7 @@ function FeeTooltip({ fee, loanType }) {
   const loanTip = fee.loanTypeTips?.[loanType];
   return (
     <div className="relative inline-block">
+      <ModuleNav moduleNumber={23} />
       <button onClick={() => setOpen((v) => !v)}
         className="w-5 h-5 rounded-full bg-slate-200 hover:bg-indigo-200 text-slate-500 hover:text-indigo-700 text-xs font-black flex items-center justify-center transition-colors">
         ?
@@ -1226,7 +1226,6 @@ export default function ClosingCostCalc() {
         </div>
       </div>
 
-      <CanonicalSequenceBar currentModuleKey="CLOSING_COST_CALC" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

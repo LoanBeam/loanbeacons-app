@@ -6,7 +6,6 @@
  * ============================================================
  */
 import { useSearchParams } from 'react-router-dom';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { db } from "../firebase/config";
 import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc } from "firebase/firestore";
@@ -27,6 +26,7 @@ import { LenderScorecardCard }   from "../components/lenderMatch/LenderScorecard
 import { AlternativeLenderCard } from "../components/lenderMatch/AlternativeLenderCard";
 import { DecisionRecordModal }   from "../components/lenderMatch/DecisionRecordModal";
 import { IneligibleLenderRow }   from "../components/lenderMatch/IneligibleLenderRow";
+import ModuleNav from '../components/ModuleNav';
 
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -839,7 +839,6 @@ export default function LenderMatch() {
         />
       )}
 
-      <CanonicalSequenceBar currentModuleKey="LENDER_MATCH" scenarioId={scenarioIdParam} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

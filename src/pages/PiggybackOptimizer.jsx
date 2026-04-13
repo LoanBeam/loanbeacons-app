@@ -9,8 +9,7 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 // ─── Math Engine ──────────────────────────────────────────────────────────────
 function monthlyPayment(principal, annualRate, termMonths) {
   if (!principal || !annualRate || !termMonths) return 0;
@@ -143,6 +142,7 @@ function LetterCard({ title, icon, body, color = 'violet' }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className={'rounded-3xl border-2 overflow-hidden ' + (color === 'violet' ? 'border-violet-200 bg-violet-50' : 'border-blue-200 bg-blue-50')}>
+      <ModuleNav moduleNumber={24} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
         <div className="flex gap-2">
@@ -1043,7 +1043,6 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
         </div>
       </div>
 
-      <CanonicalSequenceBar currentModuleKey="PIGGYBACK_OPTIMIZER" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

@@ -6,7 +6,6 @@ import { getDoc } from 'firebase/firestore';
 import { evaluatePrograms, rateSensitivity, PROGRAM_RULES } from './ruleEngine';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { calculatePathScore } from '../utils/ausRescueScoring';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 import { useSearchParams } from 'react-router-dom';
 import ProgramMigrationEngine from '../components/ProgramMigrationEngine';
 import { extractProfileFromScenario } from '../engines/programRuleEngine';
@@ -14,6 +13,7 @@ import AUSRunCounter from '../components/AUSRunCounter';
 import WhatIfSimulator from '../components/WhatIfSimulator';
 import { runSonnetReasoning, mergeReasoningResults } from '../services/ausRescueReasoning';
 import DealAdvisor from '../components/DealAdvisor';
+import ModuleNav from '../components/ModuleNav';
 
 // ── DOWNLOAD COUNTER ──────────────────────────────────────────────────────────
 // AUSRescue.jsx download counter: 33
@@ -618,6 +618,7 @@ CRITICAL RULES:
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
+      <ModuleNav moduleNumber={8} />
 
       {selectedScenarioId && <DecisionRecordBanner scenarioId={selectedScenarioId} moduleKey="AUS_RESCUE" />}
 
@@ -1018,7 +1019,6 @@ CRITICAL RULES:
         </div>
       </div>
 
-      <CanonicalSequenceBar currentModuleKey="AUS_RESCUE" scenarioId={selectedScenarioId} recordId={displayRecordId} />
-    </div>
+</div>
   );
 }

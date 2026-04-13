@@ -4,8 +4,7 @@ import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { collection, query, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 function MIOptimizer() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -278,6 +277,7 @@ function MIOptimizer() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <ModuleNav moduleNumber={18} />
         <div className="text-center">
           <div className="text-4xl mb-4">🛡️</div>
           <div className="text-gray-600">Loading scenarios...</div>
@@ -650,8 +650,7 @@ function MIOptimizer() {
               </div>
             )}
         </div>
-        <CanonicalSequenceBar currentModuleKey="MI_OPTIMIZER" scenarioId={scenarioId} recordId={savedRecordId} />
-      </div>
+</div>
   );
 }
 

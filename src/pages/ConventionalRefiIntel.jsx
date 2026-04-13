@@ -2,8 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { db } from "../firebase/config";
 import { doc, getDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { useSearchParams } from "react-router-dom";
-import CanonicalSequenceBar from "../components/CanonicalSequenceBar";
-
+import ModuleNav from '../components/ModuleNav';
 const MODULE_KEY = "CONVENTIONAL_REFI_INTEL";
 const STORAGE_KEY = (scenarioId) => `lb_conventional_refi_${scenarioId}`;
 
@@ -334,6 +333,7 @@ Keep it under 300 words. Do not include placeholder brackets — write it as a c
   function CheckRow({ label, pass }) {
     return (
       <div className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
+      <ModuleNav moduleNumber={14} />
         <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${pass ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
           {pass ? "✓" : "✗"}
         </span>
@@ -836,7 +836,6 @@ Keep it under 300 words. Do not include placeholder brackets — write it as a c
         )}
       </div>
 
-      <CanonicalSequenceBar activeModule={MODULE_KEY} scenarioId={scenarioId} />
-    </div>
+</div>
   );
 }

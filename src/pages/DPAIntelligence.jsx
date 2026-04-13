@@ -9,9 +9,9 @@ import { db, auth } from '../firebase/config';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
 import AEShareForm from '../components/AEShareForm';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import ModuleNav from '../components/ModuleNav';
 
 const MODULE_ID = 'dpa-intelligence';
 
@@ -632,6 +632,7 @@ function ProgramCard({ program, eligibility, lenderStatus, onLenderChange, stack
       borderRadius: 10, overflow: 'hidden', transition: 'border-color 0.2s, box-shadow 0.2s',
       boxShadow: stackSelected ? `0 0 0 2px ${C.blue}33` : 'none',
     }}>
+      <ModuleNav moduleNumber={15} />
       {/* Card Header */}
       <div style={{ padding: '14px 16px 12px', borderBottom: `1px solid ${C.border}` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
@@ -1386,8 +1387,7 @@ export default function DPAIntelligence() {
         />
       )}
 
-      <CanonicalSequenceBar currentModuleId={MODULE_ID} scenarioId={scenarioId} />
-    </div>
+</div>
   );
 }
 

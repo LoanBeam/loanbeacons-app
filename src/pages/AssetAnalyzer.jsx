@@ -12,6 +12,7 @@ import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import ModuleNav from '../components/ModuleNav';
 
 const ASSET_TYPES = [
   { id: 'checking',        label: 'Checking Account',               icon: '🏦', pct: 100, docs: '2 months bank statements',                                                                    seasoned: true  },
@@ -302,6 +303,7 @@ Flags should cover: seasoning issues, unverified deposits, overdrafts, non-payro
   // ── Loading / Scenario Picker ───────────────────────────────────────────────
   if (loading) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <ModuleNav moduleNumber={4} />
       <div className="animate-spin w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full" />
     </div>
   );

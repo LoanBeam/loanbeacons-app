@@ -9,8 +9,7 @@ import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { collection, addDoc, doc, getDoc, getDocs, setDoc, updateDoc } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { db } from '../firebase/config';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 // ── Program DTI Limits ─────────────────────────────────────────────
 // guideline = standard underwriting target
 // backMax   = AUS maximum (DU/LPA/GUS approval can exceed guideline up to this)
@@ -935,6 +934,7 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
     const hasMore = !q && !showAll && filtered.length > 5;
     return (
       <div className="min-h-screen bg-slate-50">
+      <ModuleNav moduleNumber={7} />
         <div className="bg-gradient-to-br from-slate-900 to-violet-950 px-6 py-10">
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
@@ -1716,7 +1716,6 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
           </div>
         )}
       </div>
-      <CanonicalSequenceBar currentModuleKey="DEBT_CONSOLIDATION" scenarioId={activeScenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

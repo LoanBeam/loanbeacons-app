@@ -2,8 +2,7 @@ import { useState, useEffect } from "react";
 import { db } from "../firebase/config";
 import { doc, getDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { useSearchParams } from "react-router-dom";
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 function calcPI(b, r, m) {
   if (!b || !r || !m) return 0;
   const mo = r / 100 / 12;
@@ -19,6 +18,7 @@ const STEPS = ["Eligibility","Seasoning","Loan Type","Loan Details","Pricing & C
 function ProgressBar({cur}) {
   return (
     <div className="mb-8">
+      <ModuleNav moduleNumber={11} />
       <div className="flex items-start justify-between mb-2">
         {STEPS.map((s,i)=>(
           <div key={i} className="flex flex-col items-center" style={{width:`${100/STEPS.length}%`}}>
@@ -1537,7 +1537,6 @@ export default function VAIRRRLIntelligence() {
           </div>
         )}
       </div>
-      <CanonicalSequenceBar currentModuleKey="VA_IRRRL" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

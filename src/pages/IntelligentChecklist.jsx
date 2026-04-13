@@ -10,6 +10,7 @@ import { useDecisionRecord } from '../hooks/useDecisionRecord'
 import { MODULE_KEYS } from '../constants/decisionRecordConstants'
 import DecisionRecordBanner from '../components/DecisionRecordBanner'
 import CanonicalSequenceBar from '../components/CanonicalSequenceBar'
+import ModuleNav from '../components/ModuleNav';
 
 // ─────────────────────────────────────────────────────────────
 // CONDITION LIBRARY
@@ -325,6 +326,7 @@ Write a friendly borrower letter that: (1) thanks them warmly, (2) explains in p
 
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <ModuleNav moduleNumber={28} />
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
 
       {/* Hero */}
@@ -724,7 +726,6 @@ Write a friendly borrower letter that: (1) thanks them warmly, (2) explains in p
         )}
       </div>
 
-      <CanonicalSequenceBar currentModuleKey="INTELLIGENT_CHECKLIST" scenarioId={scenarioIdParam} recordId={savedRecordId} />
-    </div>
+</div>
   )
 }

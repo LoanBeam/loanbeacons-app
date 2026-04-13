@@ -10,8 +10,7 @@ import AddressValidationBadge from '../components/AddressValidationBadge';
 import CRASnapshotCard from '../components/CRASnapshotCard';
 import { useCRAEligibility } from '../hooks/useCRAEligibility';
 import { parseURLA, getImportSummary } from '../utils/parseURLA';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 // ── Loan Types grouped by Loan Purpose ────────────────────────────────────────
 const LOAN_TYPES_BY_PURPOSE = {
   PURCHASE: [
@@ -852,6 +851,7 @@ function ScenarioCreator() {
   if (showTlsPrompt && savedScenarioId) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center px-4 py-12">
+      <ModuleNav moduleNumber={1} />
         <div className="max-w-lg w-full space-y-6">
 
           {/* Success banner */}
@@ -2368,7 +2368,6 @@ function ScenarioCreator() {
 
         </form>
       </div>
-    <CanonicalSequenceBar currentModuleKey="SCENARIO_CREATOR" scenarioId={id} recordId={null} />
 </div>
   );
 }

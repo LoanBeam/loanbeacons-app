@@ -9,8 +9,7 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 // ─── Data ─────────────────────────────────────────────────────────────────────
 const PROPERTY_TYPES = [
   { id: 'sfr',          label: 'Single Family Residence',    icon: '🏠', eligible: ['FHA','VA','USDA','Conventional','Jumbo'], notes: 'All programs. Standard guidelines apply.' },
@@ -122,6 +121,7 @@ function FlipEligibilityTimeline({ priorDate, pctGain, loanType }) {
 
   return (
     <div className="mt-4 border-t border-slate-200 pt-4 space-y-2">
+      <ModuleNav moduleNumber={16} />
       <div className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-3">📅 Flip Rule — Eligibility by Program</div>
 
       {/* FHA */}
@@ -1019,7 +1019,6 @@ export default function CollateralIntel() {
           </div>
         </div>
       </div>
-      <CanonicalSequenceBar currentModuleKey="PROPERTY_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

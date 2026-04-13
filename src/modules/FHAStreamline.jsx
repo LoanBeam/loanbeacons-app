@@ -9,8 +9,7 @@ import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db } from '../firebase/config';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 // ─── FHA Rules ────────────────────────────────────────────────────────────────
 const FHA_RULES = {
   NTB_COMBINED_RATE_REDUCTION: 0.50,
@@ -570,6 +569,7 @@ export default function FHAStreamline() {
   // ── JSX ───────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
+      <ModuleNav moduleNumber={10} />
 
       {/* Header */}
       <div className="bg-gradient-to-r from-blue-800 to-blue-600 text-white px-6 py-5">
@@ -1445,7 +1445,6 @@ export default function FHAStreamline() {
           </>
         )}
       </div>
-      <CanonicalSequenceBar currentModuleKey="FHA_STREAMLINE" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

@@ -9,8 +9,7 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 const LOCK_PERIODS = [
   { days: 15, adj: -0.125, note: 'Best price. Tight closing timeline. Use only if ready to close within days.' },
   { days: 30, adj: 0,      note: 'Standard lock. Par pricing. Most common choice for purchase transactions.' },
@@ -464,6 +463,7 @@ export default function RateIntel() {
 
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <ModuleNav moduleNumber={22} />
       <div className="text-center"><div className="text-5xl mb-4">🔒</div><div className="text-slate-500">Loading...</div></div>
     </div>
   );
@@ -1083,7 +1083,6 @@ export default function RateIntel() {
           </div>
         </div>
       </div>
-      <CanonicalSequenceBar currentModuleKey="RATE_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

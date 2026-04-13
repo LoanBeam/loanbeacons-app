@@ -10,8 +10,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 // ─── Program DTI Limits ───────────────────────────────────────────────────────
 const PROGRAMS = {
   FHA:          { label: 'FHA',          frontMax: 46.9, backMax: 56.9, minCredit: 580, notes: 'AUS Accept/Eligible can exceed limits with compensating factors' },
@@ -176,6 +175,7 @@ function dtiColor(dti, max) {
 function Section({ title, subtitle, icon, children }) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-5">
+      <ModuleNav moduleNumber={2} />
       <div className="mb-4">
         <div className="flex items-center gap-2 mb-0.5">
           {icon && <span className="text-lg">{icon}</span>}
@@ -1167,7 +1167,6 @@ export default function QualifyingIntel() {
           </div>
         </div>
       </div>
-      <CanonicalSequenceBar currentModuleKey="QUALIFYING_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

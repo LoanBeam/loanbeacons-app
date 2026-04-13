@@ -11,6 +11,7 @@ import { doc, getDoc, collection, getDocs, updateDoc, serverTimestamp } from 'fi
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import ModuleNav from '../components/ModuleNav';
 
 const SCORE_TIERS = [
   { min: 760, label: 'Excellent',     badge: 'bg-emerald-100 text-emerald-700', desc: 'Best pricing on all programs. No overlays apply.' },
@@ -534,6 +535,7 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
 
   if (loading) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <ModuleNav moduleNumber={5} />
       <div className="animate-spin w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full" />
     </div>
   );

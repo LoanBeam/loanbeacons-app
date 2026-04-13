@@ -8,6 +8,7 @@ import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import ModuleNav from '../components/ModuleNav';
 
 const LS_KEY = (id) => `lb_titleintel_${id}`;
 
@@ -313,6 +314,7 @@ STOP: any critical issue making closing impossible today. HIGH_RISK: 2+ HIGH ite
     const hasMore = !q && !showAll && filtered.length > 5;
     return (
       <div className="min-h-screen bg-slate-50">
+      <ModuleNav moduleNumber={17} />
         <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-10">
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>

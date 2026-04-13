@@ -9,8 +9,7 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 // ─── Data ─────────────────────────────────────────────────────────────────────
 const COMPLIANCE_CHECKS = [
   { id: 'qm_status',       category: 'QM / ATR',    icon: '⚖️', risk: 'critical', label: 'Qualified Mortgage (QM) Status',          description: 'Loan meets QM definition under Reg Z §1026.43. Safe Harbor (APR ≤ APOR+1.5%) or Rebuttable Presumption (HPML QM). Non-QM loans must still meet ATR requirements.', tips: 'Verify points & fees ≤3%, no balloon, no negative amortization, term ≤30 years, DTI ≤43% (or GSE/agency eligible). Document which QM category applies.' },
@@ -114,6 +113,7 @@ function LetterCard({ title, icon, body }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="rounded-3xl border-2 border-purple-200 bg-purple-50 overflow-hidden">
+      <ModuleNav moduleNumber={27} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
         <div className="flex gap-2">
@@ -902,7 +902,6 @@ Return ONLY valid JSON (no markdown, no preamble):
         </div>
       </div>
 
-      <CanonicalSequenceBar currentModuleKey="COMPLIANCE_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

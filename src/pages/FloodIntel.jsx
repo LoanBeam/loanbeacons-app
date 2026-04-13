@@ -9,8 +9,7 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 // ─── Data ─────────────────────────────────────────────────────────────────────
 const FLOOD_ZONES = [
   { zone: 'AE',    sfha: true,  risk: 'HIGH',     icon: '🔴', label: 'Zone AE — High Risk (BFE Determined)',      description: 'SFHA with Base Flood Elevation established. Most common high-risk zone. 1% annual chance of flooding. Flood insurance REQUIRED.',  color: 'red' },
@@ -85,6 +84,7 @@ function LetterCard({ body }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="rounded-3xl border-2 border-cyan-200 bg-cyan-50 overflow-hidden">
+      <ModuleNav moduleNumber={25} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">📋 Flood Insurance Summary Letter</div>
         <div className="flex gap-2">
@@ -828,7 +828,6 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
         </div>
       </div>
 
-      <CanonicalSequenceBar currentModuleKey="FLOOD_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

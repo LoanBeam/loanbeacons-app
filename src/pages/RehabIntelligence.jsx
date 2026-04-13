@@ -9,8 +9,7 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 // ─── Cost Ranges ──────────────────────────────────────────────────────────────
 const COST_RANGES = {
   ROOF_REPLACEMENT:  { low: 8000,   high: 20000,  label: 'Roof Replacement' },
@@ -367,6 +366,7 @@ function LetterCard({ title, icon, body, color = 'violet' }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className={'rounded-3xl border-2 overflow-hidden ' + (color === 'violet' ? 'border-violet-200 bg-violet-50' : 'border-blue-200 bg-blue-50')}>
+      <ModuleNav moduleNumber={20} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
         <div className="flex gap-2">
@@ -1748,7 +1748,6 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
           </div>
         </div>
       </div>
-      <CanonicalSequenceBar currentModuleKey="REHAB_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }
