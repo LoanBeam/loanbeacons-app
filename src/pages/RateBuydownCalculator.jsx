@@ -57,14 +57,14 @@ const WHEN_TO_USE = [
     scenario: 'Seller Concession Negotiation',
     icon: '🏠',
     color: 'emerald',
-    description: 'Instead of asking for a price reduction, use seller concessions to permanently buy down the rate. Often more valuable than a price cut.',
+    description: "Instead of asking for a price reduction, use seller concessions to permanently buy down the rate. Often more valuable than a price cut.",
     tip: 'A $5,000 seller concession toward rate buydown can save more over 5 years than a $5,000 price reduction.',
   },
   {
     scenario: 'Rate Sheet Comparison',
     icon: '📋',
     color: 'blue',
-    description: 'Compare multiple rate/price combinations from your pricing engine to find the optimal tradeoff for the borrower\'s specific situation.',
+    description: "Compare multiple rate/price combinations from your pricing engine to find the optimal tradeoff for the borrower's specific situation.",
     tip: 'Run 3-4 options at once to show the borrower exactly where the best value is on the rate sheet.',
   },
   {
@@ -144,7 +144,7 @@ function buildLetter(type, borrowerName, scenarioName, loanAmount, baselineRate,
     lines.push('* A rate buydown directly reduces the monthly payment dollar-for-dollar based on the rate change.');
     lines.push('* A price reduction affects the appraisal and neighborhood comparables. A concession does not.');
     lines.push('');
-    lines.push('YOUR BUYER\'S NUMBERS');
+    lines.push("YOUR BUYER'S NUMBERS");
     lines.push('Loan Amount: ' + fmt(loanAmount));
     lines.push('Baseline Rate: ' + baselineRate + '%');
     if (best) {
@@ -162,7 +162,7 @@ function buildLetter(type, borrowerName, scenarioName, loanAmount, baselineRate,
     lines.push('');
     lines.push('I can model any offer scenario instantly -- just send me the proposed concession amount and I will show you exactly what rate and payment your buyer would receive.');
     lines.push('');
-    lines.push('Let\'s win this deal together.');
+    lines.push("Let's win this deal together.");
     lines.push('');
     lines.push('Best regards,');
   }
@@ -236,17 +236,17 @@ function BuydownLetter({ borrowerName, scenarioName, loanAmount, baselineRate, p
       <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-6 py-4 flex items-center justify-between">
         <div>
           <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Communication Tools</div>
-          <h3 className="text-white font-bold text-lg">Borrower & Realtor Letters</h3>
+          <h3 className="text-white font-bold text-lg">Borrower &amp; Realtor Letters</h3>
           <p className="text-slate-400 text-xs mt-0.5">Auto-generated from your analysis. Review before sending.</p>
         </div>
-        <span className="text-3xl">&#x2709;&#xFE0F;</span>
+        <span className="text-3xl">✉️</span>
       </div>
       <div className="p-6 space-y-4">
         <div className="flex gap-2">
-          {[['borrower', '&#x1F464; Borrower Letter'], ['realtor', '&#x1F3E0; Realtor Letter']].map(([val, label]) => (
+          {[['borrower', '👤 Borrower Letter'], ['realtor', '🏠 Realtor Letter']].map(([val, label]) => (
             <button key={val} onClick={() => setLetterType(val)}
               className={'px-5 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ' + (letterType === val ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400')}>
-              <span dangerouslySetInnerHTML={{ __html: label }} />
+              {label}
             </button>
           ))}
         </div>
@@ -256,12 +256,11 @@ function BuydownLetter({ borrowerName, scenarioName, loanAmount, baselineRate, p
         <div className="flex gap-3">
           <button onClick={handleCopy}
             className={'flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all ' + (copied ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white')}>
-            {copied ? '&#x2713; Copied to Clipboard' : '&#x1F4CB; Copy Letter'}
-            <span dangerouslySetInnerHTML={{ __html: copied ? '&#x2713; Copied to Clipboard' : '' }} />
+            {copied ? '✓ Copied to Clipboard' : '📋 Copy Letter'}
           </button>
           <button onClick={() => window.print()}
             className="flex items-center gap-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-xl">
-            &#x1F5A8; Print
+            🖨 Print
           </button>
         </div>
       </div>
@@ -425,7 +424,7 @@ export default function RateBuydownCalculator() {
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
       <div className="text-center">
-        <div className="text-5xl mb-4 animate-pulse">&#x1F4B0;</div>
+        <div className="text-5xl mb-4 animate-pulse">💰</div>
         <div className="text-slate-500 font-medium">Loading LoanBeacons...</div>
       </div>
     </div>
@@ -436,17 +435,17 @@ export default function RateBuydownCalculator() {
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
       {/* ── Hero Header ── */}
-      <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: "200px" }}>
+      <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #3b82f6 0%, transparent 50%), radial-gradient(circle at 80% 20%, #8b5cf6 0%, transparent 40%)' }} />
         <div className="relative max-w-7xl mx-auto px-6 py-8">
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2 transition-colors">
-            &#x2190; Dashboard
+            ← Dashboard
           </button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS&#x2122; — Module 09</div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 09</div>
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">
-                Rate Buydown Calculator&#x2122;
+                Rate Buydown Calculator™
               </h1>
               <p className="text-slate-400 text-base max-w-xl leading-relaxed">
                 Compare every rate option on your pricing sheet. Find the break-even, score the tradeoff, and generate a client-ready explanation in seconds.
@@ -457,17 +456,17 @@ export default function RateBuydownCalculator() {
                 <>
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
                   <div className="text-white font-bold">{borrowerName || selectedScenario.scenarioName}</div>
-                  <div className="text-slate-400 text-sm mt-1">{fmt(loanAmount)} &#xB7; {baselineRate}% baseline &#xB7; {loanTerm === 360 ? '30yr' : '15yr'}</div>
+                  <div className="text-slate-400 text-sm mt-1">{fmt(loanAmount)} · {baselineRate}% baseline · {loanTerm === 360 ? '30yr' : '15yr'}</div>
                   <button onClick={() => { setSelectedScenario(null); setScenarioId(''); setBorrowerName(''); setShowResults(false); }}
                     className="text-xs text-blue-400 hover:text-blue-300 mt-2 block">
-                    Change scenario &#x2192;
+                    Change scenario →
                   </button>
                 </>
               ) : (
                 <>
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">No Scenario Loaded</div>
                   <div className="text-slate-400 text-sm">Select a scenario below to begin</div>
-                  <div className="text-slate-600 text-xs mt-2">&#x2193; Choose from your pipeline</div>
+                  <div className="text-slate-600 text-xs mt-2">↓ Choose from your pipeline</div>
                 </>
               )}
             </div>
@@ -480,7 +479,9 @@ export default function RateBuydownCalculator() {
         <div className="bg-[#1B3A6B] px-6 py-3">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-1">
             <span className="text-white font-bold text-sm">{borrowerName}</span>
-            {selectedScenario?.streetAddress && <span className="text-blue-200 text-xs">{[selectedScenario.streetAddress, selectedScenario.city, selectedScenario.state].filter(Boolean).join(', ')}</span>}
+            {selectedScenario?.streetAddress && (
+              <span className="text-blue-200 text-xs">{[selectedScenario.streetAddress, selectedScenario.city, selectedScenario.state].filter(Boolean).join(', ')}</span>
+            )}
             <div className="flex flex-wrap gap-x-4 text-xs text-blue-200">
               {loanAmount > 0 && <span>Loan <strong className="text-white">{fmt(loanAmount)}</strong></span>}
               {baselineRate > 0 && <span>Baseline <strong className="text-white">{baselineRate}%</strong></span>}
@@ -490,7 +491,7 @@ export default function RateBuydownCalculator() {
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Rate Buydown Calculator&#x2122;" moduleNumber="09" scenarioId={scenarioId} />
+      <ScenarioHeader moduleTitle="Rate Buydown Calculator™" moduleNumber="09" scenarioId={scenarioId} />
 
       <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
         <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="RATE_BUYDOWN" />
@@ -509,14 +510,13 @@ export default function RateBuydownCalculator() {
                 <div className="text-slate-500 text-sm">Learn when to use this tool, what every field means, and how to talk to borrowers about it</div>
               </div>
             </div>
-            <div className='w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500'>
-              &#x25BC;
+            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500">
+              ▼
             </div>
           </button>
 
           {showGuide && (
             <div className="border-t border-slate-100">
-              {/* When to use */}
               <div className="px-8 pt-6 pb-4">
                 <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">When Should You Use This Module?</div>
                 <div className="grid grid-cols-2 gap-4">
@@ -541,7 +541,7 @@ export default function RateBuydownCalculator() {
                         </div>
                         <p className="text-xs leading-relaxed mb-3 opacity-80">{w.description}</p>
                         <div className={'text-xs rounded-xl px-3 py-2 font-medium ' + tipColors[w.color]}>
-                          &#x1F4A1; {w.tip}
+                          💡 {w.tip}
                         </div>
                       </div>
                     );
@@ -549,14 +549,13 @@ export default function RateBuydownCalculator() {
                 </div>
               </div>
 
-              {/* Glossary */}
               <div className="px-8 pb-8">
                 <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Field-by-Field Glossary — Click to Expand</div>
                 <div className="grid grid-cols-2 gap-3">
                   {GLOSSARY.map((g) => <GlossaryCard key={g.term} {...g} />)}
                 </div>
                 <div className="mt-4 bg-slate-800 rounded-2xl px-5 py-4">
-                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">&#x1F4AC; What to Tell Your Borrower</div>
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">💬 What to Tell Your Borrower</div>
                   <p className="text-slate-300 text-sm leading-relaxed">
                     "I'm going to run a few rate options side by side. For each one, I'll show you exactly what you pay upfront, how much you save every month, and how long it takes to get your money back. Then I'll tell you which option makes the most sense for how long you plan to stay in the home."
                   </p>
@@ -577,7 +576,7 @@ export default function RateBuydownCalculator() {
             <div className="p-6">
               {scenarios.length === 0 ? (
                 <div className="text-center py-12">
-                  <div className="text-5xl mb-4">&#x1F4C2;</div>
+                  <div className="text-5xl mb-4">📂</div>
                   <div className="text-slate-500 mb-4">No scenarios found</div>
                   <button onClick={() => navigate('/scenario-creator')} className="bg-blue-600 text-white px-6 py-3 rounded-xl hover:bg-blue-700 font-semibold">Create New Scenario</button>
                 </div>
@@ -589,9 +588,9 @@ export default function RateBuydownCalculator() {
                       <div className="flex items-center justify-between">
                         <div>
                           <div className="font-bold text-slate-800 group-hover:text-blue-700">{s.scenarioName || 'Unnamed Scenario'}</div>
-                          <div className="text-sm text-slate-500 mt-0.5">{fmt(s.loanAmount)} &#xB7; {s.interestRate}% &#xB7; {s.term === 360 ? '30yr' : '15yr'}</div>
+                          <div className="text-sm text-slate-500 mt-0.5">{fmt(s.loanAmount)} · {s.interestRate}% · {s.term === 360 ? '30yr' : '15yr'}</div>
                         </div>
-                        <span className="text-blue-400 text-xl">&#x2192;</span>
+                        <span className="text-blue-400 text-xl">→</span>
                       </div>
                     </button>
                   ))}
@@ -638,7 +637,7 @@ export default function RateBuydownCalculator() {
                   <div>
                     <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Baseline — Your Starting Point</div>
                     <div className="text-2xl font-black text-white">{baselineRate}%</div>
-                    <div className="text-slate-400 text-sm">{fmtD(baselinePmt)}/mo &#xB7; No points &#xB7; No credit</div>
+                    <div className="text-slate-400 text-sm">{fmtD(baselinePmt)}/mo · No points · No credit</div>
                   </div>
                   <div className="text-right">
                     <div className="text-slate-400 text-xs mb-1">Loan Amount</div>
@@ -679,8 +678,8 @@ export default function RateBuydownCalculator() {
                               className={'w-full px-4 py-2.5 border-2 rounded-xl font-bold text-lg text-center focus:outline-none transition-all ' + (isBelow ? 'border-emerald-400 bg-white text-emerald-700 focus:border-emerald-500' : isAbove ? 'border-amber-400 bg-white text-amber-700' : 'border-slate-300 bg-white text-slate-700')}
                               placeholder={baselineRate ? (baselineRate - 0.25).toFixed(3) : '6.750'} />
                             <div className="text-center text-xs mt-1" style={{ minHeight: '16px' }}>
-                              {isBelow && <span className="text-emerald-600 font-semibold">&#x25BC; {(baselineRate - rate).toFixed(3)}% below baseline</span>}
-                              {isAbove && <span className="text-amber-600 font-semibold">&#x25B2; {(rate - baselineRate).toFixed(3)}% above baseline</span>}
+                              {isBelow && <span className="text-emerald-600 font-semibold">▼ {(baselineRate - rate).toFixed(3)}% below baseline</span>}
+                              {isAbove && <span className="text-amber-600 font-semibold">▲ {(rate - baselineRate).toFixed(3)}% above baseline</span>}
                               {!isBelow && !isAbove && rate === baselineRate && <span className="text-slate-400">= baseline</span>}
                             </div>
                           </div>
@@ -695,16 +694,15 @@ export default function RateBuydownCalculator() {
                               onChange={(e) => updateRateOption(i, 'price', e.target.value)}
                               className={'w-full px-4 py-2.5 border-2 rounded-xl font-semibold focus:outline-none transition-all ' + (price < 0 ? 'border-violet-300 bg-violet-50 text-violet-700 focus:border-violet-500' : price > 0 ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-slate-200 bg-white text-slate-600')}
                               placeholder="1.500" />
-                            {upfront !== 0 && (
-                              <div className={'text-xs mt-1 font-semibold ' + (upfront < 0 ? 'text-violet-600' : 'text-orange-600')}>
-                                {upfront < 0 ? '💸 Lender pays ' + fmtD(Math.abs(upfront)) : '💳 Borrower pays ' + fmtD(upfront)}
-                              </div>
-                            )}
+                            {/* FIX: div always renders (minHeight holds space), only text is conditional — prevents layout bounce on scenario load */}
+                            <div className={'text-xs mt-1 font-semibold ' + (upfront < 0 ? 'text-violet-600' : 'text-orange-600')} style={{ minHeight: '16px' }}>
+                              {upfront !== 0 && (upfront < 0 ? '🏷 Lender pays ' + fmtD(Math.abs(upfront)) : '💳 Borrower pays ' + fmtD(upfront))}
+                            </div>
                           </div>
                           <div className="col-span-1">
                             {rateOptions.length > 1 && (
                               <button onClick={() => removeRateOption(i)} className="w-8 h-8 rounded-full bg-red-100 hover:bg-red-200 text-red-600 flex items-center justify-center text-lg transition-colors">
-                                &#x00D7;
+                                ×
                               </button>
                             )}
                           </div>
@@ -721,7 +719,7 @@ export default function RateBuydownCalculator() {
 
                 <button onClick={calculateResults}
                   className="w-full bg-slate-900 hover:bg-slate-800 text-white py-4 rounded-2xl font-bold text-lg shadow-lg">
-                  Calculate &amp; Compare &#x2192;
+                  Calculate &amp; Compare →
                 </button>
               </div>
             </div>
@@ -744,7 +742,7 @@ export default function RateBuydownCalculator() {
                         <div>
                           <div className="text-slate-400 text-xs font-bold uppercase tracking-wide mb-1">Interest Rate</div>
                           <div className="text-5xl font-black text-white">{best.rate.toFixed(3)}<span className="text-2xl text-slate-400">%</span></div>
-                          <div className="text-emerald-400 text-sm font-semibold mt-1">&#x25BC; {(baselineRate - best.rate).toFixed(3)}% vs baseline</div>
+                          <div className="text-emerald-400 text-sm font-semibold mt-1">▼ {(baselineRate - best.rate).toFixed(3)}% vs baseline</div>
                         </div>
                         <div>
                           <div className="text-slate-400 text-xs font-bold uppercase tracking-wide mb-1">Monthly Savings</div>
@@ -766,7 +764,7 @@ export default function RateBuydownCalculator() {
                         <BreakEvenBar breakEvenMonths={best.breakEvenMonths} planningHorizon={planningHorizon} />
                       </div>
                       <div className="bg-blue-900/30 border border-blue-700/40 rounded-2xl px-5 py-4">
-                        <div className="text-xs font-bold text-blue-400 uppercase tracking-wide mb-2">&#x1F4AC; What to Tell Your Borrower</div>
+                        <div className="text-xs font-bold text-blue-400 uppercase tracking-wide mb-2">💬 What to Tell Your Borrower</div>
                         <p className="text-slate-300 text-sm leading-relaxed">
                           "By paying {fmtD(best.upfrontCostUsd)} today, your monthly payment drops {fmtD(best.monthlySavings)}. You get that money back in {best.breakEvenMonths} months. After that, every single month puts {fmtD(best.monthlySavings)} back in your pocket. Over {planningHorizon} months, you come out {fmtD(best.netSavingsHorizon)} ahead."
                         </p>
@@ -780,12 +778,12 @@ export default function RateBuydownCalculator() {
                   <div className="px-8 py-5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
                     <div>
                       <h3 className="text-lg font-bold text-slate-800">All Options Compared</h3>
-                      <p className="text-slate-500 text-sm">{computedOptions.length} rate options &#xB7; {planningHorizon}-month planning horizon</p>
+                      <p className="text-slate-500 text-sm">{computedOptions.length} rate options · {planningHorizon}-month planning horizon</p>
                     </div>
                     <div className="flex gap-2 flex-wrap">
                       <button onClick={handleSaveToRecord} disabled={recordSaving}
                         className={'px-5 py-2.5 rounded-xl text-sm font-bold transition-all ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
-                        {recordSaving ? 'Saving...' : savedRecordId ? '&#x2713; Decision Record Saved' : '&#x1F4BE; Save Decision Record'}
+                        {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record'}
                       </button>
                       <button onClick={saveResults} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-xl">
                         Save to Scenario
@@ -797,28 +795,23 @@ export default function RateBuydownCalculator() {
                     <table className="w-full">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200">
-                          {['#', 'Rate', 'Upfront Cost', 'Monthly P&I', 'vs Baseline', 'Break-Even', 'Net @ ' + planningHorizon + 'mo', 'Score', 'Verdict'].map((h) => (
-                            <th key={h} className="px-5 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap"
-                              dangerouslySetInnerHTML={{ __html: h }} />
+                          {['#', 'Rate', 'Upfront Cost', 'Monthly P&I', 'vs Baseline', 'Break-Even', `Net @ ${planningHorizon}mo`, 'Score', 'Verdict'].map((h) => (
+                            <th key={h} className="px-5 py-3 text-left text-xs font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {/* Baseline row */}
                         <tr className="border-b border-slate-100 bg-slate-50/50">
-                          <td className="px-5 py-4 text-sm text-slate-400">&#x2014;</td>
+                          <td className="px-5 py-4 text-sm text-slate-400">—</td>
                           <td className="px-5 py-4 font-bold text-slate-500">{baselineRate}% <span className="text-xs font-normal text-slate-400">(baseline)</span></td>
                           <td className="px-5 py-4 text-slate-400 text-sm">$0.00</td>
                           <td className="px-5 py-4 font-semibold text-slate-500">{fmtD(baselinePmt)}</td>
                           <td className="px-5 py-4 text-slate-400 text-sm">—</td>
                           <td className="px-5 py-4 text-slate-400 text-sm">—</td>
                           <td className="px-5 py-4 text-slate-400 text-sm">—</td>
-                          <td className="px-5 py-4">
-                            <span className="px-2 py-1 bg-slate-100 text-slate-500 text-xs font-bold rounded-lg">—</span>
-                          </td>
-                          <td className="px-5 py-4">
-                            <span className="px-3 py-1.5 bg-slate-200 text-slate-600 text-xs font-bold rounded-xl">Starting Point</span>
-                          </td>
+                          <td className="px-5 py-4"><span className="px-2 py-1 bg-slate-100 text-slate-500 text-xs font-bold rounded-lg">—</span></td>
+                          <td className="px-5 py-4"><span className="px-3 py-1.5 bg-slate-200 text-slate-600 text-xs font-bold rounded-xl">Starting Point</span></td>
                         </tr>
                         {computedOptions.map((o) => (
                           <tr key={o.index} className={'border-b border-slate-100 transition-colors ' + (o.badge === 'Best Long-Term' ? 'bg-blue-50/40' : 'hover:bg-slate-50')}>
@@ -872,7 +865,7 @@ export default function RateBuydownCalculator() {
 
                   {/* Loan product notes */}
                   <div className="mx-6 mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-5">
-                    <div className="font-bold text-amber-800 text-sm mb-3">&#x26A0;&#xFE0F; Important — Results Vary by Loan Product</div>
+                    <div className="font-bold text-amber-800 text-sm mb-3">⚠️ Important — Results Vary by Loan Product</div>
                     <div className="grid grid-cols-2 gap-x-8 gap-y-2">
                       {[
                         ['FHA', 'Seller concessions capped at 6%. MIP is unaffected by rate buydown.'],
