@@ -1,11 +1,13 @@
 // src/pages/DebtConsolidation.jsx
-// LoanBeacons™ — Module 6 | Stage 1: Pre-Structure
+// LoanBeacons™ — Module 7 | Stage 1: Pre-Structure
 // Debt Resolution Engine™ — Corrected minimum-cost algorithm + legally compliant borrower PDF
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import NextStepCard from '../components/NextStepCard';
 import { collection, addDoc, doc, getDoc, getDocs, setDoc, updateDoc } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { db } from '../firebase/config';
@@ -582,6 +584,7 @@ export default function DebtConsolidation() {
   const { reportFindings } = useDecisionRecord(activeScenarioId);
   const [savedRecordId, setSavedRecordId] = useState(null);
   const [recordSaving,  setRecordSaving]  = useState(false);
+  const [findingsReported, setFindingsReported] = useState(false);
 
   useEffect(() => {
     loadScenarios();
@@ -873,6 +876,28 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
     setNewTradeline({ creditor_name_raw: '', debt_type: 'REVOLVING', balance: '', reported_monthly_payment: '', documented_monthly_payment: '', account_last4: '', status: 'OPEN', idr_verified_zero: false });
   };
 
+  // ── Next Step Intelligence™ ──────────────────────────────────────────────
+  const rawPurpose = (selectedScenario?.loanPurpose || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('cash') ? 'cash_out_refi'
+    : rawPurpose.includes('rate') || rawPurpose.includes('term') || rawPurpose.includes('refi') ? 'rate_term_refi'
+    : 'purchase';
+
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'DEBT_CONSOLIDATION_INTEL',
+      loanPurpose,
+      decisionRecordFindings:  {
+        DEBT_CONSOLIDATION_INTEL: {
+          dtiAfterConsolidation: parseFloat((plan?.dtiAfterPayoff || 0).toFixed(1)),
+          projectedDTI:          parseFloat((plan?.dtiAfterPayoff || 0).toFixed(1)),
+        }
+      },
+      scenarioData:            selectedScenario || {},
+      completedModules:        [],
+      scenarioId:              activeScenarioId,
+      onWriteToDecisionRecord: null,
+    });
+
   const handleSave = async () => {
     if (!selectedScenario) return;
     setSaving(true);
@@ -910,6 +935,7 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
       });
       if (writtenId) {
         setSavedRecordId(writtenId);
+        setFindingsReported(true);
         logAudit('DECISION_RECORD_SAVED', writtenId, { dti: parseFloat(currentDTI.toFixed(1)), payToClose: plan?.payToCloseCost || 0 });
       }
     } catch (e) { console.error(e); }
@@ -934,7 +960,7 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
     const hasMore = !q && !showAll && filtered.length > 5;
     return (
       <div className="min-h-screen bg-slate-50">
-      <ModuleNav moduleNumber={6} />
+      <ModuleNav moduleNumber={7} />
         <div className="bg-gradient-to-br from-slate-900 to-violet-950 px-6 py-10">
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
@@ -1022,6 +1048,7 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
       {toast && <div className="fixed top-4 right-4 bg-gray-900 text-white px-5 py-3 rounded-xl shadow-lg z-50 text-sm font-semibold">{toast}</div>}
 
       <div className="max-w-6xl mx-auto px-4">
+        <ModuleNav moduleNumber={7} />
 
         {/* Header */}
         <div className="bg-gradient-to-br from-slate-900 to-violet-950 text-white rounded-2xl px-6 py-5 mb-6">
@@ -1031,7 +1058,7 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
                 <button onClick={() => setSelectedScenario(null)} className="text-violet-300 hover:text-white text-xs">← Scenarios</button>
                 <span className="text-violet-400">|</span>
                 <span className="text-xs font-bold tracking-widest text-violet-300 uppercase">Stage 1 — Pre-Structure</span>
-                <span className="bg-violet-500/30 text-violet-200 text-xs px-2 py-0.5 rounded-full border border-violet-400/30">Module 6</span>
+                <span className="bg-violet-500/30 text-violet-200 text-xs px-2 py-0.5 rounded-full border border-violet-400/30">Module 7</span>
               </div>
               <h1 className="text-2xl font-bold">Debt Resolution Engine™</h1>
               <p className="text-violet-300 text-sm mt-0.5">
@@ -1415,6 +1442,17 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
                   </div>
                 )}
               </>
+            )}
+
+            {activeScenarioId && findingsReported && (
+              <NextStepCard
+                suggestion={primarySuggestion}
+                secondarySuggestions={secondarySuggestions}
+                onFollow={logFollow}
+                onOverride={logOverride}
+                loanPurpose={loanPurpose}
+                scenarioId={activeScenarioId}
+              />
             )}
 
             {activeScenarioId && (

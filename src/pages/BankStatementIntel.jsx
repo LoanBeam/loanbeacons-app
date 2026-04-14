@@ -1,5 +1,5 @@
 // src/pages/BankStatementIntel.jsx
-// LoanBeacons™ — Module 14 | Stage 1: Pre-Structure
+// LoanBeacons™ — Module 6 | Stage 1: Pre-Structure
 // Bank Statement Intelligence™ — Non-QM income qualification for self-employed borrowers
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -8,6 +8,8 @@ import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import NextStepCard from '../components/NextStepCard';
 import ScenarioHeader from '../components/ScenarioHeader';
 import ModuleNav from '../components/ModuleNav';
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -167,7 +169,7 @@ function LetterCard({ title, icon, body, color = 'violet' }) {
   const btnMap   = { violet: 'bg-violet-700 hover:bg-violet-600', blue: 'bg-blue-700 hover:bg-blue-600', emerald: 'bg-emerald-700 hover:bg-emerald-600' };
   return (
     <div className={'rounded-3xl border-2 overflow-hidden ' + colorMap[color]}>
-      <ModuleNav moduleNumber={7} />
+      <ModuleNav moduleNumber={6} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
         <div className="flex gap-2">
@@ -510,6 +512,29 @@ Return ONLY valid JSON, no markdown: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|WEAK
   };
 
   // ─── Decision Record ──────────────────────────────────────────────────────────
+  // ─── Next Step Intelligence™ ──────────────────────────────────────────────
+  const rawPurpose = (scenario?.loanPurpose || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('cash')
+    ? 'cash_out_refi'
+    : rawPurpose.includes('rate') || rawPurpose.includes('term') || rawPurpose.includes('refi')
+      ? 'rate_term_refi'
+      : 'purchase';
+
+  const nsiFindings = {
+    incomeConfirmed: calc?.qualifyingMonthly > 0 && (calc?.score >= 70),
+  };
+
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'BANK_STATEMENT_INTEL',
+      loanPurpose,
+      decisionRecordFindings:  { BANK_STATEMENT_INTEL: nsiFindings },
+      scenarioData:            scenario || {},
+      completedModules:        [],
+      scenarioId,
+      onWriteToDecisionRecord: null,
+    });
+
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
@@ -585,7 +610,7 @@ Return ONLY valid JSON, no markdown: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|WEAK
       <div className="bg-slate-900 px-6 py-10">
         <div className="max-w-2xl mx-auto">
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
-          <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 14</div>
+          <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 6</div>
           <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Bank Statement Intelligence™</h1>
           <p className="text-slate-400">Non-QM income qualification · AI extraction · Expense ratio engine · Underwriter letters</p>
         </div>
@@ -624,7 +649,7 @@ Return ONLY valid JSON, no markdown: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|WEAK
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 14</div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 6</div>
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Bank Statement Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl leading-relaxed">Non-QM income qualification · AI extraction · Expense ratio engine · Underwriter letters</p>
             </div>
@@ -662,10 +687,23 @@ Return ONLY valid JSON, no markdown: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|WEAK
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Bank Statement Intelligence™" moduleNumber="14" scenarioId={scenarioId} />
+      <ScenarioHeader moduleTitle="Bank Statement Intelligence™" moduleNumber="6" scenarioId={scenarioId} />
+      <div className="max-w-7xl mx-auto px-6 pt-2">
+        <ModuleNav moduleNumber={6} />
+      </div>
 
       <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
         <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="BANK_STATEMENT_INTEL" />
+        {savedRecordId && primarySuggestion && (
+          <NextStepCard
+            suggestion={primarySuggestion}
+            secondarySuggestions={secondarySuggestions}
+            onFollow={logFollow}
+            onOverride={logOverride}
+            loanPurpose={loanPurpose}
+            scenarioId={scenarioId}
+          />
+        )}
       </div>
 
       {/* ── Tab Bar ──────────────────────────────────────────────────────────── */}

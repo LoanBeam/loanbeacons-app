@@ -11,6 +11,8 @@ import { doc, getDoc, collection, getDocs, updateDoc, serverTimestamp } from 'fi
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import NextStepCard from '../components/NextStepCard';
 import ModuleNav from '../components/ModuleNav';
 
 const SCORE_TIERS = [
@@ -103,6 +105,7 @@ export default function CreditIntel() {
   const { reportFindings }                = useDecisionRecord(scenarioId);
   const [savedRecordId, setSavedRecordId] = useState(null);
   const [recordSaving,  setRecordSaving]  = useState(false);
+  const [findingsReported, setFindingsReported] = useState(false);
 
   const [scenario,  setScenario]  = useState(null);
   const [loading,   setLoading]   = useState(!!scenarioId);
@@ -506,6 +509,31 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
     navigator.clipboard.writeText(generateResCorePlan()).then(() => { setRescoredCopied(true); setTimeout(() => setRescoredCopied(false), 2000); });
   };
 
+  // ─── Next Step Intelligence™ ──────────────────────────────────────────────
+  const rawPurpose = (scenario?.loanPurpose || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('cash')
+    ? 'cash_out_refi'
+    : rawPurpose.includes('rate') || rawPurpose.includes('term') || rawPurpose.includes('refi')
+      ? 'rate_term_refi'
+      : 'purchase';
+
+  const nsiFindings = {
+    creditScore:     qualifyingScore || 0,
+    hasCollections:  collections.filter(c => c.status === 'open').length > 0,
+    hasDerogatory:   Object.values(derogatory).some(Boolean),
+  };
+
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'CREDIT_INTEL',
+      loanPurpose,
+      decisionRecordFindings:  { CREDIT_INTEL: nsiFindings },
+      scenarioData:            scenario || {},
+      completedModules:        [],
+      scenarioId,
+      onWriteToDecisionRecord: null,
+    });
+
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
@@ -529,6 +557,7 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
         timestamp: new Date().toISOString(),
       });
       if (writtenId) setSavedRecordId(writtenId);
+      setFindingsReported(true);
     } catch (e) { console.error(e); }
     finally { setRecordSaving(false); }
   };
@@ -568,6 +597,7 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
   return (
     <div className="min-h-screen bg-gray-50 py-6 pb-24">
       <div className="max-w-5xl mx-auto px-4">
+        <ModuleNav moduleNumber={5} />
 
         {/* Header */}
         <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-2xl px-6 py-5 mb-6">
@@ -1256,6 +1286,17 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
                 placeholder="Credit analysis notes, LOE explanations, rescore plan details..."
                 className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-300 resize-none" />
             </div>
+
+            {scenarioId && findingsReported && (
+              <NextStepCard
+                suggestion={primarySuggestion}
+                secondarySuggestions={secondarySuggestions}
+                onFollow={logFollow}
+                onOverride={logOverride}
+                loanPurpose={loanPurpose}
+                scenarioId={scenarioId}
+              />
+            )}
 
             {scenarioId && (
               <DecisionRecordBanner recordId={savedRecordId} moduleName="Credit Intelligence™" onSave={handleSaveToRecord} saving={recordSaving} />

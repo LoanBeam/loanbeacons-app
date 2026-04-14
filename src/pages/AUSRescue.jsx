@@ -5,6 +5,8 @@ import { collection, getDocs, updateDoc, doc, serverTimestamp } from 'firebase/f
 import { getDoc } from 'firebase/firestore';
 import { evaluatePrograms, rateSensitivity, PROGRAM_RULES } from './ruleEngine';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import NextStepCard from '../components/NextStepCard';
 import { calculatePathScore } from '../utils/ausRescueScoring';
 import { useSearchParams } from 'react-router-dom';
 import ProgramMigrationEngine from '../components/ProgramMigrationEngine';
@@ -131,9 +133,17 @@ export default function AUSRescue() {
   const [showScenarioPicker, setShowScenarioPicker] = useState(false); // manual override picker
 
   const { reportFindings } = useDecisionRecord(selectedScenarioId);
-  const [savedRecordId, setSavedRecordId]     = useState(null);
+  const [savedRecordId, setSavedRecordId] = useState(null);
   const [recordSaving, setRecordSaving]       = useState(false);
+  const [findingsReported, setFindingsReported] = useState(false);
   const displayRecordId = savedRecordId;
+
+  // Load savedRecordId from localStorage once scenarioId is known
+  useEffect(() => {
+    if (!selectedScenarioId) return;
+    const stored = localStorage.getItem(`lb_aus_rescue_recordId_${selectedScenarioId}`);
+    if (stored) setSavedRecordId(stored);
+  }, [selectedScenarioId]);
 
   // ── Load scenarios ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -324,15 +334,25 @@ export default function AUSRescue() {
     try {
       const activeRateSensitivity = ruleEngineInput ? rateSensitivity(ruleEngineInput, PROGRAM_RULES[program] || { maxDTI: 50 }) : null;
       const writtenRecordId = await reportFindings('AUS_RESCUE', {
-        creditScore: profile.creditScore, dti: profile.dti, interestRate: profile.interestRate, program,
-        feasibilityScore: ruleResults.feasibilityScore, feasibilityLabel: ruleResults.feasibilityLabel,
-        primaryBlocker: ruleResults.primaryBlocker, ruleResults: programResults, rateSensitivity: activeRateSensitivity,
-        recommendedPath: scoredPrograms[0]?.programCode, pathScore: scoredPrograms[0]?.pathScore,
-        scoreBreakdown: scoredPrograms[0]?.scoreBreakdown, scoringModelVersion: scoredPrograms[0]?.scoringModelVersion,
-        allProgramScores: scoredPrograms.map(p => ({ programCode: p.programCode || p.key, pathScore: p.pathScore })),
+        creditScore: profile.creditScore || null,
+        dti: profile.dti || null,
+        interestRate: profile.interestRate || null,
+        program: program || null,
+        feasibilityScore: ruleResults.feasibilityScore || null,
+        feasibilityLabel: ruleResults.feasibilityLabel || null,
+        primaryBlocker: ruleResults.primaryBlocker || null,
+        ausVerdict: currentFinding || null,
+        isApproved: isPositive || false,
+        recommendedPath: scoredPrograms?.[0]?.programCode || null,
+        pathScore: scoredPrograms?.[0]?.pathScore || null,
+        allProgramScores: (scoredPrograms || []).map(p => ({ programCode: p.programCode || p.key || null, pathScore: p.pathScore || null })),
         timestamp: new Date().toISOString(),
       });
-      if (writtenRecordId) setSavedRecordId(writtenRecordId);
+      if (writtenRecordId) {
+        setSavedRecordId(writtenRecordId);
+        if (selectedScenarioId) localStorage.setItem(`lb_aus_rescue_recordId_${selectedScenarioId}`, writtenRecordId);
+      }
+      setFindingsReported(true);
       addLog('Saved to Decision Record');
     } catch (e) { console.error('Decision Record save failed:', e); }
     finally { setRecordSaving(false); }
@@ -615,12 +635,116 @@ CRITICAL RULES:
   const bPrice = scenarioDoc?.propertyValue;
 
 
+  // ── Next Step Intelligence™ ──────────────────────────────────────────────
+  const rawPurpose = (scenarios.find(s => s.id === selectedScenarioId)?.loanPurpose || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('cash') ? 'cash_out_refi'
+    : rawPurpose.includes('rate') || rawPurpose.includes('term') || rawPurpose.includes('refi') ? 'rate_term_refi'
+    : 'purchase';
+
+  // Normalize primaryBlocker to the keys the rules engine expects
+  const rawBlocker = (ruleResults?.primaryBlocker?.type || ruleResults?.primaryBlocker || '').toUpperCase();
+  const normalizedBlocker = rawBlocker.includes('DTI') ? 'DTI'
+    : rawBlocker.includes('COLLECTION') || rawBlocker.includes('DEROGATORY') ? 'COLLECTIONS'
+    : rawBlocker.includes('LTV') || rawBlocker.includes('VALUE') ? 'LTV'
+    : '';  // empty = clean path
+
+  // Normalize feasibility label to match rules engine expected values
+  const rawFeasibility = (ruleResults?.feasibilityLabel || '').toUpperCase();
+  const normalizedFeasibility = rawFeasibility.includes('HIGH') ? 'HIGH'
+    : rawFeasibility.includes('MEDIUM') ? 'MEDIUM'
+    : rawFeasibility.includes('LOW') ? 'LOW'
+    : 'HIGH'; // default to HIGH so clean path fires
+
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'AUS_RESCUE',
+      loanPurpose,
+      decisionRecordFindings: {
+        AUS_RESCUE: {
+          primaryBlocker:     normalizedBlocker,
+          PRIMARY_BLOCKER:    normalizedBlocker,
+          feasibility:        normalizedFeasibility,
+          FEASIBILITY:        normalizedFeasibility,
+          recommendedProgram: scoredPrograms?.[0]?.programCode || '',
+        }
+      },
+      scenarioData:            scenarios.find(s => s.id === selectedScenarioId) || {},
+      completedModules:        [],
+      scenarioId:              selectedScenarioId,
+      onWriteToDecisionRecord: null,
+    });
+
+  // ── Deterministic NSI suggestion — bypasses hook timing issues ───────────
+  const deterministicSuggestion = useMemo(() => {
+    // No DU/LP uploaded yet
+    if (!currentFinding) return {
+      moduleKey: '__PLACEHOLDER__', moduleLabel: 'Run Deal Advisor™ First',
+      route: '', urgency: 'LOW', stage: 2, canSkip: true, loanPurposeRelevant: true,
+      reason: 'Upload a DU or LP PDF and run Deal Advisor™ to get a recommended next step based on actual AUS findings.',
+    };
+    // Approve/Eligible — proceed to Stage 3
+    if (isPositive) return {
+      moduleKey: 'PROPERTY_INTEL', moduleLabel: 'Collateral Intelligence',
+      route: '/property-intel', urgency: 'LOW', stage: 3, canSkip: true, loanPurposeRelevant: true,
+      reason: `${currentFinding} — AUS approval confirmed. Proceed to Stage 3: Collateral Intelligence for property condition review.`,
+    };
+    // Refer/Ineligible — blocker-based routing
+    if (normalizedBlocker === 'DTI') return {
+      moduleKey: 'DEBT_CONSOLIDATION_INTEL', moduleLabel: 'Debt Consolidation Intelligence',
+      route: '/debt-consolidation', urgency: 'HIGH', stage: 2, canSkip: false, loanPurposeRelevant: true,
+      reason: 'PRIMARY_BLOCKER is DTI. Debt Consolidation Intelligence may resolve the approval block — run before re-submitting to AUS.',
+    };
+    if (normalizedBlocker === 'COLLECTIONS') return {
+      moduleKey: 'CREDIT_INTEL', moduleLabel: 'Credit Intelligence',
+      route: '/credit-intel', urgency: 'HIGH', stage: 1, canSkip: false, loanPurposeRelevant: true,
+      reason: 'PRIMARY_BLOCKER is collections. Return to Credit Intelligence to map a dispute path and timeline to resolution.',
+    };
+    if (normalizedBlocker === 'LTV') return {
+      moduleKey: 'PROPERTY_INTEL', moduleLabel: 'Collateral Intelligence',
+      route: '/property-intel', urgency: 'HIGH', stage: 3, canSkip: true, loanPurposeRelevant: true,
+      reason: 'PRIMARY_BLOCKER is LTV. Run Collateral Intelligence to assess property value defensibility before restructuring.',
+    };
+    // Refer with no specific blocker matched
+    return {
+      moduleKey: 'PROPERTY_INTEL', moduleLabel: 'Collateral Intelligence',
+      route: '/property-intel', urgency: normalizedFeasibility === 'HIGH' ? 'LOW' : 'MEDIUM',
+      stage: 3, canSkip: true, loanPurposeRelevant: true,
+      reason: `Feasibility ${normalizedFeasibility}. Proceed to Collateral Intelligence for property condition review.`,
+    };
+  }, [currentFinding, isPositive, normalizedBlocker, normalizedFeasibility]);
+
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
-      <ModuleNav moduleNumber={10} />
+      <ModuleNav moduleNumber={8} />
 
-      {selectedScenarioId && <DecisionRecordBanner scenarioId={selectedScenarioId} moduleKey="AUS_RESCUE" />}
+      {/* ── Decision Record + NSI — consistent with Bank Statement Intel ── */}
+      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
+        <DecisionRecordBanner
+          recordId={savedRecordId}
+          moduleName="AUS Rescue™"
+          onSave={handleSaveToRecord}
+        />
+        {currentFinding && deterministicSuggestion && deterministicSuggestion.moduleKey !== '__PLACEHOLDER__' && (
+          <NextStepCard
+            suggestion={deterministicSuggestion}
+            secondarySuggestions={[]}
+            onFollow={() => {
+              window.location.href = deterministicSuggestion.route + (selectedScenarioId ? `?scenarioId=${selectedScenarioId}` : '');
+            }}
+            onOverride={() => {}}
+            loanPurpose={loanPurpose}
+            scenarioId={selectedScenarioId}
+          />
+        )}
+        {!currentFinding && savedRecordId && (
+          <div className="mt-3 rounded-2xl border border-indigo-100 bg-indigo-50 px-5 py-4">
+            <p className="text-xs font-bold tracking-widest uppercase text-indigo-500 font-['DM_Sans']">Next Step Intelligence™</p>
+            <p className="text-sm font-semibold text-slate-700 mt-1 font-['DM_Sans']">Upload DU or LP findings to activate Deal Advisor™</p>
+            <p className="text-xs text-slate-500 font-['DM_Sans'] mt-0.5">Deal Advisor will analyze your findings and determine the recommended next step.</p>
+          </div>
+        )}
+      </div>
 
       {/* ── PAGE HEADER ── */}
       <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white px-6 py-5">
@@ -764,10 +888,7 @@ CRITICAL RULES:
                     <p className={`text-sm font-bold ${BLOCKER_COLOR[ruleResults.primaryBlocker.type] || 'text-amber-400'}`}>{ruleResults.primaryBlocker.label}</p>
                   </div>
                 )}
-                <button onClick={handleSaveToRecord} disabled={recordSaving || !currentFinding} className="mt-4 w-full bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold text-sm py-2.5 rounded-xl transition-colors">
-                  {recordSaving ? 'Saving…' : '💾 Save to Decision Record'}
-                </button>
-                {savedRecordId && <p className="text-xs text-emerald-400 mt-2 text-center">✔ Saved</p>}
+
               </div>
             )}
 

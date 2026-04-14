@@ -11,6 +11,8 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ModuleNav from '../components/ModuleNav';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import NextStepCard from '../components/NextStepCard';
 // ─── Program DTI Limits ───────────────────────────────────────────────────────
 const PROGRAMS = {
   FHA:          { label: 'FHA',          frontMax: 46.9, backMax: 56.9, minCredit: 580, notes: 'AUS Accept/Eligible can exceed limits with compensating factors' },
@@ -249,6 +251,7 @@ export default function QualifyingIntel() {
   const { reportFindings }                = useDecisionRecord(scenarioId);
   const [savedRecordId, setSavedRecordId] = useState(null);
   const [recordSaving,  setRecordSaving]  = useState(false);
+  const [findingsReported, setFindingsReported] = useState(false);
 
   const [scenario,  setScenario]  = useState(null);
   const [loading,   setLoading]   = useState(!!scenarioId);
@@ -356,6 +359,33 @@ export default function QualifyingIntel() {
   const eligiblePrograms = programResults.filter(r => r.eligible);
   const overallPass      = eligiblePrograms.length > 0;
 
+  // ─── Next Step Intelligence™ ──────────────────────────────────────────────
+  const rawPurpose = (scenario?.loanPurpose || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('cash')
+    ? 'cash_out_refi'
+    : rawPurpose.includes('rate') || rawPurpose.includes('term') || rawPurpose.includes('refi')
+      ? 'rate_term_refi'
+      : 'purchase';
+
+  const nsiFindings = {
+    dti:          parseFloat(backDTI?.toFixed(2))  || 0,
+    frontEndDTI:  parseFloat(frontDTI?.toFixed(2)) || 0,
+    creditScore:  parseInt(creditScore) || 0,
+    selfEmployed: incomes.some(i => i.type === 'self_employ'),
+    incomeType:   incomes[0]?.type || '',
+  };
+
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'QUALIFYING_INTEL',
+      loanPurpose,
+      decisionRecordFindings:  { QUALIFYING_INTEL: nsiFindings },
+      scenarioData:            scenario || {},
+      completedModules:        [],
+      scenarioId,
+      onWriteToDecisionRecord: null, // Phase 2: wire to useDecisionRecord.writeNextStepEvent
+    });
+
   // ─── Decision Record ──────────────────────────────────────────────────────
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
@@ -379,6 +409,7 @@ export default function QualifyingIntel() {
         timestamp:                new Date().toISOString(),
       });
       if (writtenId) setSavedRecordId(writtenId);
+      setFindingsReported(true);
     } catch (e) { console.error('Decision Record save failed:', e); }
     finally { setRecordSaving(false); }
   };
@@ -1077,6 +1108,17 @@ export default function QualifyingIntel() {
                 placeholder="Document qualifying rationale, compensating factors, unusual income types, or underwriter notes..."
                 className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700 focus:ring-2 focus:ring-indigo-300 resize-none" />
             </Section>
+
+            {scenarioId && findingsReported && (
+              <NextStepCard
+                suggestion={primarySuggestion}
+                secondarySuggestions={secondarySuggestions}
+                onFollow={logFollow}
+                onOverride={logOverride}
+                loanPurpose={loanPurpose}
+                scenarioId={scenarioId}
+              />
+            )}
 
             {scenarioId && (
               <DecisionRecordBanner recordId={savedRecordId} moduleName="Qualifying Intelligence™" onSave={handleSaveToRecord} saving={recordSaving} />

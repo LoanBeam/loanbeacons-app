@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { doc, getDoc, deleteDoc } from 'firebase/firestore'
+import { doc, getDoc, deleteDoc, collection, getDocs, query, where } from 'firebase/firestore'
 import { db } from '../firebase/config'
 import { useDecisionRecord } from '../hooks/useDecisionRecord'
 import DecisionRecordBanner from '../components/DecisionRecordBanner'
+import { useNextStepIntelligence, MODULE_REGISTRY } from '../hooks/useNextStepIntelligence'
+import NextStepCard from '../components/NextStepCard'
 
 // ── Build full query string from scenario object ──────────────────────────────
 function buildParams(s) {
@@ -46,8 +48,23 @@ function ScenarioDetail() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [recordSaving, setRecordSaving] = useState(false)
   const [savedRecordId, setSavedRecordId] = useState(null)
+  const [completedModules, setCompletedModules] = useState([])
 
   const { reportFindings } = useDecisionRecord(id)
+
+  // Fetch completed modules from Decision Records for this scenario
+  useEffect(() => {
+    if (!id) return
+    const fetchCompleted = async () => {
+      try {
+        const q = query(collection(db, 'decisionRecords'), where('scenarioId', '==', id))
+        const snap = await getDocs(q)
+        const keys = snap.docs.map(d => d.data().moduleKey).filter(Boolean)
+        setCompletedModules([...new Set(keys)])
+      } catch (e) { console.error(e) }
+    }
+    fetchCompleted()
+  }, [id, savedRecordId])
 
   const handleSaveToRecord = async () => {
     if (!scenario) return
@@ -102,6 +119,29 @@ function ScenarioDetail() {
       setShowDeleteConfirm(false)
     }
   }
+
+  // ── Next Step Intelligence™ ──────────────────────────────────────────────
+  const rawPurpose = (scenario?.loanPurpose || '').toLowerCase()
+  const loanPurpose = rawPurpose.includes('cash') ? 'cash_out_refi'
+    : rawPurpose.includes('rate') || rawPurpose.includes('term') || rawPurpose.includes('refi') ? 'rate_term_refi'
+    : 'purchase'
+
+  const nsiFindings = {
+    dti:         parseFloat(scenario?.backEndDTI || scenario?.dti || 0),
+    creditScore: parseInt(scenario?.creditScore || 0),
+    selfEmployed: false,
+  }
+
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'SCENARIO_CREATOR',
+      loanPurpose,
+      decisionRecordFindings:  { SCENARIO_CREATOR: nsiFindings },
+      scenarioData:            scenario || {},
+      completedModules,
+      scenarioId:              id,
+      onWriteToDecisionRecord: null,
+    })
 
   if (loading) {
     return (
@@ -158,6 +198,85 @@ function ScenarioDetail() {
           onSave={handleSaveToRecord}
           saving={recordSaving}
         />
+
+        {/* ── NEXT STEP INTELLIGENCE™ — TOP OF PAGE ───────────────────────────── */}
+        <div className="space-y-4 mb-8">
+
+          {/* Module Completion Tracker */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 px-6 py-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide font-['DM_Sans']">
+                  File Progress — Canonical Sequence™
+                </h2>
+                <p className="text-xs text-slate-400 font-['DM_Sans'] mt-0.5">
+                  {completedModules.length} of {Object.keys(MODULE_REGISTRY).length} modules logged to Decision Record
+                </p>
+              </div>
+              <span className={`text-xs font-bold px-3 py-1 rounded-full font-['DM_Sans'] border
+                ${completedModules.length === 0 ? 'bg-slate-100 text-slate-500 border-slate-200'
+                : completedModules.length >= 20 ? 'bg-green-100 text-green-700 border-green-200'
+                : 'bg-indigo-100 text-indigo-700 border-indigo-200'}`}>
+                {completedModules.length === 0 ? 'Not started' : `${Math.round((completedModules.length / Object.keys(MODULE_REGISTRY).length) * 100)}% complete`}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(MODULE_REGISTRY).map(([key, mod], idx) => {
+                const done = completedModules.includes(key)
+                const isCurrent = key === 'SCENARIO_CREATOR'
+                return (
+                  <a key={key} href={`${mod.route}?scenarioId=${s.id}`} title={mod.label}
+                    className={`group relative flex items-center justify-center w-8 h-8 rounded-full border-2 transition-all hover:scale-110
+                      ${done      ? 'bg-green-500  border-green-400  text-white'
+                      : isCurrent ? 'bg-indigo-600 border-indigo-500 text-white'
+                      :             'bg-slate-100  border-slate-200  text-slate-400 hover:border-indigo-300'}`}>
+                    <span className="text-[10px] font-black leading-none">{String(idx + 1).padStart(2, '0')}</span>
+                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] font-medium rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                      {mod.label}{done ? ' ✓' : ''}
+                    </span>
+                  </a>
+                )
+              })}
+            </div>
+            <div className="flex gap-4 mt-3 flex-wrap">
+              {[
+                { color: 'bg-slate-400',   label: 'Stage 1 — Pre-Structure'  },
+                { color: 'bg-indigo-400',  label: 'Stage 2 — Lender Fit'     },
+                { color: 'bg-violet-400',  label: 'Stage 3 — Optimization'   },
+                { color: 'bg-emerald-400', label: 'Stage 4 — Verify & Submit' },
+                { color: 'bg-green-500',   label: 'Logged to Decision Record' },
+              ].map(({ color, label }) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${color}`} />
+                  <span className="text-xs text-slate-400 font-['DM_Sans']">{label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* NSI Card */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 px-6 py-5">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3 font-['DM_Sans']">
+              Recommended Next Action
+            </p>
+            {primarySuggestion ? (
+              <NextStepCard
+                suggestion={primarySuggestion}
+                secondarySuggestions={secondarySuggestions}
+                onFollow={logFollow}
+                onOverride={logOverride}
+                loanPurpose={loanPurpose}
+                scenarioId={id}
+              />
+            ) : (
+              <div className="text-center py-6">
+                <p className="text-2xl mb-2">✅</p>
+                <p className="text-sm font-semibold text-slate-600 font-['DM_Sans']">No pending actions</p>
+                <p className="text-xs text-slate-400 font-['DM_Sans'] mt-1">All recommended modules for this scenario have been completed.</p>
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Top Actions */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
@@ -347,32 +466,6 @@ function ScenarioDetail() {
         </div>
       </div>
 
-      {/* ── WHAT'S NEXT ───────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mt-6 mx-4 sm:mx-6 lg:mx-8">
-        <h2 className="text-lg font-bold text-gray-900 mb-1">🚀 What's Next?</h2>
-        <p className="text-sm text-gray-500 mb-4">Continue the Canonical Sequence with this scenario pre-loaded.</p>
-        <div className="flex flex-wrap gap-3">
-          <a href={`/qualifying-intel?scenarioId=${s.id}`}     className="inline-flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🎯 Qualifying Intel™</a>
-          <a href={`/income-analyzer?scenarioId=${s.id}`}      className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💼 Income Analysis™</a>
-          <a href={`/asset-analyzer?scenarioId=${s.id}`}       className="inline-flex items-center gap-2 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏦 Asset Analyzer™</a>
-          <a href={`/credit-intel?scenarioId=${s.id}`}         className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📊 Credit Intel™</a>
-          <a href={`/bank-statement-intel?scenarioId=${s.id}`} className="inline-flex items-center gap-2 bg-sky-600 hover:bg-sky-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏛 Bank Statement™</a>
-          <a href={`/lender-match?${params}`}                  className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏅 Lender Match™</a>
-          <a href={`/aus-rescue?${params}`}                    className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🚨 AUS Rescue™</a>
-          <a href={`/dpa-intelligence?${params}`}              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🏠 DPA Intelligence™</a>
-          <a href={`/fha-streamline?${params}`}                className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📋 FHA Streamline™</a>
-          <a href={`/va-irrrl?${params}`}                      className="inline-flex items-center gap-2 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🎖️ VA IRRRL™</a>
-          <a href={`/usda-intelligence?${params}`}             className="inline-flex items-center gap-2 bg-lime-600 hover:bg-lime-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🌾 USDA Intelligence™</a>
-          <a href={`/conventional-refi?scenarioId=${s.id}`}    className="inline-flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white font-semibold px-4 py-2 rounded-lg text-sm">🔄 Conventional Refi Intel™</a>
-          <a href={`/conventional-refi?scenarioId=${s.id}`}    className="inline-flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white font-semibold px-4 py-2 rounded-lg text-sm">🔄 Conventional Refi Intel™</a>
-          <a href={`/rate-buydown?${params}`}                  className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💰 Rate Buydown™</a>
-          <a href={`/arm-structure?${params}`}                 className="inline-flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">📈 ARM Structure™</a>
-          <a href={`/mi-optimizer?${params}`}                  className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🛡️ MI Optimizer™</a>
-          <a href={`/debt-consolidation?${params}`}            className="inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">💳 Debt Consolidation™</a>
-          <a href={`/rehab-intelligence?${params}`}            className="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold px-4 py-2 rounded-lg text-sm">🔧 Rehab Intelligence™</a>
-          <a href={savedRecordId ? `/decision-records/${savedRecordId}` : `/decision-records`} className="inline-flex items-center gap-2 bg-slate-700 hover:bg-slate-800 text-white font-semibold px-4 py-2 rounded-lg text-sm">📋 Decision Record™</a>
-        </div>
-      </div>
     </main>
   )
 }

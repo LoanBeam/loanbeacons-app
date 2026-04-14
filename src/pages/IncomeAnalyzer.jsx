@@ -9,6 +9,8 @@ import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import NextStepCard from '../components/NextStepCard';
 import ModuleNav from '../components/ModuleNav';
 
 // ─── Income Methods ───────────────────────────────────────────────────────────
@@ -234,6 +236,7 @@ export default function IncomeAnalyzer() {
   const { reportFindings } = useDecisionRecord(scenarioId);
   const [savedRecordId, setSavedRecordId] = useState(null);
   const [recordSaving, setRecordSaving]   = useState(false);
+  const [findingsReported, setFindingsReported] = useState(false);
 
   const [scenario, setScenario]   = useState(null);
   const [loading, setLoading]     = useState(!!scenarioId);
@@ -335,6 +338,37 @@ export default function IncomeAnalyzer() {
   const totalQualifying = groupTotals.reduce((s, g) => s + g.total, 0);
 
   // ─── Decision Record ─────────────────────────────────────────────────────
+  // ─── Next Step Intelligence™ ──────────────────────────────────────────────
+  const rawPurpose = (scenario?.loanPurpose || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('cash')
+    ? 'cash_out_refi'
+    : rawPurpose.includes('rate') || rawPurpose.includes('term') || rawPurpose.includes('refi')
+      ? 'rate_term_refi'
+      : 'purchase';
+
+  const allSources = (borrowerGroups || []).flatMap(g => g.sources || []);
+  const nsiFindings = {
+    incomeType:       allSources.some(s => s.method === 'SELF_EMPLOYED') ? 'self_employed'
+                    : allSources.some(s => s.method === 'BANK_STATEMENT') ? 'bank_statement'
+                    : allSources.some(s => s.method === '1099') ? '1099'
+                    : 'w2',
+    selfEmployed:     allSources.some(s => s.method === 'SELF_EMPLOYED'),
+    incomeSufficient: totalQualifying > 0,
+    assetsVerified:   false,
+  };
+
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'INCOME_ANALYSIS',
+      loanPurpose,
+      decisionRecordFindings:  { INCOME_ANALYSIS: nsiFindings },
+      scenarioData:            scenario || {},
+      completedModules:        [],
+      scenarioId,
+      onWriteToDecisionRecord: null,
+    });
+
+  // ─── handleSaveToRecord ───────────────────────────────────────────────────
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
@@ -349,6 +383,7 @@ export default function IncomeAnalyzer() {
         timestamp: new Date().toISOString(),
       });
       if (writtenId) setSavedRecordId(writtenId);
+      setFindingsReported(true);
     } catch (e) { console.error(e); }
     finally { setRecordSaving(false); }
   };
@@ -444,6 +479,17 @@ export default function IncomeAnalyzer() {
                 placeholder="Income calculation rationale, unusual income types, addback justifications..."
                 className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700 focus:ring-2 focus:ring-indigo-300 resize-none" />
             </div>
+
+            {scenarioId && findingsReported && (
+              <NextStepCard
+                suggestion={primarySuggestion}
+                secondarySuggestions={secondarySuggestions}
+                onFollow={logFollow}
+                onOverride={logOverride}
+                loanPurpose={loanPurpose}
+                scenarioId={scenarioId}
+              />
+            )}
 
             {scenarioId && (
               <DecisionRecordBanner recordId={savedRecordId} moduleName="Income Analyzer™" onSave={handleSaveToRecord} saving={recordSaving} />
