@@ -2,13 +2,13 @@
  * ============================================================
  * LoanBeacons Lender Match™
  * src/modules/LenderMatch.jsx
- * Version: 1.0.1 — Writes selected lender back to scenario on DR save
+ * Version: 1.1.0 — NSI wired, CanonicalSequenceBar added
  * ============================================================
  */
 import { useSearchParams } from 'react-router-dom';
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { db } from "../firebase/config";
-import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, doc, getDoc, updateDoc, getDocs, query, where } from "firebase/firestore";
 import {
   runLenderMatch,
   buildDecisionRecord,
@@ -20,7 +20,9 @@ import {
 } from "../engines/LenderMatchEngine";
 import { useLenderProfiles } from "../hooks/useLenderProfiles";
 import { useDecisionRecord } from "../hooks/useDecisionRecord";
+import { useNextStepIntelligence, MODULE_REGISTRY } from "../hooks/useNextStepIntelligence";
 import DecisionRecordBanner from "../components/DecisionRecordBanner";
+import NextStepCard from "../components/NextStepCard";
 
 import { LenderScorecardCard }   from "../components/lenderMatch/LenderScorecardCard";
 import { AlternativeLenderCard } from "../components/lenderMatch/AlternativeLenderCard";
@@ -285,12 +287,11 @@ export default function LenderMatch() {
   const [recordSaving, setRecordSaving]     = useState(false);
   const [savedRecordId, setSavedRecordId]   = useState(null);
   const [savedLenderName, setSavedLenderName] = useState(null);
-  // Borrower display info (loaded from scenario, not part of engine form)
   const [borrowerDisplay, setBorrowerDisplay] = useState({ name: '', address: '', firstTimeBuyer: false });
-  // Web search for Non-QM lenders
   const [webSearchLoading, setWebSearchLoading] = useState(false);
   const [webResults, setWebResults]             = useState(null);
   const [webSearchDone, setWebSearchDone]       = useState(false);
+  const [completedModules, setCompletedModules] = useState([]);
 
   const searchNonQMLendersOnline = useCallback(async () => {
     setWebSearchLoading(true);
@@ -337,6 +338,20 @@ export default function LenderMatch() {
   const scenarioIdParam = searchParams.get('scenarioId');
   const { reportFindings } = useDecisionRecord(scenarioIdParam);
 
+  // ── Fetch completed modules from Decision Records ─────────────────────────
+  useEffect(() => {
+    if (!scenarioIdParam) return;
+    const fetchCompleted = async () => {
+      try {
+        const q = query(collection(db, 'decisionRecords'), where('scenarioId', '==', scenarioIdParam));
+        const snap = await getDocs(q);
+        const keys = snap.docs.map(d => d.data().moduleKey).filter(Boolean);
+        setCompletedModules([...new Set(keys)]);
+      } catch (e) { console.error('[LenderMatch] completedModules fetch:', e); }
+    };
+    fetchCompleted();
+  }, [scenarioIdParam, savedRecordId]);
+
   // ── Load scenario from Firestore ─────────────────────────────────────────
   useEffect(() => {
     if (!scenarioIdParam) return;
@@ -356,7 +371,6 @@ export default function LenderMatch() {
         if (s.monthlyIncome) f('monthlyIncome', String(s.monthlyIncome));
         if (s.monthlyDebts)  f('monthlyDebts',  String(s.monthlyDebts));
         if (s.lenderName)    setSavedLenderName(s.lenderName);
-        // Borrower display info
         const name = [s.firstName, s.lastName].filter(Boolean).join(' ');
         const addr = [s.streetAddress, s.city, s.state, s.zipCode].filter(Boolean).join(', ');
         setBorrowerDisplay({ name, address: addr, firstTimeBuyer: s.firstTimeBuyer || false });
@@ -374,6 +388,28 @@ export default function LenderMatch() {
   const hasCreditEvent = form.creditEvent !== "none";
   const computedLTV    = form.loanAmount && form.propertyValue
     ? ((form.loanAmount / form.propertyValue) * 100).toFixed(1) : null;
+
+  // ── Loan purpose mapping for NSI ─────────────────────────────────────────
+  const loanPurpose = form.transactionType === 'purchase' ? 'purchase'
+    : form.transactionType === 'rateTerm'  ? 'rate_term_refi'
+    : 'cash_out_refi';
+
+  // ── NSI findings ─────────────────────────────────────────────────────────
+  const nsiFindings = {
+    matchFound: results ? (results.totalEligible > 0) : undefined,
+  };
+
+  // ── Next Step Intelligence™ ───────────────────────────────────────────────
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'LENDER_MATCH',
+      loanPurpose,
+      decisionRecordFindings:  { LENDER_MATCH: nsiFindings },
+      scenarioData:            {},
+      completedModules,
+      scenarioId:              scenarioIdParam,
+      onWriteToDecisionRecord: null,
+    });
 
   // ── Run engine ────────────────────────────────────────────────────────────
   const handleRun = useCallback(async () => {
@@ -414,6 +450,7 @@ export default function LenderMatch() {
         topLender:      results.agencySection?.eligible?.[0]?.lenderName || null,
         agencyEligible: results.agencySection?.eligible?.length || 0,
         nonQMEligible:  results.nonQMSection?.eligible?.length  || 0,
+        matchFound:     results.totalEligible > 0,
         timestamp:      new Date().toISOString(),
       });
       if (id) setSavedRecordId(id);
@@ -437,14 +474,10 @@ export default function LenderMatch() {
   const handleSaveDecisionRecord = useCallback(async (record) => {
     setSavingRecord(true);
     try {
-      // 1. Save Decision Record to Firestore
       await addDoc(collection(db, "decisionRecords"), {
         ...record,
         savedAt: serverTimestamp(),
       });
-
-      // 2. Write selected lender back to scenario so DPA Intelligence
-      //    can show the Request Approval button automatically
       if (scenarioIdParam && record.selectedLenderId) {
         await updateDoc(doc(db, 'scenarios', scenarioIdParam), {
           lenderId:         record.selectedLenderId,
@@ -454,7 +487,6 @@ export default function LenderMatch() {
         setSavedLenderName(record.profileName || '');
         console.log(`[LenderMatch] ✓ Lender written to scenario: ${record.profileName}`);
       }
-
       setDecisionModal(prev => ({ ...prev, saved: true }));
     } catch (err) {
       console.error("[LenderMatch] Error saving Decision Record:", err);
@@ -485,7 +517,6 @@ export default function LenderMatch() {
             </div>
           </div>
           <div style={S.headerMeta}>
-            {/* Show saved lender confirmation badge */}
             {savedLenderName && (
               <span style={{ ...S.engineBadge, color: T.greenLight, borderColor: T.greenBorder }}>
                 ✓ {savedLenderName} linked to scenario
@@ -528,6 +559,23 @@ export default function LenderMatch() {
       )}
 
       <main style={S.body}>
+
+        {/* ── NEXT STEP INTELLIGENCE™ ── */}
+        {scenarioIdParam && primarySuggestion && (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 px-6 py-5 mb-6">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3 font-['DM_Sans']">
+              Recommended Next Action
+            </p>
+            <NextStepCard
+              suggestion={primarySuggestion}
+              secondarySuggestions={secondarySuggestions}
+              onFollow={logFollow}
+              onOverride={logOverride}
+              loanPurpose={loanPurpose}
+              scenarioId={scenarioIdParam}
+            />
+          </div>
+        )}
 
         {/* ── FORM ── */}
         <div style={S.formSection}>
@@ -668,7 +716,6 @@ export default function LenderMatch() {
         {results && !loading && (
           <div ref={resultsRef}>
 
-            {/* ── Results transition banner — bridges light form to dark results ── */}
             <div style={{ background:"linear-gradient(to bottom, #f8fafc 0%, #0f172a 100%)", padding:"32px 0 0 0", marginBottom:"0" }}>
               <div style={{ background:"#0f172a", borderRadius:"16px 16px 0 0", padding:"24px 28px 20px", border:"1px solid #1e293b", borderBottom:"none" }}>
                 <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:"16px", flexWrap:"wrap" }}>
@@ -840,6 +887,7 @@ export default function LenderMatch() {
         />
       )}
 
-</div>
+
+    </div>
   );
 }

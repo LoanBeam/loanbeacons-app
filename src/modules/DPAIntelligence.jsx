@@ -1,1008 +1,1476 @@
-// src/modules/DPAIntelligence.jsx
-// LoanBeacons™ — DPA Intelligence™ v3.0
-// Nationwide rebuild: GA seed + Lender programs + Web search (non-GA)
-// DPA Score ranking · Stack combos · Buyer explanation AI · Prioritize toggle
+// ─── DPA Intelligence — Module 07 ────────────────────────────────────────────
+// LoanBeacons™ | Nationwide DPA Search Engine
+// Architecture: Georgia hardcoded seed + Anthropic web search for non-GA states
+// ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { doc, getDoc, collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
-import { db } from '../firebase/config';
-import { DPA_PROGRAMS } from '../data/dpa/dpaData';
-import { evaluateAllPrograms, getFreshnessLabel, getConfidenceLabel } from '../engines/dpa/dpaStackOptimizer';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { db, auth } from '../firebase/config';
+import { doc, getDoc, setDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
-import ScenarioHeader from '../components/ScenarioHeader';
-import AEShareForm from '../components/lenderMatch/AEShareForm';
+import AEShareForm from '../components/AEShareForm';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import ModuleNav from '../components/ModuleNav';
 import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
+import NextStepCard from '../components/NextStepCard';
 
-// ── CONSTANTS ─────────────────────────────────────────────────────────────────
-const APPROVAL_STATES = { APPROVED: 'approved', REQUESTED: 'requested', UNKNOWN: 'unknown' };
+const MODULE_ID = 'dpa-intelligence';
 
-const STATUS_CONFIG = {
-  PASS:        { bg: 'bg-emerald-50',  border: 'border-emerald-200', badge: 'bg-emerald-100 text-emerald-800', dot: 'bg-emerald-500', label: 'ELIGIBLE'    },
-  CONDITIONAL: { bg: 'bg-amber-50',    border: 'border-amber-200',   badge: 'bg-amber-100 text-amber-800',     dot: 'bg-amber-500',   label: 'CONDITIONAL' },
-  FAIL:        { bg: 'bg-red-50',      border: 'border-red-200',     badge: 'bg-red-100 text-red-700',         dot: 'bg-red-400',     label: 'INELIGIBLE'  },
+// ─── COLORS ──────────────────────────────────────────────────────────────────
+const C = {
+  bg: '#0f1117',
+  surface: '#1a1f2e',
+  card: '#1e2433',
+  cardHover: '#232a3a',
+  border: '#2d3448',
+  borderLight: '#374155',
+  green: '#22c55e',
+  greenDark: '#166534',
+  greenMuted: '#14532d',
+  amber: '#f59e0b',
+  amberDark: '#78350f',
+  red: '#ef4444',
+  redDark: '#7f1d1d',
+  blue: '#3b82f6',
+  blueDark: '#1e3a5f',
+  purple: '#a855f7',
+  textPrimary: '#f1f5f9',
+  textSecondary: '#94a3b8',
+  textMuted: '#64748b',
 };
 
-const TYPE_LABELS = {
-  grant:       { label: 'Grant',       color: 'bg-purple-100 text-purple-800' },
-  forgivable:  { label: 'Forgivable',  color: 'bg-blue-100 text-blue-800'    },
-  second_lien: { label: '2nd Lien',    color: 'bg-slate-100 text-slate-700'  },
-  repayable:   { label: 'Repayable',   color: 'bg-orange-100 text-orange-800'},
+// ─── GEORGIA AMI LOOKUP ───────────────────────────────────────────────────────
+const GA_AMI = {
+  // Atlanta MSA
+  fulton: 115100, dekalb: 115100, cobb: 115100, gwinnett: 115100,
+  cherokee: 115100, forsyth: 115100, henry: 115100, fayette: 115100,
+  douglas: 115100, rockdale: 115100, clayton: 115100, newton: 115100,
+  paulding: 115100, carroll: 115100, coweta: 115100, barrow: 115100,
+  bartow: 115100, hall: 115100, spalding: 115100, walton: 115100,
+  // Savannah MSA
+  chatham: 83800, bryan: 83800, effingham: 83800,
+  // Augusta MSA
+  richmond: 79200, columbia: 79200, mcduffie: 79200, burke: 79200,
+  // Columbus MSA
+  muscogee: 75200, harris: 75200, chattahoochee: 75200,
+  // Macon MSA
+  bibb: 72500, jones: 72500, monroe: 72500, crawford: 72500,
+  // Warner Robins MSA
+  houston: 79900, peach: 79900,
+  // Albany MSA
+  dougherty: 65000, lee: 65000, terrell: 65000,
 };
+const GA_NONMETRO_AMI = 69700;
+const HH_FACTOR = { 1: 0.70, 2: 0.80, 3: 0.90, 4: 1.00, 5: 1.08, 6: 1.16, 7: 1.24, 8: 1.32 };
 
-const SOURCE_BADGES = {
-  lender:     { label: '🏦 Lender Program', bg: 'bg-indigo-100 text-indigo-800'  },
-  web_search: { label: '🌐 AI Web Search',  bg: 'bg-cyan-100 text-cyan-800'      },
-  default:    { label: '🏛️ State Verified', bg: 'bg-emerald-100 text-emerald-800' },
-};
+function getAMILimit(countyRaw, amiPct, hhSize = 3) {
+  const key = (countyRaw || '').toLowerCase().replace(' county', '').trim();
+  const base = GA_AMI[key] || GA_NONMETRO_AMI;
+  return base * (HH_FACTOR[hhSize] || 1.0) * (amiPct / 100);
+}
 
-const RANKING_MODES = [
-  { key: 'balanced',         label: '🏆 Best Overall',  desc: 'Balanced across all factors',        weights: { dpa:0.35, terms:0.25, approval:0.20, cltv:0.10, stack:0.10 } },
-  { key: 'max_dpa',          label: '💰 Max DPA',       desc: 'Prioritize highest dollar amount',   weights: { dpa:0.55, terms:0.20, approval:0.10, cltv:0.08, stack:0.07 } },
-  { key: 'easiest_approval', label: '✅ Easiest Path',  desc: 'Prioritize lender-approved programs', weights: { dpa:0.15, terms:0.20, approval:0.45, cltv:0.10, stack:0.10 } },
+// ─── GEORGIA DPA SEED DATA ────────────────────────────────────────────────────
+const GEORGIA_DPA_PROGRAMS = [
+  {
+    id: 'ga-dream-standard',
+    name: 'Georgia Dream Standard',
+    shortName: 'GA Dream Standard',
+    provider: 'Georgia Dept. of Community Affairs',
+    providerAbbr: 'GDCA',
+    type: 'deferred_loan',
+    amount_type: 'fixed',
+    amount: 10000,
+    interest_rate: 0,
+    forgivable_years: null,
+    deferred_until: 'Sale, Refi, or 1st Mortgage Payoff',
+    min_fico: 640,
+    max_dti: 45,
+    max_purchase_price: 350000,
+    ami_percent: 80,
+    max_income_note: '80% AMI (county-specific)',
+    first_time_buyer_required: true,
+    broker_eligible: true,
+    eligible_loan_types: ['FHA', 'VA', 'USDA', 'Conventional'],
+    counties: 'statewide',
+    stackable: false,
+    stack_exceptions: [],
+    homebuyer_ed: true,
+    website: 'https://www.dca.ga.gov/safe-affordable-housing/homeownership/georgia-dream',
+    notes: '8-hour homebuyer education required. Cannot be layered with other DPA soft seconds. Most widely available GA program.',
+    tags: ['state', 'deferred', 'zero-interest', 'ftb'],
+  },
+  {
+    id: 'ga-dream-pen',
+    name: 'Georgia Dream PEN',
+    shortName: 'GA Dream PEN',
+    provider: 'Georgia Dept. of Community Affairs',
+    providerAbbr: 'GDCA',
+    type: 'deferred_loan',
+    amount_type: 'fixed',
+    amount: 12500,
+    interest_rate: 0,
+    forgivable_years: null,
+    deferred_until: 'Sale, Refi, or 1st Mortgage Payoff',
+    min_fico: 640,
+    max_dti: 45,
+    max_purchase_price: 350000,
+    ami_percent: 80,
+    max_income_note: '80% AMI (county-specific)',
+    first_time_buyer_required: true,
+    broker_eligible: true,
+    eligible_loan_types: ['FHA', 'VA', 'USDA', 'Conventional'],
+    counties: 'statewide',
+    stackable: false,
+    stack_exceptions: [],
+    homebuyer_ed: true,
+    occupation_required: ['Law Enforcement', 'Firefighter', 'EMS', 'Teacher', 'Healthcare Worker', 'Active Military', 'Veteran'],
+    website: 'https://www.dca.ga.gov/safe-affordable-housing/homeownership/georgia-dream',
+    notes: 'Protectors, Educators & Nurses. Borrower or co-borrower must be in qualifying occupation. Extra $2,500 over Standard.',
+    tags: ['state', 'deferred', 'zero-interest', 'ftb', 'occupation'],
+  },
+  {
+    id: 'ga-dream-choice',
+    name: 'Georgia Dream CHOICE',
+    shortName: 'GA Dream CHOICE',
+    provider: 'Georgia Dept. of Community Affairs',
+    providerAbbr: 'GDCA',
+    type: 'deferred_loan',
+    amount_type: 'fixed',
+    amount: 12500,
+    interest_rate: 0,
+    forgivable_years: null,
+    deferred_until: 'Sale, Refi, or 1st Mortgage Payoff',
+    min_fico: 640,
+    max_dti: 45,
+    max_purchase_price: 350000,
+    ami_percent: 80,
+    max_income_note: '80% AMI (county-specific)',
+    first_time_buyer_required: true,
+    broker_eligible: true,
+    eligible_loan_types: ['FHA', 'VA', 'USDA', 'Conventional'],
+    counties: 'statewide',
+    stackable: false,
+    stack_exceptions: [],
+    homebuyer_ed: true,
+    disability_required: true,
+    website: 'https://www.dca.ga.gov/safe-affordable-housing/homeownership/georgia-dream',
+    notes: 'For borrowers or household members with a documented disability. Same terms as PEN but for disability qualification.',
+    tags: ['state', 'deferred', 'zero-interest', 'ftb', 'disability'],
+  },
+  {
+    id: 'invest-atlanta-aha',
+    name: 'Invest Atlanta – Affordable Housing Initiative',
+    shortName: 'Invest ATL – AHI',
+    provider: 'Invest Atlanta',
+    providerAbbr: 'Invest ATL',
+    type: 'forgivable',
+    amount_type: 'fixed',
+    amount: 20000,
+    interest_rate: 0,
+    forgivable_years: 5,
+    deferred_until: 'Forgiven after 5 years owner-occupancy',
+    min_fico: 660,
+    max_dti: 50,
+    max_purchase_price: 400000,
+    ami_percent: 80,
+    max_income_note: '80% AMI (Atlanta MSA)',
+    first_time_buyer_required: false,
+    broker_eligible: true,
+    eligible_loan_types: ['FHA', 'Conventional'],
+    counties: ['Fulton', 'DeKalb'],
+    stackable: true,
+    stack_exceptions: ['ga-dream-standard', 'ga-dream-pen', 'ga-dream-choice'],
+    homebuyer_ed: true,
+    website: 'https://www.investatlanta.com/homebuyers',
+    notes: 'Property must be within City of Atlanta boundaries. Forgiven after 5 years. Not stackable with GA Dream soft seconds.',
+    tags: ['city', 'forgivable', 'atlanta', 'zero-interest', 'no-ftb-req'],
+  },
+  {
+    id: 'invest-atlanta-vine-city',
+    name: 'Invest Atlanta – Vine City Renaissance Initiative',
+    shortName: 'Invest ATL – Vine City',
+    provider: 'Invest Atlanta',
+    providerAbbr: 'Invest ATL',
+    type: 'grant',
+    amount_type: 'fixed',
+    amount: 30000,
+    interest_rate: 0,
+    forgivable_years: null,
+    deferred_until: null,
+    min_fico: 660,
+    max_dti: 50,
+    max_purchase_price: 300000,
+    ami_percent: 80,
+    max_income_note: '80% AMI (Atlanta MSA)',
+    first_time_buyer_required: false,
+    broker_eligible: true,
+    eligible_loan_types: ['FHA', 'Conventional'],
+    counties: ['Fulton'],
+    zip_codes: ['30314', '30318'],
+    stackable: true,
+    stack_exceptions: [],
+    homebuyer_ed: true,
+    website: 'https://www.investatlanta.com/homebuyers/vine-city',
+    notes: 'Target area: Vine City / English Avenue (zip 30314, 30318). True grant — no repayment required. Highest grant amount in GA.',
+    tags: ['city', 'grant', 'atlanta', 'target-area', 'no-repayment', 'no-ftb-req'],
+  },
+  {
+    id: 'gwinnett-county-dpa',
+    name: 'Gwinnett County DPA Program',
+    shortName: 'Gwinnett DPA',
+    provider: 'Gwinnett County Community Development',
+    providerAbbr: 'Gwinnett County',
+    type: 'deferred_loan',
+    amount_type: 'fixed',
+    amount: 7500,
+    interest_rate: 0,
+    forgivable_years: null,
+    deferred_until: 'Sale, Refi, or Transfer',
+    min_fico: 640,
+    max_dti: 43,
+    max_purchase_price: 275000,
+    ami_percent: 80,
+    max_income_note: '80% AMI (Gwinnett MSA)',
+    first_time_buyer_required: true,
+    broker_eligible: true,
+    eligible_loan_types: ['FHA', 'VA', 'Conventional'],
+    counties: ['Gwinnett'],
+    stackable: false,
+    stack_exceptions: [],
+    homebuyer_ed: true,
+    website: 'https://www.gwinnettcounty.com/web/gwinnett/departments/communitydevelopment',
+    notes: 'Gwinnett County properties only. Subject to annual funding availability. Can be used with mortgage credit certificates.',
+    tags: ['county', 'deferred', 'gwinnett', 'ftb'],
+  },
+  {
+    id: 'dekalb-county-dpa',
+    name: 'DeKalb County Affordable Housing DPA',
+    shortName: 'DeKalb DPA',
+    provider: 'DeKalb County Community Development',
+    providerAbbr: 'DeKalb County',
+    type: 'deferred_loan',
+    amount_type: 'fixed',
+    amount: 7500,
+    interest_rate: 0,
+    forgivable_years: null,
+    deferred_until: 'Sale, Refi, or Transfer',
+    min_fico: 640,
+    max_dti: 43,
+    max_purchase_price: 300000,
+    ami_percent: 80,
+    max_income_note: '80% AMI (DeKalb MSA)',
+    first_time_buyer_required: true,
+    broker_eligible: true,
+    eligible_loan_types: ['FHA', 'Conventional'],
+    counties: ['DeKalb'],
+    stackable: false,
+    stack_exceptions: [],
+    homebuyer_ed: true,
+    website: 'https://www.dekalbcountyga.gov/community-development',
+    notes: 'Unincorporated DeKalb County or eligible municipalities. Annual funding cycle — verify availability.',
+    tags: ['county', 'deferred', 'dekalb', 'ftb'],
+  },
+  {
+    id: 'savannah-dpa',
+    name: 'City of Savannah DPA Program',
+    shortName: 'Savannah DPA',
+    provider: 'City of Savannah – Housing Dept.',
+    providerAbbr: 'Savannah',
+    type: 'forgivable',
+    amount_type: 'fixed',
+    amount: 15000,
+    interest_rate: 0,
+    forgivable_years: 10,
+    deferred_until: 'Forgiven after 10 years owner-occupancy',
+    min_fico: 620,
+    max_dti: 45,
+    max_purchase_price: 300000,
+    ami_percent: 80,
+    max_income_note: '80% AMI (Savannah MSA)',
+    first_time_buyer_required: true,
+    broker_eligible: false,
+    eligible_loan_types: ['FHA', 'Conventional'],
+    counties: ['Chatham'],
+    stackable: false,
+    stack_exceptions: [],
+    homebuyer_ed: true,
+    website: 'https://www.savannahga.gov/1175/Housing-Program',
+    notes: '⚠️ Direct lenders only — not available through mortgage brokers. City of Savannah limits. 10-year forgiveness period.',
+    tags: ['city', 'forgivable', 'savannah', 'ftb', 'direct-lender-only'],
+  },
+  {
+    id: 'augusta-dpa',
+    name: 'Augusta Housing & Community Development DPA',
+    shortName: 'Augusta DPA',
+    provider: 'Augusta-Richmond County HCD',
+    providerAbbr: 'Augusta HCD',
+    type: 'deferred_loan',
+    amount_type: 'fixed',
+    amount: 5000,
+    interest_rate: 0,
+    forgivable_years: null,
+    deferred_until: 'Sale or Property Transfer',
+    min_fico: 620,
+    max_dti: 43,
+    max_purchase_price: 200000,
+    ami_percent: 80,
+    max_income_note: '80% AMI (Augusta MSA)',
+    first_time_buyer_required: true,
+    broker_eligible: false,
+    eligible_loan_types: ['FHA', 'Conventional'],
+    counties: ['Richmond'],
+    stackable: false,
+    stack_exceptions: [],
+    homebuyer_ed: true,
+    website: 'https://www.augustaga.gov/1016/Housing-Community-Development',
+    notes: '⚠️ Direct lenders only. Augusta-Richmond County properties. Subject to annual HUD funding availability.',
+    tags: ['city', 'deferred', 'augusta', 'ftb', 'direct-lender-only'],
+  },
+  {
+    id: 'chenoa-fund-fha',
+    name: 'Chenoa Fund – FHA DPA (3.5%)',
+    shortName: 'Chenoa Fund FHA',
+    provider: 'CBC Mortgage Agency',
+    providerAbbr: 'Chenoa Fund',
+    type: 'second_mortgage',
+    amount_type: 'percentage',
+    amount: 3.5,
+    interest_rate: 0,
+    forgivable_years: 3,
+    deferred_until: 'Monthly payments; forgiven if on-time for 36 months (≤115% AMI)',
+    min_fico: 600,
+    max_dti: 50,
+    max_purchase_price: null,
+    ami_percent: null,
+    max_income_note: 'No income limit — 0% rate if ≤115% AMI; 6% rate above 115%',
+    first_time_buyer_required: false,
+    broker_eligible: true,
+    eligible_loan_types: ['FHA'],
+    counties: 'statewide',
+    stackable: false,
+    stack_exceptions: [],
+    homebuyer_ed: false,
+    website: 'https://chenoafund.org',
+    notes: 'Covers full 3.5% FHA down payment. No income limit. Must repay if refi before 36 months. Nationwide — available in all GA counties.',
+    tags: ['nationwide', 'fha-only', 'no-income-limit', 'broker-friendly', 'no-ftb-req'],
+  },
+  {
+    id: 'cbcma-fha-5pct',
+    name: 'CBC Mortgage Agency – FHA DPA (5%)',
+    shortName: 'CBCMA FHA 5%',
+    provider: 'CBC Mortgage Agency',
+    providerAbbr: 'CBCMA',
+    type: 'second_mortgage',
+    amount_type: 'percentage',
+    amount: 5.0,
+    interest_rate: 0,
+    forgivable_years: null,
+    deferred_until: 'Due at sale/refi; partial forgiveness terms vary',
+    min_fico: 620,
+    max_dti: 50,
+    max_purchase_price: null,
+    ami_percent: null,
+    max_income_note: 'No income limit; rate and terms vary by program tier',
+    first_time_buyer_required: false,
+    broker_eligible: true,
+    eligible_loan_types: ['FHA'],
+    counties: 'statewide',
+    stackable: false,
+    stack_exceptions: [],
+    homebuyer_ed: false,
+    website: 'https://www.cbcma.com',
+    notes: '5% covers down payment + partial closing costs. FHA only. No income limit — great for moderate-to-upper income borrowers who still need DPA.',
+    tags: ['nationwide', 'fha-only', 'no-income-limit', 'broker-friendly', 'closing-costs', 'no-ftb-req'],
+  },
+  {
+    id: 'fhlb-atlanta-ahp',
+    name: 'FHLB Atlanta – Affordable Housing Program (AHP)',
+    shortName: 'FHLB AHP',
+    provider: 'Federal Home Loan Bank of Atlanta',
+    providerAbbr: 'FHLB Atlanta',
+    type: 'grant',
+    amount_type: 'fixed',
+    amount: 12500,
+    interest_rate: 0,
+    forgivable_years: null,
+    deferred_until: null,
+    min_fico: 620,
+    max_dti: 45,
+    max_purchase_price: null,
+    ami_percent: 80,
+    max_income_note: '80% AMI',
+    first_time_buyer_required: true,
+    broker_eligible: false,
+    eligible_loan_types: ['FHA', 'VA', 'USDA', 'Conventional'],
+    counties: 'statewide',
+    stackable: true,
+    stack_exceptions: [],
+    homebuyer_ed: true,
+    website: 'https://www.fhlbatl.com/community-investment/affordable-housing-program',
+    notes: '⚠️ Must be originated through an FHLB Atlanta member bank — not available through mortgage brokers. True grant, no repayment. Award amount varies by year ($5K–$15K typical).',
+    tags: ['federal', 'grant', 'no-repayment', 'ftb', 'bank-only'],
+  },
 ];
 
-const TYPE_SCORE = { grant: 1.0, forgivable: 0.8, second_lien: 0.5, repayable: 0.2 };
+// ─── RULE ENGINE ──────────────────────────────────────────────────────────────
+function evaluateEligibility(program, scenario) {
+  if (!scenario?.loaded) {
+    return { eligible: 'unknown', score: 50, issues: [], warnings: ['Load a scenario for eligibility analysis'], cltv: null, dpaAmount: 0 };
+  }
 
-// ── DPA SCORE ENGINE ──────────────────────────────────────────────────────────
-const computeDPAScore = (program, evaluation, approvalState, rankingMode, allPassResults, stackCombos) => {
-  const weights = RANKING_MODES.find(m => m.key === rankingMode)?.weights || RANKING_MODES[0].weights;
-  const maxDPA  = Math.max(...allPassResults.map(r => r.evaluation.dpa_amount_calculated || 0), 1);
-  const dpaScore    = Math.min((evaluation.dpa_amount_calculated || 0) / maxDPA, 1);
-  const termScore   = TYPE_SCORE[program.program_type] ?? 0.5;
-  const approvalScore = approvalState === 'approved' ? 1.0 : approvalState === 'requested' ? 0.6 : 0.3;
-  const cushion     = evaluation.cltv_details
-    ? Math.min(Math.max(0, (evaluation.cltv_details.program_max - evaluation.cltv_details.cltv_with_dpa) / 0.05), 1)
-    : 0.5;
-  const isInStack   = stackCombos.some(c => c.programs.some(p => p.program.id === program.id));
-  const stackScore  = isInStack ? 1.0 : 0;
-  const composite = dpaScore*weights.dpa + termScore*weights.terms + approvalScore*weights.approval + cushion*weights.cltv + stackScore*weights.stack;
-  return Math.round(composite * 100);
-};
+  const issues = [];
+  const warnings = [];
+  let eligible = true;
 
-// ── STACK COMBO ENGINE ────────────────────────────────────────────────────────
-const canStack = (progA, progB) => {
-  if (progA.id === progB.id) return false;
-  // Can't stack two programs from the same administering agency
-  if (progA.admin_agency && progB.admin_agency && progA.admin_agency === progB.admin_agency) return false;
-  if ((progA.stacking_rules || {}).no_subordinate_stacking || (progB.stacking_rules || {}).no_subordinate_stacking) return false;
-  return true;
-};
+  const fico = parseInt(scenario.creditScore || scenario.fico || 0);
+  const dti = parseFloat(scenario.dti || 0);
+  const purchasePrice = parseFloat(scenario.propertyValue || scenario.purchasePrice || 0);
+  const loanAmount = parseFloat(scenario.loanAmount || 0);
+  const annualIncome = parseFloat(scenario.annualIncome || (scenario.monthlyIncome || 0) * 12 || 0);
+  const loanType = (scenario.loanType || '').toUpperCase().replace('-', '').trim();
+  const isFTB = scenario.isFirstTimeBuyer === true || scenario.isFirstTimeBuyer === 'true' || scenario.firstTimeBuyer === true;
+  const county = (scenario.county || '').toLowerCase().replace(' county', '');
 
-const computeStackCombos = (results, scenario) => {
-  const passing = results.filter(r => r.evaluation.status !== 'FAIL');
-  const combos = [];
-  for (let i = 0; i < passing.length; i++) {
-    for (let j = i + 1; j < passing.length; j++) {
-      const a = passing[i], b = passing[j];
-      if (!canStack(a.program, b.program)) continue;
-      const totalDPA = (a.evaluation.dpa_amount_calculated || 0) + (b.evaluation.dpa_amount_calculated || 0);
-      if (totalDPA > 0) {
-        const combinedCLTV = scenario.loanAmount && scenario.purchasePrice
-          ? (scenario.loanAmount + totalDPA) / scenario.purchasePrice
-          : Math.max(a.evaluation.cltv_details?.cltv_with_dpa || 0, b.evaluation.cltv_details?.cltv_with_dpa || 0);
-        combos.push({ id: `${a.program.id}+${b.program.id}`, programs: [a, b], totalDPA, combinedCLTV });
-      }
+  const dpaAmount = program.amount_type === 'percentage'
+    ? (loanAmount * program.amount / 100)
+    : program.amount;
+
+  const cltv = purchasePrice > 0 ? ((loanAmount + dpaAmount) / purchasePrice * 100) : null;
+
+  // FICO
+  if (fico > 0 && fico < program.min_fico) {
+    eligible = false;
+    issues.push(`FICO ${fico} below program minimum of ${program.min_fico}`);
+  } else if (fico === 0) {
+    warnings.push('Credit score missing — FICO eligibility not verified');
+  }
+
+  // DTI
+  if (dti > 0 && dti > program.max_dti) {
+    eligible = false;
+    issues.push(`DTI ${dti.toFixed(1)}% exceeds max ${program.max_dti}%`);
+  }
+
+  // Purchase price
+  if (program.max_purchase_price && purchasePrice > program.max_purchase_price) {
+    eligible = false;
+    issues.push(`Purchase $${purchasePrice.toLocaleString()} exceeds max $${program.max_purchase_price.toLocaleString()}`);
+  }
+
+  // Loan type
+  if (loanType && program.eligible_loan_types?.length > 0) {
+    const types = program.eligible_loan_types.map(t => t.toUpperCase().replace('-', ''));
+    if (!types.includes(loanType)) {
+      eligible = false;
+      issues.push(`${loanType} not eligible — accepts: ${program.eligible_loan_types.join(', ')}`);
+    }
+  } else if (!loanType) {
+    warnings.push(`Set loan type to verify — accepts: ${program.eligible_loan_types?.join(', ') || 'varies'}`);
+  }
+
+  // First-time buyer
+  if (program.first_time_buyer_required && !isFTB) {
+    eligible = false;
+    issues.push('First-time homebuyer required — not flagged in scenario');
+  }
+
+  // AMI / Income
+  if (program.ami_percent && annualIncome > 0) {
+    const limit = getAMILimit(county, program.ami_percent, 3);
+    if (annualIncome > limit) {
+      eligible = false;
+      issues.push(`Income $${annualIncome.toLocaleString()} may exceed ${program.ami_percent}% AMI (~$${Math.round(limit).toLocaleString()}) — verify county limit`);
+    }
+  } else if (program.ami_percent && !annualIncome) {
+    warnings.push(`Income not in scenario — ${program.ami_percent}% AMI limit unverified`);
+  }
+
+  // Broker eligibility
+  if (!program.broker_eligible) {
+    warnings.push('Requires direct lender (bank) — not available through brokers');
+  }
+
+  // CLTV
+  if (cltv !== null && cltv > 105) {
+    warnings.push(`Combined LTV ${cltv.toFixed(1)}% — verify program allows > 105% CLTV`);
+  }
+
+  // Geographic
+  if (Array.isArray(program.counties)) {
+    const validCounties = program.counties.map(c => c.toLowerCase());
+    if (county && !validCounties.some(c => county.includes(c) || c.includes(county))) {
+      eligible = false;
+      issues.push(`Property not in eligible area: ${program.counties.join(', ')} only`);
+    } else if (!county) {
+      warnings.push(`Geographic restriction: ${program.counties.join(', ')} only — verify property location`);
     }
   }
-  return combos.sort((a, b) => b.totalDPA - a.totalDPA).slice(0, 4);
+
+  const score = eligible
+    ? Math.max(50, 100 - warnings.length * 8)
+    : Math.max(0, 30 - issues.length * 8);
+
+  return { eligible: eligible ? 'eligible' : 'ineligible', score, issues, warnings, cltv, dpaAmount };
+}
+
+// ─── STACKING ENGINE ──────────────────────────────────────────────────────────
+const INCOMPATIBLE_PAIRS = [
+  ['deferred_loan', 'deferred_loan'],
+  ['deferred_loan', 'second_mortgage'],
+  ['second_mortgage', 'second_mortgage'],
+  ['forgivable', 'forgivable'],
+];
+
+function checkStackPair(a, b) {
+  if (!a.stackable && !b.stackable) return { compatible: false, reason: `Neither program allows layering with other DPA` };
+  if (!a.stackable) return { compatible: false, reason: `${a.shortName} does not allow stacking` };
+  if (!b.stackable) return { compatible: false, reason: `${b.shortName} does not allow stacking` };
+  if (a.stack_exceptions?.includes(b.id) || b.stack_exceptions?.includes(a.id)) {
+    return { compatible: false, reason: `These two programs explicitly exclude each other` };
+  }
+  const typeA = a.type, typeB = b.type;
+  const incompatible = INCOMPATIBLE_PAIRS.some(
+    ([x, y]) => (typeA === x && typeB === y) || (typeA === y && typeB === x)
+  );
+  if (incompatible) return { compatible: false, reason: `Cannot combine ${typeA.replace('_', ' ')} + ${typeB.replace('_', ' ')}` };
+  if (typeA === 'grant' || typeB === 'grant') return { compatible: true, reason: 'Grant may layer with other assistance — verify with lender' };
+  if ((typeA === 'forgivable' && typeB === 'grant') || (typeA === 'grant' && typeB === 'forgivable')) {
+    return { compatible: true, reason: 'Forgivable + grant may be allowed — confirm with lender' };
+  }
+  return { compatible: false, reason: 'Stacking rules inconclusive — verify with lender' };
+}
+
+function analyzeStack(selectedIds, allPrograms, scenario) {
+  const programs = selectedIds.map(id => allPrograms.find(p => p.id === id)).filter(Boolean);
+  if (programs.length < 2) return null;
+  const pairs = [];
+  for (let i = 0; i < programs.length; i++) {
+    for (let j = i + 1; j < programs.length; j++) {
+      pairs.push({ a: programs[i], b: programs[j], ...checkStackPair(programs[i], programs[j]) });
+    }
+  }
+  const allCompatible = pairs.every(p => p.compatible);
+  const loanAmt = parseFloat(scenario?.loanAmount || 0);
+  const price = parseFloat(scenario?.propertyValue || 0);
+  const totalDPA = programs.reduce((sum, p) => {
+    return sum + (p.amount_type === 'percentage' ? loanAmt * p.amount / 100 : p.amount);
+  }, 0);
+  const combinedCLTV = price > 0 ? ((loanAmt + totalDPA) / price * 100) : null;
+  const effDownPct = price > 0 ? ((price - loanAmt) / price * 100) : null;
+  return { programs, pairs, allCompatible, totalDPA, combinedCLTV, effDownPct };
+}
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+function fmtAmt(program) {
+  if (program.amount_type === 'percentage') return `${program.amount}% of loan`;
+  return `$${program.amount.toLocaleString()}`;
+}
+
+const TYPE_META = {
+  grant:          { label: 'Grant',          icon: '🎁', color: C.green,  bg: C.greenMuted },
+  forgivable:     { label: 'Forgivable Loan', icon: '⏱', color: '#86efac', bg: '#14532d' },
+  deferred_loan:  { label: 'Deferred Loan',  icon: '⏸', color: C.blue,   bg: C.blueDark },
+  second_mortgage:{ label: '2nd Mortgage',   icon: '🏠', color: C.amber,  bg: C.amberDark },
 };
 
-// ── MAIN COMPONENT ────────────────────────────────────────────────────────────
-export default function DPAIntelligence() {
-  const [searchParams] = useSearchParams();
-  const auth = getAuth();
-  const scenarioId = searchParams.get('scenarioId') || '';
+const APPROVAL_STATES = ['unknown', 'requested', 'approved'];
+const APPROVAL_META = {
+  approved:  { label: '✓ Lender Approved',   color: C.green,  bg: C.greenMuted,  border: C.green },
+  requested: { label: '⏳ Approval Requested', color: C.amber,  bg: C.amberDark,   border: C.amber },
+  unknown:   { label: '? Approval Unknown',   color: C.textMuted, bg: '#1a1f2e', border: C.border },
+};
 
-  // Scenario from Firestore
-  const [scenarioDoc, setScenarioDoc] = useState(null);
-  const [scenarioLoading, setScenarioLoading] = useState(!!scenarioId);
-
-  useEffect(() => {
-    if (!scenarioId) { setScenarioLoading(false); return; }
-    getDoc(doc(db, 'scenarios', scenarioId))
-      .then(snap => {
-        if (snap.exists()) {
-          const d = { id: snap.id, ...snap.data() };
-          setScenarioDoc(d);
-          // Auto-populate state/county overrides from scenario
-          if (d.state)  setStateOverride(d.state);
-          if (d.county) setCountyOverride(d.county.replace(/\s+County$/i, '').trim());
-        }
-      })
-      .catch(console.error).finally(() => setScenarioLoading(false));
-  }, [scenarioId]);
-
-  const scenario = useMemo(() => {
-    const d = scenarioDoc;
-    if (d) return {
-      scenarioId, firstName: d.firstName||'', lastName: d.lastName||'',
-      streetAddress: d.streetAddress||'', city: d.city||'', state: d.state||'GA',
-      zipCode: d.zipCode||'', county: (d.county||'').replace(/\s+County$/i,'').trim(), loanType: d.loanType||'FHA',
-      purchasePrice: d.propertyValue||d.purchasePrice||0, loanAmount: d.loanAmount||0,
-      creditScore: d.creditScore||0, annualIncome: d.annualIncome||0,
-      householdSize: d.householdSize||1, firstTimeBuyer: d.firstTimeBuyer??false,
-      backendDTI: (() => { const v = d.backDti||d.backendDTI||0; return v > 1 ? v / 100 : v; })(), occupancy: d.occupancy||'primary',
-      lenderId: d.lenderId||'', lenderName: d.lenderName||'',
-    };
-    return {
-      scenarioId, firstName: searchParams.get('firstName')||'', lastName: searchParams.get('lastName')||'',
-      streetAddress: searchParams.get('streetAddress')||'', city: searchParams.get('city')||'',
-      state: searchParams.get('state')||'GA', zipCode: searchParams.get('zipCode')||'',
-      county: searchParams.get('county')||'', loanType: searchParams.get('loanType')||'FHA',
-      purchasePrice: parseFloat(searchParams.get('purchasePrice'))||0, loanAmount: parseFloat(searchParams.get('loanAmount'))||0,
-      creditScore: parseInt(searchParams.get('creditScore'))||0, annualIncome: parseFloat(searchParams.get('annualIncome'))||0,
-      householdSize: parseInt(searchParams.get('householdSize'))||1,
-      firstTimeBuyer: searchParams.get('firstTimeBuyer')==='true',
-      backendDTI: (() => { const v = parseFloat(searchParams.get('backendDTI'))||0; return v > 1 ? v / 100 : v; })(), occupancy: searchParams.get('occupancy')||'primary',
-      lenderId: searchParams.get('lenderId')||'', lenderName: searchParams.get('lenderName')||'',
-    };
-  }, [scenarioDoc, searchParams, scenarioId]);
-
-  // State/county override
-  const [stateOverride,  setStateOverride]  = useState('');
-  const [countyOverride, setCountyOverride] = useState('');
-  const effectiveState  = stateOverride  || scenario.state  || 'GA';
-  const effectiveCounty = countyOverride || scenario.county || '';
-
-  // Core state
-  const [brokerOnly,    setBrokerOnly]    = useState(true);
-  const [fthbOverride,  setFthbOverride]  = useState(null);
-  const [hasRun,        setHasRun]        = useState(false);
-  const [isRunning,     setIsRunning]     = useState(false);
-  const [results,       setResults]       = useState([]);
-  const [webSearchLoading, setWebSearchLoading] = useState(false);
-  const [rankingMode,   setRankingMode]   = useState('balanced');
-  const [stackCombos,   setStackCombos]   = useState([]);
-  const [approvalMap,   setApprovalMap]   = useState({});
-  const [brokerageApproved, setBrokerageApproved] = useState(false);
-  const [brokerageLenderName, setBrokerageLenderName] = useState('');
-  const [selectedProgram,  setSelectedProgram]  = useState(null);
-  const [haikusLoading,    setHaikusLoading]    = useState(false);
-  const [haikus,           setHaikus]           = useState({});
-  const [showFailDetails,  setShowFailDetails]  = useState({});
-  const [aeShareModal,     setAeShareModal]     = useState(null);
-  const [aeSending,        setAeSending]        = useState(false);
-  const [aeSent,           setAeSent]           = useState(false);
-  const [programShareModal,setProgramShareModal]= useState(null);
-  const [progSending,      setProgSending]      = useState(false);
-  const [progSent,         setProgSent]         = useState(false);
-  const [buyerExplanation, setBuyerExplanation] = useState(null);
-  const [buyerExpLoading,  setBuyerExpLoading]  = useState(false);
-  const [buyerExpProgram,  setBuyerExpProgram]  = useState(null);
-  const [showBuyerModal,   setShowBuyerModal]   = useState(false);
-  const [activeTab,        setActiveTab]        = useState('ranked');
-
-  const { reportFindings } = useDecisionRecord(scenarioId);
-  const effectiveFthb = fthbOverride ?? scenario.firstTimeBuyer;
-  const effectiveLenderId   = scenario.lenderId;
-  const effectiveLenderName = scenario.lenderName || brokerageLenderName;
-
-  useEffect(() => {
-    if (!effectiveLenderId || !auth.currentUser) return;
-    getDocs(query(collection(db, 'dpa_lender_approvals'), where('lo_id','==',auth.currentUser.uid), where('lender_id','==',effectiveLenderId)))
-      .then(snap => { const map={}; snap.forEach(d=>{ map[d.data().program_id]=d.data().approval_state; }); setApprovalMap(prev=>({...prev,...map})); })
-      .catch(console.error);
-  }, [effectiveLenderId, auth.currentUser]);
-
-  const loadLenderPrograms = async () => {
-    try {
-      const snap = await getDocs(collection(db, 'lenderProfiles'));
-      const programs = [];
-      snap.docs.forEach(d => {
-        const data = d.data();
-        if (!data.dpaPrograms?.length) return;
-        data.dpaPrograms.forEach((p, idx) => {
-          programs.push({
-            id: `lender-${d.id}-${idx}`,
-            program_name: p.program_name || p.name || 'Lender DPA Program',
-            program_type: p.program_type || 'second_lien',
-            state: p.state || null, county: p.county || null, city: p.city || null,
-            admin_agency: data.name || 'Lender Program',
-            website_url: p.website_url || null, contact_phone: null, contact_email: null,
-            description: p.description || `${data.name||'Lender'} proprietary DPA program.`,
-            assistance_amount: p.assistance_amount || null, assistance_pct: p.assistance_pct || null,
-            broker_eligible: true, last_verified_date: new Date().toISOString().split('T')[0],
-            confidence_score: 0.88, is_active: true, source: 'lender',
-            lender_name: data.name || 'Lender', lender_id: d.id,
-            rules: {
-              min_fico: p.min_fico || p.rules?.min_fico || 620,
-              max_dti: p.max_dti || p.rules?.max_dti || 0.50,
-              income_limit: p.income_limit || p.rules?.income_limit || null,
-              income_limit_type: p.income_limit_type || p.rules?.income_limit_type || null,
-              max_cltv: p.max_cltv || p.rules?.max_cltv || 1.00,
-              loan_types_allowed: p.loan_types_allowed || p.rules?.loan_types_allowed || ['FHA','Conventional'],
-              fthb_required: p.fthb_required ?? p.rules?.fthb_required ?? false,
-              occupancy_required: 'primary',
-              purchase_price_limit: p.purchase_price_limit || p.rules?.purchase_price_limit || null,
-              geography_scope: p.state ? 'state' : 'national',
-            },
-            stacking_rules: p.stacking_rules || {
-              allowed_with_fha: true, allowed_with_conv: true, allowed_with_va: false, allowed_with_usda: false,
-              max_combined_cltv: p.max_cltv || 1.00,
-              subordinate_financing_rules: p.stacking_notes || 'Lender-specific stacking rules apply — confirm with AE.',
-              mi_impact_rules: null,
-            },
-          });
-        });
-      });
-      return programs;
-    } catch (e) { console.error('[DPA] lender programs load failed:', e); return []; }
+// ─── LENDER APPROVAL BADGE ────────────────────────────────────────────────────
+function LenderApprovalBadge({ programId, status = 'unknown', onChange }) {
+  const meta = APPROVAL_META[status] || APPROVAL_META.unknown;
+  const cycle = () => {
+    const idx = APPROVAL_STATES.indexOf(status);
+    onChange(programId, APPROVAL_STATES[(idx + 1) % APPROVAL_STATES.length]);
   };
-
-  const searchWebForPrograms = async (state, county, loanType) => {
-    setWebSearchLoading(true);
-    try {
-      const prompt = `Search the web for current 2025-2026 down payment assistance (DPA) programs in ${state}${county ? `, ${county} County` : ''} for a ${loanType} purchase loan. Include state HFA, local city/county, and national programs. Return ONLY valid JSON array, no markdown:\n[{"program_name":"string","program_type":"grant|forgivable|second_lien|repayable","admin_agency":"string","description":"string","assistance_amount":number_or_null,"assistance_pct":number_or_null,"min_fico":number,"max_dti":number,"fthb_required":boolean,"income_limit":number_or_null,"income_limit_type":"AMI%|absolute|null","loan_types_allowed":["FHA","Conventional"],"website_url":"string_or_null","contact_phone":"string_or_null","geography_scope":"state|county|city|national"}]\nReturn 3-8 real currently active programs. If none found return [].`;
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type':'application/json','x-api-key':import.meta.env.VITE_ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
-        body: JSON.stringify({ model:'claude-sonnet-4-5', max_tokens:3000, tools:[{ type:'web_search_20250305', name:'web_search' }], messages:[{ role:'user', content:prompt }] }),
-      });
-      if (!resp.ok) throw new Error(`API ${resp.status}`);
-      const data = await resp.json();
-      const text = data.content?.filter(b=>b.type==='text').map(b=>b.text).join('') || '';
-      const parsed = JSON.parse(text.replace(/```json|```/g,'').trim());
-      return parsed.map((p,i) => ({
-        id:`web-${state}-${i}`, program_name:p.program_name, program_type:p.program_type||'second_lien',
-        state:state!=='GA'?state:null, county:county||null, city:null, admin_agency:p.admin_agency,
-        website_url:p.website_url||null, contact_phone:p.contact_phone||null, contact_email:null,
-        description:p.description, assistance_amount:p.assistance_amount||null, assistance_pct:p.assistance_pct||null,
-        broker_eligible:true, last_verified_date:new Date().toISOString().split('T')[0],
-        confidence_score:0.72, is_active:true, source:'web_search',
-        rules:{ min_fico:p.min_fico||620, max_dti:p.max_dti||0.45, income_limit:p.income_limit||null,
-          income_limit_type:p.income_limit_type||null, max_cltv:1.00,
-          loan_types_allowed:p.loan_types_allowed||['FHA','Conventional'],
-          fthb_required:p.fthb_required??false, occupancy_required:'primary',
-          purchase_price_limit:null, geography_scope:p.geography_scope||'state' },
-        stacking_rules:{ allowed_with_fha:true, allowed_with_conv:true, allowed_with_va:false, allowed_with_usda:false,
-          max_combined_cltv:1.00, subordinate_financing_rules:`Verify stacking rules with ${p.admin_agency}.`, mi_impact_rules:null },
-      }));
-    } catch(e){ console.error('[DPA] web search failed:',e); return []; }
-    finally { setWebSearchLoading(false); }
-  };
-
-  const generateHaikus = async (programs) => {
-    setHaikusLoading(true);
-    const res = {};
-    await Promise.all(programs.map(async ({ program, evaluation }) => {
-      try {
-        const prompt = `Write ONE sentence under 25 words summarizing this DPA program for a loan officer. Amount, type, key eligibility only.\nProgram: ${program.program_name}\nType: ${program.program_type}\nAmount: ${evaluation.dpa_amount_calculated ? '$'+evaluation.dpa_amount_calculated.toLocaleString() : program.assistance_pct ? (program.assistance_pct*100)+'% of price' : 'See program'}\nStatus: ${evaluation.status}`;
-        const r = await fetch('https://api.anthropic.com/v1/messages', {
-          method:'POST', headers:{'Content-Type':'application/json','x-api-key':import.meta.env.VITE_ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-          body:JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:80, messages:[{role:'user',content:prompt}] }),
-        });
-        const data = await r.json();
-        res[program.id] = data.content?.[0]?.text?.trim() || '';
-      } catch { res[program.id]=''; }
-    }));
-    setHaikus(res);
-    setHaikusLoading(false);
-  };
-
-  const generateBuyerExplanation = async (program, evaluation, rank, allRanked) => {
-    setBuyerExpLoading(true); setBuyerExpProgram(program); setShowBuyerModal(true); setBuyerExplanation(null);
-    const others = allRanked.filter(r => r.program.id !== program.id).slice(0, 3);
-    const dpaAmt = evaluation.dpa_amount_calculated ? `$${evaluation.dpa_amount_calculated.toLocaleString()}` : program.assistance_pct ? `${(program.assistance_pct*100).toFixed(1)}% of purchase price` : 'amount TBD';
-    const prompt = `You are a mortgage loan officer explaining to a homebuyer WHY a specific DPA program is recommended — even if they're fixed on a popular program they heard about from friends.
-
-RECOMMENDED (#${rank}): ${program.program_name} | Type: ${TYPE_LABELS[program.program_type]?.label} | DPA: ${dpaAmt} | Source: ${program.source==='lender'?program.lender_name:program.admin_agency}
-Why it works: ${evaluation.reasons?.join('; ')||'Meets all eligibility requirements'}
-
-OTHER OPTIONS: ${others.map((r,i)=>`${i+1}. ${r.program.program_name} — ${r.evaluation.dpa_amount_calculated?'$'+r.evaluation.dpa_amount_calculated.toLocaleString():r.program.assistance_pct?(r.program.assistance_pct*100).toFixed(1)+'% of price':'varies'} (${r.evaluation.status})`).join('; ')}
-
-BORROWER: FICO ${scenario.creditScore||'N/A'} | DTI ${scenario.backendDTI?(scenario.backendDTI*100).toFixed(1)+'%':'N/A'} | Income ${scenario.annualIncome?'$'+scenario.annualIncome.toLocaleString():'N/A'} | FTHB: ${effectiveFthb?'Yes':'No'} | ${scenario.loanType||'FHA'} | ${effectiveState}${effectiveCounty?', '+effectiveCounty+' County':''}
-
-Write a clear, warm 3-paragraph explanation. Return ONLY JSON:
-{"headline":"one sentence why this program wins","why_this_works":"paragraph why this fits this specific borrower — be personal and specific","why_not_others":"paragraph gently explaining why other programs (name them) may not be as good — use facts","action_items":["2-3 next steps for the buyer"],"talking_points":["2-3 LO talking points when buyer pushes back"]}`;
-    try {
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method:'POST', headers:{'Content-Type':'application/json','x-api-key':import.meta.env.VITE_ANTHROPIC_API_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-        body:JSON.stringify({ model:'claude-sonnet-4-5', max_tokens:1200, messages:[{role:'user',content:prompt}] }),
-      });
-      const data = await resp.json();
-      const raw = data.content?.map(b=>b.text||'').join('') || '';
-      setBuyerExplanation(JSON.parse(raw.replace(/```json|```/g,'').trim()));
-    } catch(e) {
-      setBuyerExplanation({ headline:'Could not generate.', why_this_works:e.message, why_not_others:'', action_items:[], talking_points:[] });
-    } finally { setBuyerExpLoading(false); }
-  };
-
-  const handleRunSearch = async () => {
-    setIsRunning(true); setHasRun(false); setHaikus({}); setSelectedProgram(null); setStackCombos([]);
-    const lenderProgs = await loadLenderPrograms();
-    let pool = [];
-    if (effectiveState === 'GA') {
-      const seedPool = brokerOnly ? DPA_PROGRAMS.filter(p=>p.broker_eligible) : DPA_PROGRAMS;
-      pool = [...seedPool, ...lenderProgs];
-    } else {
-      const webProgs = await searchWebForPrograms(effectiveState, effectiveCounty, scenario.loanType);
-      pool = [...webProgs, ...lenderProgs];
-    }
-    try {
-      const allSnap = await getDocs(collection(db, 'lenderProfiles'));
-      const approvedDoc = allSnap.docs.find(d=>d.data().brokerage_approved===true);
-      if (approvedDoc) { setBrokerageApproved(true); setBrokerageLenderName(approvedDoc.data().name||''); }
-    } catch(e) { console.error('[DPA] brokerage check:',e); }
-    const effectiveScenario = { ...scenario, state:effectiveState, county:effectiveCounty, firstTimeBuyer:effectiveFthb };
-    const evaluated = evaluateAllPrograms(pool, effectiveScenario);
-    const combos = computeStackCombos(evaluated, effectiveScenario);
-    setStackCombos(combos); setResults(evaluated); setHasRun(true); setIsRunning(false);
-    const top3 = evaluated.filter(r=>r.evaluation.status==='PASS').slice(0,3);
-    if (top3.length>0 && scenarioId) {
-      reportFindings({ moduleKey:'DPA_INTELLIGENCE', moduleVersion:'3.0.0',
-        findings:top3.map(r=>({ program_id:r.program.id, program_name:r.program.program_name, status:r.evaluation.status, dpa_amount:r.evaluation.dpa_amount_calculated, source:r.program.source||'seed' })),
-        inputs:{ brokerOnly, state:effectiveState, county:effectiveCounty },
-      });
-    }
-    const passProgs = evaluated.filter(r=>r.evaluation.status!=='FAIL').slice(0,8);
-    if (passProgs.length>0) generateHaikus(passProgs);
-  };
-
-  const handleOpenAeModal      = useCallback((p,e)=>{ setAeSent(false);setAeSending(false);setAeShareModal({program:p,evaluation:e}); },[]);
-  const handleCloseAeModal     = useCallback(()=>{ setAeShareModal(null);setAeSent(false);setAeSending(false); },[]);
-  const handleOpenProgramShare = useCallback((p,e)=>{ setProgramShareModal({program:p,evaluation:e});setProgSent(false); },[]);
-  const handleCloseProgramShare= useCallback(()=>{ setProgramShareModal(null);setProgSent(false); },[]);
-
-  const handleProgramSend = useCallback(async (emails, shareType, message) => {
-    if (!programShareModal||!scenarioId) return;
-    const {program,evaluation} = programShareModal;
-    setProgSending(true);
-    try {
-      await addDoc(collection(db,'scenarioShares'),{
-        scenarioId, aeEmails:emails, shareType:shareType||'SCENARIO_REVIEW', message:message||'',
-        status:'pending', createdAt:serverTimestamp(), userId:auth.currentUser?.uid||'',
-        dpaContext:{ programName:program.program_name, programType:TYPE_LABELS[program.program_type]?.label||program.program_type,
-          programStatus:evaluation.status, adminAgency:program.admin_agency||'', source:program.source||'seed',
-          dpaAmount:evaluation.dpa_amount_calculated?`$${evaluation.dpa_amount_calculated.toLocaleString()}`:null,
-          lenderName:program.lender_name||effectiveLenderName||'' },
-        moduleContext:{ moduleName:'DPA Intelligence™', moduleNumber:'07' },
-      });
-      setProgSent(true); setTimeout(handleCloseProgramShare,2500);
-    } catch(err){ console.error('[DPA] program share:',err); }
-    finally { setProgSending(false); }
-  },[programShareModal,scenarioId,effectiveLenderName,auth.currentUser,handleCloseProgramShare]);
-
-  const handleAeSend = useCallback(async (emails, shareType, message) => {
-    if (!aeShareModal||!auth.currentUser) return;
-    const {program,evaluation} = aeShareModal;
-    setAeSending(true);
-    try {
-      await addDoc(collection(db,'scenarioShares'),{
-        scenarioId, aeEmails:emails, shareType:shareType||'AE_SUPPORT', message:message||'',
-        status:'pending', createdAt:serverTimestamp(), userId:auth.currentUser.uid,
-        dpaContext:{ programName:program.program_name, programStatus:evaluation.status, adminAgency:program.admin_agency??null },
-        moduleContext:{ moduleName:'DPA Intelligence™', moduleNumber:'07' },
-      });
-      if (scenario.lenderId) {
-        await addDoc(collection(db,'dpa_lender_approvals'),{
-          lo_id:auth.currentUser.uid, lender_id:scenario.lenderId, lender_name:scenario.lenderName,
-          program_id:program.id, program_name:program.program_name,
-          approval_state:APPROVAL_STATES.REQUESTED, requested_at:serverTimestamp(), last_updated:serverTimestamp(),
-        });
-        setApprovalMap(prev=>({...prev,[program.id]:APPROVAL_STATES.REQUESTED}));
-      }
-      setAeSent(true); setTimeout(handleCloseAeModal,2000);
-    } catch(err){ console.error('AE send:',err); }
-    finally { setAeSending(false); }
-  },[aeShareModal,auth.currentUser,scenarioId,scenario.lenderId,scenario.lenderName,handleCloseAeModal]);
-
-  const passResults = results.filter(r=>r.evaluation.status!=='FAIL');
-  const ranked = useMemo(()=>{
-    if (!hasRun||passResults.length===0) return [];
-    return passResults.map(r=>{
-      const approvalState = brokerageApproved?APPROVAL_STATES.APPROVED:(approvalMap[r.program.id]||APPROVAL_STATES.UNKNOWN);
-      return { ...r, dpaScore:computeDPAScore(r.program,r.evaluation,approvalState,rankingMode,passResults,stackCombos), approvalState };
-    }).sort((a,b)=>b.dpaScore-a.dpaScore);
-  },[results,rankingMode,approvalMap,brokerageApproved,stackCombos,hasRun,passResults]);
-
-  const top5 = ranked.slice(0,5);
-  const passCount = results.filter(r=>r.evaluation.status==='PASS').length;
-  const condCount = results.filter(r=>r.evaluation.status==='CONDITIONAL').length;
-  const failCount = results.filter(r=>r.evaluation.status==='FAIL').length;
-  const lenderCount = results.filter(r=>r.program.source==='lender').length;
-  const borrowerName = [scenario.firstName,scenario.lastName].filter(Boolean).join(' ')||'No borrower selected';
-  const addressLine  = [scenario.streetAddress,scenario.city,scenario.state,scenario.zipCode].filter(Boolean).join(', ');
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      {scenarioId && <DecisionRecordBanner scenarioId={scenarioId} moduleKey="DPA_INTELLIGENCE" />}
-      <ScenarioHeader moduleTitle="DPA Intelligence™" moduleNumber="07" scenarioId={scenarioId} />
-
-      <div className="bg-[#1B3A6B] px-6 py-3">
-        <div className="max-w-7xl mx-auto">
-          <p className="text-[11px] font-semibold text-blue-300 uppercase tracking-widest mb-1">Borrower Scenario — DPA Intelligence™ v3.0</p>
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
-            <span className="text-white font-bold text-base">{borrowerName}</span>
-            {addressLine && <span className="text-blue-200 text-sm">{addressLine}</span>}
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-blue-100">
-              {scenario.creditScore>0 && <span>FICO <strong className="text-white">{scenario.creditScore}</strong></span>}
-              {scenario.loanType && <span>Loan <strong className="text-white">{scenario.loanType}</strong></span>}
-              {scenario.purchasePrice>0 && <span>Price <strong className="text-white">${scenario.purchasePrice.toLocaleString()}</strong></span>}
-              {scenario.backendDTI>0 && <span>DTI <strong className="text-white">{(scenario.backendDTI*100).toFixed(1)}%</strong></span>}
-              {scenario.annualIncome>0 && <span>Income <strong className="text-white">${scenario.annualIncome.toLocaleString()}</strong></span>}
-              <span className={effectiveFthb?'text-emerald-300 font-semibold':'text-blue-200'}>{effectiveFthb?'🏠 FTHB ✓':'Not FTHB'}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto px-6 py-6 space-y-5 pb-24 min-h-screen">
-
-        {/* Search controls */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
-            <div className="flex items-center gap-3 flex-wrap">
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">State</label>
-                <input value={stateOverride||effectiveState} onChange={e=>setStateOverride(e.target.value.toUpperCase().slice(0,2))} maxLength={2} placeholder="GA"
-                  className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center font-bold uppercase focus:ring-2 focus:ring-blue-300" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">County <span className="text-gray-300">(opt)</span></label>
-                <input value={countyOverride||effectiveCounty} onChange={e=>setCountyOverride(e.target.value)} placeholder={effectiveCounty||'e.g. Gwinnett'}
-                  className="w-36 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-300" />
-              </div>
-              {effectiveState!=='GA' && <div className="flex items-end pb-0.5"><span className="text-xs bg-cyan-100 text-cyan-700 font-semibold px-2 py-1 rounded-full">🌐 Web search for {effectiveState}</span></div>}
-            </div>
-            <div className="flex flex-col gap-2">
-              {[
-                { label:'Broker Programs Only', sub:brokerOnly?'Broker-eligible only':'All programs', val:brokerOnly, set:()=>setBrokerOnly(v=>!v) },
-                { label:'First-Time Homebuyer', sub:fthbOverride===null?`FTHB ${scenario.firstTimeBuyer?'from scenario':'not detected'}`:effectiveFthb?'Manual: FTHB on':'Manual: FTHB off', val:effectiveFthb, set:()=>setFthbOverride(v=>v===null?true:v===true?false:null) },
-              ].map(({label,sub,val,set})=>(
-                <div key={label} className="flex items-center gap-3">
-                  <button onClick={set} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${val?'bg-[#1B3A6B]':'bg-gray-300'}`}>
-                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${val?'translate-x-5':'translate-x-0.5'}`} />
-                  </button>
-                  <div><p className="text-xs font-semibold text-gray-800">{label}</p><p className="text-[10px] text-gray-400">{sub}</p></div>
-                </div>
-              ))}
-            </div>
-            <button onClick={handleRunSearch} disabled={isRunning||scenarioLoading}
-              className="ml-auto bg-[#1B3A6B] hover:bg-blue-800 disabled:bg-gray-300 text-white font-semibold text-sm px-6 py-2.5 rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap">
-              {isRunning||webSearchLoading
-                ? <><svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>{webSearchLoading?'Searching Web…':'Running…'}</>
-                : <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>Run DPA Intelligence™</>}
-            </button>
-          </div>
-        </div>
-
-        {/* Stats grid — always rendered, zeros before search */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[{label:'Eligible',count:hasRun?passCount:'-',color:'emerald'},{label:'Conditional',count:hasRun?condCount:'-',color:'amber'},{label:'Ineligible',count:hasRun?failCount:'-',color:'red'},{label:'Lender Programs',count:hasRun?lenderCount:'-',color:'indigo'}].map(({label,count,color})=>(
-            <div key={label} className={`bg-white rounded-xl border border-${color}-200 p-4 text-center shadow-sm transition-all`}>
-              <p className={`text-2xl font-bold text-${color}-600`}>{count}</p>
-              <p className="text-xs text-gray-500 mt-0.5">{label}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Ranking mode — always rendered, dimmed before search */}
-        <div className={`bg-white rounded-xl border border-gray-100 shadow-sm p-4 transition-opacity ${hasRun&&ranked.length>0?'opacity-100':'opacity-40 pointer-events-none'}`}>
-          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Prioritize rankings by:</p>
-          <div className="flex flex-wrap gap-2">
-            {RANKING_MODES.map(mode=>(
-              <button key={mode.key} onClick={()=>setRankingMode(mode.key)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-semibold transition-all ${rankingMode===mode.key?'bg-[#1B3A6B] text-white border-[#1B3A6B]':'border-gray-200 text-gray-600 hover:border-blue-300'}`}>
-                {mode.label}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-gray-400 mt-1.5">{RANKING_MODES.find(m=>m.key===rankingMode)?.desc}</p>
-        </div>
-
-        {/* Tab nav — always rendered */}
-        <div className="flex gap-2 border-b border-gray-200">
-          {[{k:'ranked',l:`🏆 Top ${hasRun?Math.min(5,ranked.length):0} Ranked`},{k:'stacks',l:`🔗 Best Stacks (${hasRun?stackCombos.length:0})`},{k:'all',l:`📋 All Programs (${hasRun?results.length:0})`}].map(t=>(
-            <button key={t.k} onClick={()=>hasRun&&setActiveTab(t.k)}
-              className={`px-4 py-2 text-sm font-semibold rounded-t-lg border-b-2 transition-all ${activeTab===t.k&&hasRun?'border-[#1B3A6B] text-[#1B3A6B] bg-blue-50':'border-transparent text-gray-400'} ${!hasRun?'cursor-default':''}`}>
-              {t.l}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab content */}
-        {!hasRun && !isRunning && (
-          <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
-            <div className="w-14 h-14 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-7 h-7 text-[#1B3A6B]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-            </div>
-            <h3 className="text-base font-semibold text-gray-800 mb-2">DPA Intelligence™ v3.0 — Nationwide</h3>
-            <div className="flex flex-wrap justify-center gap-2 text-xs text-gray-500 mb-3">
-              <span className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full">🏛️ State Programs</span>
-              <span className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full">🏦 Lender Programs</span>
-              <span className="bg-cyan-100 text-cyan-700 px-2 py-1 rounded-full">🌐 Web Search (non-GA)</span>
-              <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded-full">🔗 Stack Combos</span>
-              <span className="bg-amber-100 text-amber-700 px-2 py-1 rounded-full">💬 Buyer Explanations</span>
-            </div>
-            <p className="text-sm text-gray-400">Select state, toggle options, then run search</p>
-          </div>
-        )}
-
-        {isRunning && (
-          <div className="space-y-3">
-            {[1,2,3].map(i=>(
-              <div key={i} className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 animate-pulse">
-                <div className="flex gap-3">
-                  <div className="w-8 h-8 bg-gray-200 rounded-full flex-shrink-0"/>
-                  <div className="flex-1 space-y-2">
-                    <div className="h-4 bg-gray-200 rounded w-2/3"/>
-                    <div className="h-3 bg-gray-100 rounded w-1/3"/>
-                    <div className="h-3 bg-gray-100 rounded w-1/2"/>
-                  </div>
-                  <div className="w-16 h-8 bg-gray-200 rounded flex-shrink-0"/>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {hasRun && activeTab==='ranked' && (
-          <div className="space-y-3">
-            {top5.length===0
-              ? <div className="bg-white rounded-xl p-10 text-center text-gray-400">No eligible programs found for this scenario.</div>
-              : top5.map((item,idx)=>(
-                <RankedProgramCard key={item.program.id} rank={idx+1} program={item.program} evaluation={item.evaluation}
-                  dpaScore={item.dpaScore} haiku={haikus[item.program.id]} haikusLoading={haikusLoading}
-                  approvalState={item.approvalState} lenderName={item.program.lender_name||effectiveLenderName}
-                  lenderId={effectiveLenderId||'brokerage'}
-                  onSelect={()=>setSelectedProgram({program:item.program,evaluation:item.evaluation})}
-                  onRequestApproval={()=>handleOpenAeModal(item.program,item.evaluation)}
-                  onShareWithAe={()=>handleOpenProgramShare(item.program,item.evaluation)}
-                  onBuyerExplanation={()=>generateBuyerExplanation(item.program,item.evaluation,idx+1,top5)} />
-              ))}
-            {ranked.length>5 && <button onClick={()=>setActiveTab('all')} className="w-full py-2.5 text-sm text-[#1B3A6B] font-semibold border border-blue-200 rounded-xl hover:bg-blue-50">View all {results.length} programs →</button>}
-          </div>
-        )}
-
-        {hasRun && activeTab==='stacks' && (
-          <div className="space-y-3">
-            {stackCombos.length===0
-              ? <div className="bg-white rounded-xl p-10 text-center text-gray-400"><p className="font-semibold mb-1">No stackable combinations found</p><p className="text-xs">Two compatible eligible programs from different agencies are required for stacking.</p></div>
-              : <>
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                  <p className="text-sm font-bold text-blue-800 mb-1">💡 How stacking works</p>
-                  <p className="text-xs text-blue-700">A borrower can combine ONE program per administering agency. For example: one Georgia Dream variant + Gwinnett County DPA are from different agencies so they stack. Two Georgia Dream variants cannot stack — same agency.</p>
-                </div>
-                {/* Max DPA callout */}
-                <div className="bg-emerald-50 border-2 border-emerald-300 rounded-xl p-4 flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-xs font-bold text-emerald-600 uppercase tracking-wide mb-0.5">🏆 Maximum DPA Available — Best Stack</p>
-                    <p className="text-sm font-bold text-emerald-900">{stackCombos[0].programs[0].program.program_name} + {stackCombos[0].programs[1].program.program_name}</p>
-                    <p className="text-xs text-emerald-700 mt-0.5">Different agencies · No conflicts · Verify stacking rules before presenting</p>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-3xl font-black text-emerald-700">${stackCombos[0].totalDPA.toLocaleString()}</p>
-                    <p className="text-xs text-emerald-500">combined DPA</p>
-                  </div>
-                </div>
-                {stackCombos.map(combo=>(
-                  <StackComboCard key={combo.id} combo={combo} approvalMap={approvalMap} brokerageApproved={brokerageApproved}
-                    onViewDetails={r=>setSelectedProgram({program:r.program,evaluation:r.evaluation})}
-                    onRequestApproval={r=>handleOpenAeModal(r.program,r.evaluation)} />
-                ))}
-              </>}
-          </div>
-        )}
-
-        {hasRun && activeTab==='all' && (
-          <div className="space-y-3">
-            {results.map(({program,evaluation})=>(
-              <ProgramCard key={program.id} program={program} evaluation={evaluation} haiku={haikus[program.id]}
-                haikusLoading={haikusLoading}
-                approvalState={brokerageApproved?APPROVAL_STATES.APPROVED:(approvalMap[program.id]||APPROVAL_STATES.UNKNOWN)}
-                lenderName={program.lender_name||effectiveLenderName} lenderId={effectiveLenderId||'brokerage'}
-                onSelect={()=>setSelectedProgram({program,evaluation})}
-                onRequestApproval={()=>handleOpenAeModal(program,evaluation)}
-                onShareWithAe={()=>handleOpenProgramShare(program,evaluation)}
-                showFailDetail={showFailDetails[program.id]}
-                onToggleFailDetail={()=>setShowFailDetails(prev=>({...prev,[program.id]:!prev[program.id]}))}
-                brokerOnly={brokerOnly} />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Program drawer */}
-      {selectedProgram && (
-        <ProgramDrawer program={selectedProgram.program} evaluation={selectedProgram.evaluation}
-          haiku={haikus[selectedProgram.program.id]}
-          approvalState={brokerageApproved?APPROVAL_STATES.APPROVED:(approvalMap[selectedProgram.program.id]||APPROVAL_STATES.UNKNOWN)}
-          lenderName={selectedProgram.program.lender_name||effectiveLenderName}
-          onRequestApproval={()=>handleOpenAeModal(selectedProgram.program,selectedProgram.evaluation)}
-          onClose={()=>setSelectedProgram(null)} />
-      )}
-
-      {/* Buyer explanation modal */}
-      {showBuyerModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={()=>setShowBuyerModal(false)} />
-          <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
-            <div className="bg-[#1B3A6B] px-6 py-4 flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-semibold text-blue-300 uppercase tracking-widest">💬 Buyer Explanation — LO Talking Points</p>
-                <h2 className="text-white font-bold text-base">{buyerExpProgram?.program_name}</h2>
-              </div>
-              <button onClick={()=>setShowBuyerModal(false)} className="text-blue-300 hover:text-white mt-0.5"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg></button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6 space-y-5">
-              {buyerExpLoading ? (
-                <div className="flex flex-col items-center py-12 gap-3">
-                  <div className="w-8 h-8 border-2 border-[#1B3A6B] border-t-transparent rounded-full animate-spin" />
-                  <p className="text-sm text-gray-500">Generating buyer explanation…</p>
-                </div>
-              ) : buyerExplanation ? (
-                <>
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
-                    <p className="text-base font-bold text-emerald-800">{buyerExplanation.headline}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Why this works for your buyer</p>
-                    <p className="text-sm text-gray-700 leading-relaxed">{buyerExplanation.why_this_works}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">If they ask about other programs</p>
-                    <p className="text-sm text-gray-700 leading-relaxed">{buyerExplanation.why_not_others}</p>
-                  </div>
-                  {buyerExplanation.talking_points?.length>0 && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                      <p className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2">🎯 When buyer pushes back — use these</p>
-                      <ul className="space-y-1.5">{buyerExplanation.talking_points.map((pt,i)=><li key={i} className="flex items-start gap-2 text-sm text-amber-800"><span className="font-bold shrink-0">•</span>{pt}</li>)}</ul>
-                    </div>
-                  )}
-                  {buyerExplanation.action_items?.length>0 && (
-                    <div>
-                      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Next steps — tell your buyer now</p>
-                      <ol className="space-y-1.5">{buyerExplanation.action_items.map((item,i)=><li key={i} className="flex items-start gap-2 text-sm text-gray-700"><span className="w-5 h-5 rounded-full bg-[#1B3A6B] text-white text-[10px] font-black flex items-center justify-center flex-shrink-0 mt-0.5">{i+1}</span>{item}</li>)}</ol>
-                    </div>
-                  )}
-                  <button onClick={()=>navigator.clipboard.writeText(`${buyerExplanation.headline}\n\n${buyerExplanation.why_this_works}\n\n${buyerExplanation.why_not_others}\n\nNext steps:\n${buyerExplanation.action_items?.map((a,i)=>`${i+1}. ${a}`).join('\n')}`)}
-                    className="w-full py-2.5 text-sm font-bold text-[#1B3A6B] border border-blue-200 rounded-xl hover:bg-blue-50">
-                    📋 Copy Explanation to Clipboard
-                  </button>
-                </>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {programShareModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={handleCloseProgramShare} />
-          <div className="relative w-full max-w-lg mx-4 bg-[#0d1117] rounded-2xl shadow-2xl overflow-hidden border border-[#21262d]">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[#21262d]">
-              <div><p className="text-[11px] font-semibold text-[#8b949e] uppercase tracking-widest mb-0.5">Share Program with AE</p><h2 className="text-white font-bold text-sm">{programShareModal.program.program_name}</h2></div>
-              <button onClick={handleCloseProgramShare} className="text-[#8b949e] hover:text-white"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg></button>
-            </div>
-            <AEShareForm onSend={handleProgramSend} sending={progSending} sent={progSent} />
-          </div>
-        </div>
-      )}
-
-      {aeShareModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={handleCloseAeModal} />
-          <div className="relative w-full max-w-lg mx-4 bg-[#0d1117] rounded-2xl shadow-2xl overflow-hidden border border-[#21262d]">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[#21262d]">
-              <div><p className="text-[11px] font-semibold text-[#8b949e] uppercase tracking-widest mb-0.5">DPA Approval Request</p><h2 className="text-white font-bold text-sm">{aeShareModal.program.program_name}</h2></div>
-              <button onClick={handleCloseAeModal} className="text-[#8b949e] hover:text-white"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg></button>
-            </div>
-            <AEShareForm onSend={handleAeSend} sending={aeSending} sent={aeSent} />
-          </div>
-        </div>
-      )}
-
-      <CanonicalSequenceBar scenarioId={scenarioId} />
-    </div>
+    <button
+      onClick={cycle}
+      title="Click to update lender approval status"
+      style={{
+        padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+        cursor: 'pointer', border: `1px solid ${meta.border}`,
+        background: meta.bg, color: meta.color,
+        transition: 'opacity 0.15s', letterSpacing: 0.2,
+      }}
+    >
+      {meta.label}
+    </button>
   );
 }
 
-// ── RANKED PROGRAM CARD ───────────────────────────────────────────────────────
-function RankedProgramCard({ rank, program, evaluation, dpaScore, haiku, haikusLoading, approvalState, lenderName, lenderId, onSelect, onRequestApproval, onShareWithAe, onBuyerExplanation }) {
-  const cfg = STATUS_CONFIG[evaluation.status];
-  const typeCfg = TYPE_LABELS[program.program_type]||{label:program.program_type,color:'bg-gray-100 text-gray-700'};
-  const sourceBadge = SOURCE_BADGES[program.source]||SOURCE_BADGES.default;
-  const dpaDisplay = evaluation.dpa_amount_calculated?`$${evaluation.dpa_amount_calculated.toLocaleString()}`:program.assistance_pct?`${(program.assistance_pct*100).toFixed(1)}% of price`:'—';
-  const scoreColor = dpaScore>=75?'text-emerald-600':dpaScore>=50?'text-amber-600':'text-red-500';
-  const scoreBar   = dpaScore>=75?'bg-emerald-500':dpaScore>=50?'bg-amber-500':'bg-red-400';
-  const rankBg     = ['bg-yellow-400','bg-gray-300','bg-amber-600','bg-gray-200','bg-gray-200'][rank-1]||'bg-gray-100';
-
+// ─── ELIGIBILITY BADGE ────────────────────────────────────────────────────────
+function EligibilityBadge({ status }) {
+  const cfg = {
+    eligible:   { label: '✓ Eligible',    bg: C.greenMuted,  color: C.green,  border: C.green },
+    ineligible: { label: '✗ Ineligible',  bg: C.redDark,     color: '#fca5a5', border: C.red },
+    unknown:    { label: '? Verify',      bg: '#1e2433',     color: C.textMuted, border: C.border },
+  }[status] || { label: '? Verify', bg: '#1e2433', color: C.textMuted, border: C.border };
   return (
-    <div className={`bg-white rounded-xl border-2 ${rank===1?'border-yellow-300 ring-2 ring-yellow-100':'border-gray-100'} shadow-sm overflow-hidden`}>
-      <div className={`flex items-start justify-between gap-3 p-4 ${cfg.bg}`}>
-        <div className={`w-8 h-8 rounded-full ${rankBg} flex items-center justify-center text-sm font-black text-gray-800 flex-shrink-0 mt-0.5`}>#{rank}</div>
-        <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-center gap-2 mb-1">
-            <h3 className="text-sm font-bold text-gray-900">{program.program_name}</h3>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sourceBadge.bg}`}>{sourceBadge.label}</span>
-          </div>
-          <div className="flex flex-wrap gap-1.5 items-center">
-            <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${cfg.badge}`}>{cfg.label}</span>
-            <span className={`text-[11px] px-2 py-0.5 rounded ${typeCfg.color}`}>{typeCfg.label}</span>
-            <span className="text-[11px] text-gray-500">{program.admin_agency}</span>
-          </div>
-          {haikusLoading&&!haiku&&<div className="h-4 bg-gray-100 rounded animate-pulse w-3/4 mt-1.5" />}
-          {haiku&&!haikusLoading&&<p className="text-xs text-gray-600 italic mt-1.5">{haiku}</p>}
-        </div>
-        <div className="text-right flex-shrink-0"><p className="text-xl font-bold text-gray-900">{dpaDisplay}</p><p className="text-[10px] text-gray-400">DPA Amount</p></div>
-      </div>
-      <div className="px-4 py-2.5 bg-gray-50 border-t border-gray-100 flex items-center gap-3">
-        <div className="flex-1">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">DPA Score</span>
-            <span className={`text-sm font-black ${scoreColor}`}>{dpaScore}/100</span>
-          </div>
-          <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden"><div className={`h-full rounded-full ${scoreBar}`} style={{width:`${dpaScore}%`}} /></div>
-        </div>
-        {evaluation.cltv_details && <div className="text-right flex-shrink-0"><p className="text-[10px] text-gray-400">CLTV</p><p className="text-xs font-bold text-gray-700">{(evaluation.cltv_details.cltv_with_dpa*100).toFixed(1)}%</p></div>}
-      </div>
-      {evaluation.warnings?.length>0 && <div className="px-4 py-2 bg-amber-50 border-t border-amber-100">{evaluation.warnings.map((w,i)=><p key={i} className="text-xs text-amber-700">⚠️ {w}</p>)}</div>}
-      <div className="px-4 py-3 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <LenderApprovalBadge approvalState={approvalState} lenderName={lenderName} lenderId={lenderId} onShareWithAe={onShareWithAe} />
-          {lenderId&&approvalState==='unknown'&&<button onClick={onRequestApproval} className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1B3A6B] hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full px-2.5 py-1"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>Request Approval</button>}
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={onBuyerExplanation} className="text-xs font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg px-3 py-1.5 transition-colors">💬 Explain to Buyer</button>
-          <button onClick={onSelect} className="text-xs text-[#1B3A6B] hover:text-blue-800 font-semibold flex items-center gap-1">View Details <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg></button>
-        </div>
-      </div>
-    </div>
+    <span style={{
+      padding: '3px 9px', borderRadius: 4, fontSize: 11, fontWeight: 700,
+      background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}`,
+      letterSpacing: 0.3,
+    }}>
+      {cfg.label}
+    </span>
   );
 }
 
-// ── STACK COMBO CARD ──────────────────────────────────────────────────────────
-// ── STACK TYPE DETECTOR ───────────────────────────────────────────────────────
-const getStackType = (programs) => {
-  const [a, b] = programs;
-  const sources = [a.program.source, b.program.source];
-  const scopes  = [a.program.rules?.geography_scope, b.program.rules?.geography_scope];
-  if (sources.includes('lender')) return { label: '🏦 State + Lender', color: 'bg-indigo-100 text-indigo-800' };
-  if (scopes.includes('county') && scopes.includes('state')) return { label: '🏛️ State + County', color: 'bg-emerald-100 text-emerald-800' };
-  if (scopes.includes('national') && scopes.includes('state')) return { label: '🌐 State + National', color: 'bg-cyan-100 text-cyan-800' };
-  if (scopes.includes('national') && scopes.includes('county')) return { label: '🌐 County + National', color: 'bg-cyan-100 text-cyan-800' };
-  return { label: '🔗 Combined', color: 'bg-blue-100 text-blue-800' };
-};
-
-// ── ELIGIBILITY ALERTS DETECTOR ───────────────────────────────────────────────
-const getEligibilityAlerts = (program) => {
-  const alerts = [];
-  const desc = (program.description || '').toLowerCase();
-  const rules = program.stacking_rules?.subordinate_financing_rules || '';
-
-  if (desc.includes('pen') || desc.includes('protector') || desc.includes('educator') || desc.includes('nurse') || desc.includes('law enforcement') || desc.includes('military') || desc.includes('healthcare')) {
-    alerts.push({ icon: '📋', text: 'Profession verification required — employer letter confirming qualifying role (law enforcement, educator, healthcare, or active military)' });
-  }
-  if (desc.includes('disability') || desc.includes('choice loan')) {
-    alerts.push({ icon: '📋', text: 'Disability documentation required — signed certification or medical documentation at underwriting' });
-  }
-  if (desc.includes('counseling') || desc.includes('homebuyer education') || desc.includes('hud')) {
-    alerts.push({ icon: '🎓', text: 'HUD-approved homebuyer education certificate required before closing' });
-  }
-  if (desc.includes('forgivable') || rules.toLowerCase().includes('forgivable')) {
-    alerts.push({ icon: '📅', text: 'Forgiveness period applies — borrower must remain owner-occupied for full term or repayment triggered' });
-  }
-  if (program.rules?.income_limit) {
-    alerts.push({ icon: '💰', text: `Income limit applies — verify borrower income against ${program.rules.income_limit_type === 'AMI%' ? Math.round(program.rules.income_limit * 100) + '% AMI limit' : '$' + program.rules.income_limit.toLocaleString() + ' absolute limit'}` });
-  }
-  if (program.rules?.fthb_required) {
-    alerts.push({ icon: '🏠', text: 'First-time homebuyer required — verify borrower has not owned in past 3 years' });
-  }
-  if (program.source === 'web_search') {
-    alerts.push({ icon: '⚠️', text: 'Web search result — confirm program is still active and funded before presenting to borrower' });
-  }
-  return alerts;
-};
-
-function StackComboCard({ combo, approvalMap, brokerageApproved, onViewDetails, onRequestApproval }) {
-  const [a,b] = combo.programs;
-  const [showAlerts, setShowAlerts] = useState(false);
-  const bothApproved = combo.programs.every(r=>brokerageApproved||approvalMap[r.program.id]===APPROVAL_STATES.APPROVED);
-  const stackType = getStackType(combo.programs);
-  const allAlerts = [
-    ...getEligibilityAlerts(a.program).map(al => ({ ...al, program: a.program.program_name })),
-    ...getEligibilityAlerts(b.program).map(al => ({ ...al, program: b.program.program_name })),
-  ];
+// ─── PROGRAM CARD ─────────────────────────────────────────────────────────────
+function ProgramCard({ program, eligibility, lenderStatus, onLenderChange, stackSelected, onToggleStack, isExpanded, onToggleExpand, onRequestApproval }) {
+  const typeMeta = TYPE_META[program.type] || TYPE_META.deferred_loan;
+  const hasIssues = eligibility.issues?.length > 0;
+  const hasWarnings = eligibility.warnings?.length > 0;
 
   return (
-    <div className="bg-white rounded-xl border-2 border-blue-200 shadow-sm overflow-hidden">
-      {/* Header */}
-      <div className="bg-blue-50 px-4 py-3 flex items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-            <span className="text-[10px] font-bold bg-blue-600 text-white px-2 py-0.5 rounded-full">🔗 STACK</span>
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${stackType.color}`}>{stackType.label}</span>
-            {bothApproved && <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">✓ Both Approved</span>}
-            {allAlerts.length > 0 && (
-              <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
-                ⚠️ {allAlerts.length} Verification {allAlerts.length === 1 ? 'Requirement' : 'Requirements'}
+    <div style={{
+      background: C.card, border: `1px solid ${stackSelected ? C.blue : C.border}`,
+      borderRadius: 10, overflow: 'hidden', transition: 'border-color 0.2s, box-shadow 0.2s',
+      boxShadow: stackSelected ? `0 0 0 2px ${C.blue}33` : 'none',
+    }}>
+      {/* Card Header */}
+      <div style={{ padding: '14px 16px 12px', borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+              <span style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
+                color: typeMeta.color, background: typeMeta.bg, padding: '2px 6px', borderRadius: 3,
+              }}>
+                {typeMeta.icon} {typeMeta.label}
               </span>
-            )}
-          </div>
-          <p className="text-sm font-bold text-blue-900">{a.program.program_name} <span className="text-blue-400 font-normal">+</span> {b.program.program_name}</p>
-        </div>
-        <div className="text-right flex-shrink-0">
-          <p className="text-2xl font-black text-blue-700">${combo.totalDPA.toLocaleString()}</p>
-          <p className="text-[10px] text-blue-500">combined DPA</p>
-        </div>
-      </div>
-
-      {/* Program cards */}
-      <div className="p-4 grid grid-cols-2 gap-3">
-        {combo.programs.map((r,i)=>{
-          const dpa = r.evaluation.dpa_amount_calculated?`$${r.evaluation.dpa_amount_calculated.toLocaleString()}`:r.program.assistance_pct?`${(r.program.assistance_pct*100).toFixed(1)}%`:'—';
-          const typeCfg = TYPE_LABELS[r.program.program_type]||{label:r.program.program_type,color:'bg-gray-100 text-gray-700'};
-          const sourceBadge = SOURCE_BADGES[r.program.source]||SOURCE_BADGES.default;
-          const progAlerts = getEligibilityAlerts(r.program);
-          return (
-            <div key={i} className="bg-gray-50 rounded-lg p-3 space-y-1">
-              <div className="flex flex-wrap gap-1">
-                <span className={`text-[10px] px-1.5 py-0.5 rounded ${typeCfg.color}`}>{typeCfg.label}</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${sourceBadge.bg}`}>{sourceBadge.label}</span>
-              </div>
-              <p className="text-xs font-bold text-gray-800">{r.program.program_name}</p>
-              <p className="text-sm font-black text-gray-700">{dpa}</p>
-              {progAlerts.length > 0 && (
-                <p className="text-[10px] text-amber-600 font-semibold">⚠️ {progAlerts.length} req.</p>
+              {program.ai_sourced && (
+                <span style={{ fontSize: 10, color: C.purple, background: '#3b0764', padding: '2px 6px', borderRadius: 3, fontWeight: 600 }}>
+                  🤖 AI-Researched
+                </span>
               )}
-              <button onClick={()=>onViewDetails(r)} className="text-[10px] text-[#1B3A6B] font-semibold hover:underline">View details →</button>
+              {program.lender_sourced && (
+                <span style={{ fontSize: 10, color: '#34d399', background: '#064e3b', padding: '2px 6px', borderRadius: 3, fontWeight: 600 }}>
+                  📋 Lender Program
+                </span>
+              )}
+              {program.lender_sourced && lenderStatus === 'approved' && (
+                <span style={{ fontSize: 10, color: C.green, background: C.greenMuted, padding: '2px 6px', borderRadius: 3, fontWeight: 700, border: `1px solid ${C.green}55` }}>
+                  ✓ Approved Lender
+                </span>
+              )}
+              {program.tags?.includes('no-ftb-req') && (
+                <span style={{ fontSize: 10, color: '#94a3b8', background: '#1e293b', padding: '2px 6px', borderRadius: 3 }}>
+                  No FTB Req
+                </span>
+              )}
+              {!program.broker_eligible && (
+                <span style={{ fontSize: 10, color: C.amber, background: C.amberDark, padding: '2px 6px', borderRadius: 3, fontWeight: 600 }}>
+                  ⚠ Bank Only
+                </span>
+              )}
             </div>
-          );
-        })}
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.textPrimary, lineHeight: 1.3 }}>{program.name}</div>
+            <div style={{ fontSize: 12, color: C.textSecondary, marginTop: 2 }}>{program.provider}</div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+            <EligibilityBadge status={eligibility.eligible} />
+            <LenderApprovalBadge programId={program.id} status={lenderStatus} onChange={onLenderChange} />
+          </div>
+        </div>
       </div>
 
-      {/* CLTV */}
-      {combo.combinedCLTV > 0 && (
-        <div className="px-4 pb-2">
-          <p className="text-xs text-gray-500">Combined CLTV: <strong className="text-gray-700">{(combo.combinedCLTV*100).toFixed(1)}%</strong> — verify both programs allow this level of subordinate financing</p>
+      {/* Key Metrics Row */}
+      <div style={{ padding: '10px 16px', display: 'flex', gap: 16, flexWrap: 'wrap', borderBottom: `1px solid ${C.border}` }}>
+        <MetricChip label="DPA Amount" value={fmtAmt(program)} accent={C.green} />
+        <MetricChip label="Min FICO" value={program.min_fico} accent={C.textSecondary} />
+        <MetricChip label="Max DTI" value={`${program.max_dti}%`} accent={C.textSecondary} />
+        {program.max_purchase_price && (
+          <MetricChip label="Max Price" value={`$${(program.max_purchase_price / 1000).toFixed(0)}K`} accent={C.textSecondary} />
+        )}
+        {program.ami_percent && (
+          <MetricChip label="AMI Limit" value={`${program.ami_percent}% AMI`} accent={C.textSecondary} />
+        )}
+        {program.forgivable_years && (
+          <MetricChip label="Forgiven" value={`${program.forgivable_years}yr`} accent={C.amber} />
+        )}
+        {eligibility.cltv !== null && (
+          <MetricChip
+            label="CLTV w/ DPA"
+            value={`${eligibility.cltv.toFixed(1)}%`}
+            accent={eligibility.cltv > 105 ? C.amber : C.green}
+          />
+        )}
+      </div>
+
+      {/* Loan Types + Geography */}
+      <div style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {program.eligible_loan_types?.map(lt => (
+            <span key={lt} style={{
+              fontSize: 11, padding: '2px 7px', borderRadius: 3, fontWeight: 600,
+              background: '#1e3a5f', color: '#93c5fd', border: '1px solid #1d4ed8',
+            }}>{lt}</span>
+          ))}
+        </div>
+        <span style={{ color: C.textMuted, fontSize: 11 }}>
+          📍 {Array.isArray(program.counties) ? program.counties.join(', ') : 'Statewide'}
+        </span>
+      </div>
+
+      {/* Issues / Warnings (collapsed unless expanded) */}
+      {(hasIssues || hasWarnings) && (
+        <div style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}` }}>
+          {hasIssues && eligibility.issues.map((issue, i) => (
+            <div key={i} style={{ fontSize: 12, color: '#fca5a5', display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: 3 }}>
+              <span style={{ flexShrink: 0, marginTop: 1 }}>✗</span><span>{issue}</span>
+            </div>
+          ))}
+          {hasWarnings && !isExpanded && eligibility.warnings.slice(0, 1).map((w, i) => (
+            <div key={i} style={{ fontSize: 12, color: '#fde68a', display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+              <span style={{ flexShrink: 0, marginTop: 1 }}>⚠</span><span>{w}</span>
+            </div>
+          ))}
+          {hasWarnings && isExpanded && eligibility.warnings.map((w, i) => (
+            <div key={i} style={{ fontSize: 12, color: '#fde68a', display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: 3 }}>
+              <span style={{ flexShrink: 0, marginTop: 1 }}>⚠</span><span>{w}</span>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* LO Verification checklist */}
-      {allAlerts.length > 0 && (
-        <div className="border-t border-amber-100">
-          <button onClick={()=>setShowAlerts(v=>!v)}
-            className="w-full px-4 py-2.5 flex items-center justify-between text-xs font-bold text-amber-700 hover:bg-amber-50 transition-colors">
-            <span>⚠️ LO Verification Checklist — {allAlerts.length} {allAlerts.length === 1 ? 'requirement' : 'requirements'} before presenting to borrower</span>
-            <svg className={`w-3.5 h-3.5 transition-transform ${showAlerts?'rotate-180':''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/></svg>
-          </button>
-          {showAlerts && (
-            <div className="px-4 pb-4 space-y-2 bg-amber-50">
-              {allAlerts.map((al, i) => (
-                <div key={i} className="flex items-start gap-2.5">
-                  <div className="flex items-center gap-1.5 mt-0.5 flex-shrink-0">
-                    <input type="checkbox" className="w-3.5 h-3.5 accent-amber-600 flex-shrink-0" id={`alert-${combo.id}-${i}`} />
-                    <span className="text-sm">{al.icon}</span>
-                  </div>
-                  <label htmlFor={`alert-${combo.id}-${i}`} className="text-xs text-amber-800 cursor-pointer leading-relaxed">
-                    <span className="font-semibold text-amber-900">{al.program}: </span>{al.text}
-                  </label>
-                </div>
-              ))}
-              <p className="text-[10px] text-amber-600 mt-2 pt-2 border-t border-amber-200">Check all boxes before sharing this stack combination with the borrower.</p>
-            </div>
+      {/* Expanded Notes */}
+      {isExpanded && (
+        <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: '#161b27' }}>
+          <div style={{ fontSize: 12, color: C.textSecondary, lineHeight: 1.6 }}>{program.notes}</div>
+          {program.deferred_until && (
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>📋 Repayment: {program.deferred_until}</div>
+          )}
+          {program.homebuyer_ed && (
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>🎓 Homebuyer education course required</div>
+          )}
+          {program.website && (
+            <a href={program.website} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize: 11, color: C.blue, marginTop: 6, display: 'inline-block' }}>
+              ↗ Program Website
+            </a>
           )}
         </div>
       )}
+
+      {/* Card Footer */}
+      <div style={{ padding: '8px 12px', display: 'flex', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+        <button onClick={onToggleExpand}
+          style={{ fontSize: 12, color: C.textSecondary, background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0' }}>
+          {isExpanded ? '▲ Less' : '▼ More details'}
+        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => onRequestApproval(program)}
+            style={{
+              fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 5, cursor: 'pointer',
+              border: `1px solid ${lenderStatus === 'approved' ? C.green : lenderStatus === 'requested' ? C.amber : C.border}`,
+              background: lenderStatus === 'approved' ? C.greenMuted : lenderStatus === 'requested' ? C.amberDark : 'transparent',
+              color: lenderStatus === 'approved' ? C.green : lenderStatus === 'requested' ? C.amber : C.textSecondary,
+              transition: 'all 0.15s',
+            }}>
+            {lenderStatus === 'approved' ? '✓ Approved' : lenderStatus === 'requested' ? '⏳ Requested' : '📨 Request Approval'}
+          </button>
+          <button
+            onClick={() => onToggleStack(program.id)}
+            style={{
+              fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 5, cursor: 'pointer',
+              border: `1px solid ${stackSelected ? C.blue : C.border}`,
+              background: stackSelected ? C.blueDark : 'transparent',
+              color: stackSelected ? '#93c5fd' : C.textSecondary,
+              transition: 'all 0.15s',
+            }}>
+            {stackSelected ? '✓ In Stack' : '+ Stack Analysis'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
-// ── STANDARD PROGRAM CARD ─────────────────────────────────────────────────────
-function ProgramCard({ program, evaluation, haiku, haikusLoading, approvalState, lenderName, lenderId, onSelect, onRequestApproval, onShareWithAe, showFailDetail, onToggleFailDetail, brokerOnly }) {
-  const cfg = STATUS_CONFIG[evaluation.status];
-  const typeCfg = TYPE_LABELS[program.program_type]||{label:program.program_type,color:'bg-gray-100 text-gray-700'};
-  const sourceBadge = SOURCE_BADGES[program.source]||SOURCE_BADGES.default;
-  const freshness = getFreshnessLabel(program.last_verified_date);
-  const isFail = evaluation.status==='FAIL';
-  const dpaDisplay = evaluation.dpa_amount_calculated?`$${evaluation.dpa_amount_calculated.toLocaleString()}`:program.assistance_pct?`${(program.assistance_pct*100).toFixed(1)}% of price`:'—';
+function MetricChip({ label, value, accent }) {
   return (
-    <div className={`bg-white rounded-xl border ${isFail?'border-gray-200 opacity-70':cfg.border} shadow-sm overflow-hidden`}>
-      <div className={`flex items-start justify-between gap-3 p-4 ${isFail?'':cfg.bg}`}>
-        <div className="flex items-start gap-3 flex-1 min-w-0">
-          <div className={`mt-0.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2 mb-1">
-              <h3 className="text-sm font-bold text-gray-900">{program.program_name}</h3>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sourceBadge.bg}`}>{sourceBadge.label}</span>
-              {!program.broker_eligible&&brokerOnly===false&&<span className="text-[10px] bg-orange-100 text-orange-700 font-semibold px-1.5 py-0.5 rounded">RETAIL ONLY</span>}
-            </div>
-            <div className="flex flex-wrap gap-1.5 items-center">
-              <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${cfg.badge}`}>{cfg.label}</span>
-              <span className={`text-[11px] px-2 py-0.5 rounded ${typeCfg.color}`}>{typeCfg.label}</span>
-              <span className="text-[11px] text-gray-500">{program.admin_agency}</span>
-            </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <span style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 700, color: accent || C.textPrimary }}>{value}</span>
+    </div>
+  );
+}
+
+// ─── STACKING PANEL ────────────────────────────────────────────────────────────
+function StackingPanel({ analysis, onClear }) {
+  if (!analysis) return null;
+  const { programs, pairs, allCompatible, totalDPA, combinedCLTV, effDownPct } = analysis;
+
+  return (
+    <div style={{
+      background: C.surface, border: `1px solid ${allCompatible ? C.blue : C.red}`,
+      borderRadius: 10, padding: 20, marginBottom: 20,
+      boxShadow: allCompatible ? `0 0 0 1px ${C.blue}44` : `0 0 0 1px ${C.red}44`,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: C.textPrimary }}>
+            {allCompatible ? '✓ Stack Analysis — Compatible' : '✗ Stack Analysis — Incompatible'}
+          </div>
+          <div style={{ fontSize: 12, color: C.textSecondary, marginTop: 2 }}>
+            {programs.length} programs selected
           </div>
         </div>
-        <div className="text-right flex-shrink-0"><p className="text-lg font-bold text-gray-900">{dpaDisplay}</p><p className="text-[11px] text-gray-400">DPA Amount</p></div>
+        <button onClick={onClear}
+          style={{ fontSize: 12, color: C.textMuted, background: 'none', border: `1px solid ${C.border}`, borderRadius: 5, cursor: 'pointer', padding: '5px 10px' }}>
+          Clear Stack
+        </button>
       </div>
-      {!isFail&&<div className="px-4 py-2 border-t border-gray-100 min-h-[2rem]">{haikusLoading&&!haiku?<div className="h-3 bg-gray-100 rounded animate-pulse w-2/3 mt-1"/>:haiku?<p className="text-xs text-gray-600 italic">{haiku}</p>:null}</div>}
-      {!isFail&&evaluation.cltv_details&&<div className="px-4 py-2 bg-gray-50 border-t border-gray-100 flex flex-wrap gap-4 text-xs text-gray-600"><span>CLTV: <strong>{(evaluation.cltv_details.cltv_with_dpa*100).toFixed(1)}%</strong></span><span>DPA: <strong>${(evaluation.cltv_details.dpa_amount||0).toLocaleString()}</strong></span><span className={`font-medium ${freshness.color==='green'?'text-emerald-600':freshness.color==='amber'?'text-amber-600':'text-red-500'}`}>{freshness.urgent?'⚠️ ':'✓ '}{freshness.label}</span></div>}
-      {evaluation.warnings?.length>0&&<div className="px-4 py-2 bg-amber-50 border-t border-amber-100">{evaluation.warnings.map((w,i)=><p key={i} className="text-xs text-amber-700">⚠️ {w}</p>)}</div>}
-      {isFail&&<div className="px-4 py-2 border-t border-gray-100"><button onClick={onToggleFailDetail} className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"><svg className={`w-3 h-3 transition-transform ${showFailDetail?'rotate-90':''}`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd"/></svg>{showFailDetail?'Hide':'Show'} ineligibility reason</button>{showFailDetail&&<div className="mt-1.5 space-y-1">{evaluation.fail_reasons?.map((r,i)=><p key={i} className="text-xs text-red-600">✗ {r}</p>)}</div>}</div>}
-      <div className="px-4 py-3 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <LenderApprovalBadge approvalState={approvalState} lenderName={lenderName} lenderId={lenderId} onShareWithAe={!isFail?onShareWithAe:null} />
-          {!isFail&&lenderId&&approvalState==='unknown'&&<button onClick={onRequestApproval} className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1B3A6B] hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full px-2.5 py-1"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>Request Approval</button>}
-        </div>
-        {!isFail&&<button onClick={onSelect} className="text-xs text-[#1B3A6B] hover:text-blue-800 font-semibold flex items-center gap-1">View Full Details <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg></button>}
+
+      {/* Combined metrics */}
+      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', padding: '12px 16px', background: C.card, borderRadius: 8, marginBottom: 14 }}>
+        <MetricChip label="Total DPA" value={`$${Math.round(totalDPA).toLocaleString()}`} accent={C.green} />
+        {combinedCLTV && <MetricChip label="Combined CLTV" value={`${combinedCLTV.toFixed(1)}%`} accent={combinedCLTV > 105 ? C.amber : C.green} />}
+        {effDownPct && <MetricChip label="Effective Down %" value={`${effDownPct.toFixed(1)}%`} accent={C.textSecondary} />}
       </div>
-    </div>
-  );
-}
 
-// ── LENDER APPROVAL BADGE ─────────────────────────────────────────────────────
-function LenderApprovalBadge({ approvalState, lenderName, lenderId, onShareWithAe }) {
-  if (!lenderId) return <span className="text-[11px] text-gray-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-gray-300 inline-block"/>No lender selected</span>;
-  const name = lenderName||'your lender';
-  if (approvalState===APPROVAL_STATES.APPROVED) return <button onClick={onShareWithAe} className="group inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 hover:border-emerald-400 rounded-full px-2.5 py-1 transition-colors"><svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>Approved — {name}</button>;
-  if (approvalState===APPROVAL_STATES.REQUESTED) return <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1"><svg className="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg>Requested — {name}</span>;
-  return <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-gray-500 bg-gray-100 border border-gray-200 rounded-full px-2.5 py-1"><span className="w-1.5 h-1.5 rounded-full bg-gray-400 inline-block"/>Not Yet Approved — {name}</span>;
-}
-
-// ── PROGRAM DRAWER ────────────────────────────────────────────────────────────
-function ProgramDrawer({ program, evaluation, haiku, approvalState, lenderName, onRequestApproval, onClose }) {
-  const cfg = STATUS_CONFIG[evaluation.status];
-  const typeCfg = TYPE_LABELS[program.program_type]||{label:program.program_type,color:'bg-gray-100 text-gray-700'};
-  const sourceBadge = SOURCE_BADGES[program.source]||SOURCE_BADGES.default;
-  const freshness = getFreshnessLabel(program.last_verified_date);
-  const confidence = getConfidenceLabel(program.confidence_score);
-  const dpaDisplay = evaluation.dpa_amount_calculated?`$${evaluation.dpa_amount_calculated.toLocaleString()}`:program.assistance_pct?`${(program.assistance_pct*100).toFixed(1)}% of purchase price`:'See program details';
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose}/>
-      <div className="relative w-full max-w-xl bg-white shadow-2xl flex flex-col overflow-hidden">
-        <div className="bg-[#1B3A6B] px-5 py-4 flex items-start justify-between gap-3 flex-shrink-0">
+      {/* Pair analysis */}
+      {pairs.map((pair, i) => (
+        <div key={i} style={{
+          display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
+          background: pair.compatible ? '#0f2218' : '#1c0f0f',
+          border: `1px solid ${pair.compatible ? C.greenMuted : C.redDark}`,
+          borderRadius: 6, marginBottom: 8,
+        }}>
+          <span style={{ fontSize: 16, flexShrink: 0 }}>{pair.compatible ? '✓' : '✗'}</span>
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${cfg.badge}`}>{cfg.label}</span>
-              <span className={`text-[11px] px-2 py-0.5 rounded ${typeCfg.color}`}>{typeCfg.label}</span>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sourceBadge.bg}`}>{sourceBadge.label}</span>
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.textPrimary }}>
+              {pair.a.shortName} + {pair.b.shortName}
             </div>
-            <h2 className="text-white font-bold text-base leading-snug">{program.program_name}</h2>
-            <p className="text-blue-200 text-xs mt-0.5">{program.admin_agency}</p>
+            <div style={{ fontSize: 12, color: pair.compatible ? C.green : '#fca5a5', marginTop: 2 }}>
+              {pair.reason}
+            </div>
           </div>
-          <button onClick={onClose} className="text-blue-200 hover:text-white mt-0.5 flex-shrink-0"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg></button>
         </div>
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {haiku&&<div className="bg-blue-50 border border-blue-200 rounded-lg p-3"><p className="text-xs font-semibold text-blue-700 mb-1">AI Summary</p><p className="text-sm text-blue-900 italic">{haiku}</p></div>}
-          {program.source==='web_search'&&<div className="bg-amber-50 border border-amber-200 rounded-lg p-3"><p className="text-xs font-bold text-amber-700 mb-1">⚠️ Web Search Result</p><p className="text-xs text-amber-700">Verify program availability and eligibility directly with the administering agency before presenting to borrowers.</p></div>}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-500 mb-0.5">DPA Amount</p><p className="text-xl font-bold text-gray-900">{dpaDisplay}</p></div>
-            {evaluation.cltv_details&&<div className="bg-gray-50 rounded-lg p-3"><p className="text-xs text-gray-500 mb-0.5">CLTV with DPA</p><p className="text-xl font-bold text-gray-900">{(evaluation.cltv_details.cltv_with_dpa*100).toFixed(1)}%</p><p className="text-xs text-gray-400">Max: {(evaluation.cltv_details.program_max*100).toFixed(1)}%</p></div>}
-          </div>
-          <div><h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Description</h4><p className="text-sm text-gray-700 leading-relaxed">{program.description}</p></div>
-          <div><h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Contact & Resources</h4>
-            <div className="space-y-1.5">
-              {program.website_url&&<a href={program.website_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-[#1B3A6B] hover:text-blue-800 font-medium"><svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>Official Program Website ↗</a>}
-              {program.contact_phone&&<p className="text-sm text-gray-700"><span className="text-gray-400">Phone: </span><a href={`tel:${program.contact_phone}`} className="text-[#1B3A6B] font-medium">{program.contact_phone}</a></p>}
-            </div>
-          </div>
-          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${freshness.color==='green'?'bg-emerald-400':freshness.color==='amber'?'bg-amber-400':'bg-red-400'}`}/>
-            <div><p className="text-xs font-semibold text-gray-700">{freshness.label}</p><p className="text-xs text-gray-400">Source: {program.source} · Confidence: {confidence.label}</p></div>
-          </div>
-          <div><h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Eligibility Trace</h4>
-            <div className="space-y-2">{evaluation.steps?.map(step=>(
-              <div key={step.step} className="flex gap-3 text-xs">
-                <div className={`mt-0.5 w-4 h-4 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold ${step.pass===true?'bg-emerald-100 text-emerald-700':step.pass===false?'bg-red-100 text-red-600':'bg-amber-100 text-amber-700'}`}>{step.pass===true?'✓':step.pass===false?'✗':'!'}</div>
-                <div><p className="font-semibold text-gray-700">Step {step.step}: {step.name}</p><p className="text-gray-500">{step.reason}</p></div>
+      ))}
+
+      {!allCompatible && (
+        <div style={{ fontSize: 12, color: C.textMuted, marginTop: 8, padding: '8px 12px', background: '#1a1014', borderRadius: 6, border: `1px solid ${C.redDark}` }}>
+          ⚠️ One or more program pairs are not stackable. Lender must approve any layering — always verify with your AE before promising stacked DPA.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SCENARIO CONTEXT BAR ─────────────────────────────────────────────────────
+function ScenarioContextBar({ scenario, activeState }) {
+  if (!scenario?.loaded) return null;
+  const fico = parseInt(scenario.creditScore || scenario.fico || 0);
+  const dti = parseFloat(scenario.dti || 0);
+  const price = parseFloat(scenario.propertyValue || 0);
+  const loan = parseFloat(scenario.loanAmount || 0);
+  const ltv = price > 0 ? (loan / price * 100).toFixed(1) : null;
+  const income = parseFloat(scenario.annualIncome || 0);
+
+  return (
+    <div style={{
+      background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
+      padding: '10px 16px', marginBottom: 20, display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'center',
+    }}>
+      <span style={{ fontSize: 11, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>Scenario Context</span>
+      {fico > 0 && <CtxItem label="FICO" value={fico} accent={fico >= 680 ? C.green : fico >= 640 ? C.amber : C.red} />}
+      {dti > 0 && <CtxItem label="DTI" value={`${dti}%`} accent={dti <= 43 ? C.green : dti <= 50 ? C.amber : C.red} />}
+      {price > 0 && <CtxItem label="Purchase" value={`$${(price / 1000).toFixed(0)}K`} accent={C.textSecondary} />}
+      {ltv && <CtxItem label="LTV" value={`${ltv}%`} accent={C.textSecondary} />}
+      {income > 0 && <CtxItem label="Income" value={`$${(income / 1000).toFixed(0)}K/yr`} accent={C.textSecondary} />}
+      {scenario.loanType && <CtxItem label="Loan Type" value={scenario.loanType} accent={C.blue} />}
+      <CtxItem label="State" value={activeState} accent={activeState === 'GA' ? C.green : C.blue} />
+    </div>
+  );
+}
+
+function CtxItem({ label, value, accent }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <span style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 700, color: accent || C.textPrimary }}>{value}</span>
+    </div>
+  );
+}
+
+// ─── MAIN COMPONENT ────────────────────────────────────────────────────────────
+export default function DPAIntelligence() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const scenarioId = searchParams.get('scenarioId');
+
+  // Auth
+  const [user, setUser] = useState(null);
+  useEffect(() => { const u = onAuthStateChanged(auth, setUser); return u; }, []);
+
+  // Decision Record
+  const { reportFindings } = useDecisionRecord(MODULE_ID, scenarioId, user?.uid);
+
+  // AE Share modal
+  const [aeShareTarget, setAeShareTarget] = useState(null); // { program }
+
+  // Scenario
+  const [scenario, setScenario] = useState({ loaded: false });
+  const [scenarioLoading, setScenarioLoading] = useState(true);
+  useEffect(() => {
+    if (!scenarioId) { setScenarioLoading(false); return; }
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'scenarios', scenarioId));
+        if (snap.exists()) setScenario({ ...snap.data(), loaded: true });
+      } catch (e) { console.error('Scenario load error:', e); }
+      finally { setScenarioLoading(false); }
+    })();
+  }, [scenarioId]);
+
+  // Active state (from scenario or manual override)
+  const [activeState, setActiveState] = useState('GA');
+  useEffect(() => {
+    if (scenario?.loaded) {
+      const st = (scenario.state || scenario.propertyState || 'GA').toUpperCase();
+      setActiveState(st);
+    }
+  }, [scenario]);
+
+  // Completed modules for NSI
+  const [completedModules, setCompletedModules] = useState([]);
+  useEffect(() => {
+    if (!scenarioId) return;
+    (async () => {
+      try {
+        const q = query(collection(db, 'decisionRecords'), where('scenarioId', '==', scenarioId));
+        const snap = await getDocs(q);
+        const keys = snap.docs.map(d => d.data().moduleKey).filter(Boolean);
+        setCompletedModules([...new Set(keys)]);
+      } catch (e) { console.error('[DPA] completedModules fetch:', e); }
+    })();
+  }, [scenarioId]);
+
+  // NSI — loan purpose mapping
+  const rawPurpose = (scenario?.loanPurpose || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('cash') ? 'cash_out_refi'
+    : rawPurpose.includes('refi') || rawPurpose.includes('rate') ? 'rate_term_refi'
+    : 'purchase';
+
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'DPA_INTEL',
+      loanPurpose,
+      decisionRecordFindings:  {},
+      scenarioData:            scenario || {},
+      completedModules,
+      scenarioId,
+      onWriteToDecisionRecord: null,
+    });
+
+  // Lender approvals (Firestore persisted)
+  const [lenderApprovals, setLenderApprovals] = useState({});
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'loProfiles', user.uid));
+        if (snap.exists()) setLenderApprovals(snap.data().dpaLenderApprovals || {});
+      } catch (e) { console.error('Approval load error:', e); }
+    })();
+  }, [user]);
+
+  const handleLenderApproval = useCallback(async (programId, status) => {
+    const next = { ...lenderApprovals, [programId]: status };
+    setLenderApprovals(next);
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'loProfiles', user.uid), { dpaLenderApprovals: next }, { merge: true });
+    } catch (e) { console.error('Approval save error:', e); }
+  }, [user, lenderApprovals]);
+
+  // Lender-sourced DPA programs (confirmed via Admin review)
+  const [lenderDpaPrograms, setLenderDpaPrograms] = useState([]);
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'dpaPrograms', user.uid, 'confirmed'));
+        const programs = snap.docs.map(d => ({
+          ...d.data(),
+          id: d.id,
+          lender_sourced: true,
+          broker_eligible: true, // lender-uploaded = already approved
+        }));
+        setLenderDpaPrograms(programs);
+      } catch (e) { console.error('Lender DPA load error:', e); }
+    })();
+  }, [user]);
+
+  // Filters
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterType, setFilterType] = useState('all');
+  const [filterBrokerOnly, setFilterBrokerOnly] = useState(false);
+  const [filterEligibleOnly, setFilterEligibleOnly] = useState(false);
+
+  // Stack selection
+  const [stackSelection, setStackSelection] = useState([]);
+
+  // Expanded cards
+  const [expandedCards, setExpandedCards] = useState({});
+  const toggleExpand = (id) => setExpandedCards(prev => ({ ...prev, [id]: !prev[id] }));
+
+  // Non-GA search
+  const [nonGAPrograms, setNonGAPrograms] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState(null);
+  const [hasSearched, setHasSearched] = useState(false);
+
+  // Reset non-GA data when state changes
+  useEffect(() => {
+    setNonGAPrograms([]);
+    setHasSearched(false);
+    setSearchError(null);
+    setStackSelection([]);
+  }, [activeState]);
+
+  // Programs source
+  // Merge seed/AI programs with lender-confirmed programs
+  // Filter lender programs by state match (or statewide if no state field)
+  const lenderProgramsForState = useMemo(() => {
+    return lenderDpaPrograms.filter(p => {
+      if (!p.state) return true; // no state restriction = statewide
+      return p.state.toUpperCase() === activeState;
+    });
+  }, [lenderDpaPrograms, activeState]);
+
+  const basePrograms = useMemo(() => {
+    const seed = activeState === 'GA' ? GEORGIA_DPA_PROGRAMS : nonGAPrograms;
+    // Deduplicate by id — lender programs take precedence
+    const lenderIds = new Set(lenderProgramsForState.map(p => p.id));
+    return [...lenderProgramsForState, ...seed.filter(p => !lenderIds.has(p.id))];
+  }, [activeState, nonGAPrograms, lenderProgramsForState]);
+
+  // Eligibility map (memoized)
+  const eligibilityMap = useMemo(() => {
+    const map = {};
+    basePrograms.forEach(p => { map[p.id] = evaluateEligibility(p, scenario); });
+    return map;
+  }, [basePrograms, scenario]);
+
+  // Filtered programs
+  const filteredPrograms = useMemo(() => {
+    return basePrograms.filter(p => {
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        const hit = [p.name, p.provider, p.notes || '', (p.tags || []).join(' ')]
+          .some(s => s.toLowerCase().includes(q));
+        if (!hit) return false;
+      }
+      if (filterType !== 'all' && p.type !== filterType) return false;
+      if (filterBrokerOnly && !p.broker_eligible) return false;
+      if (filterEligibleOnly && eligibilityMap[p.id]?.eligible !== 'eligible') return false;
+      return true;
+    });
+  }, [basePrograms, searchQuery, filterType, filterBrokerOnly, filterEligibleOnly, eligibilityMap]);
+
+  // Stack analysis
+  const stackAnalysis = useMemo(() => {
+    if (stackSelection.length < 2) return null;
+    return analyzeStack(stackSelection, basePrograms, scenario);
+  }, [stackSelection, basePrograms, scenario]);
+
+  // Counts
+  const eligibleCount = Object.values(eligibilityMap).filter(e => e.eligible === 'eligible').length;
+  const ineligibleCount = Object.values(eligibilityMap).filter(e => e.eligible === 'ineligible').length;
+
+  // Report to Decision Record whenever eligible programs are found
+  useEffect(() => {
+    if (!scenarioId || basePrograms.length === 0) return;
+    const eligiblePrograms = basePrograms.filter(p => eligibilityMap[p.id]?.eligible === 'eligible');
+    const topProgram = eligiblePrograms[0];
+    reportFindings({
+      summary: `DPA Intelligence: ${eligibleCount} eligible program${eligibleCount !== 1 ? 's' : ''} found out of ${basePrograms.length} evaluated (${activeState})`,
+      findings: {
+        state: activeState,
+        totalPrograms: basePrograms.length,
+        eligibleCount,
+        ineligibleCount,
+        topProgram: topProgram ? { name: topProgram.name, provider: topProgram.provider, type: topProgram.type } : null,
+        eligiblePrograms: eligiblePrograms.map(p => ({
+          id: p.id,
+          name: p.name,
+          provider: p.provider,
+          type: p.type,
+          dpaAmount: eligibilityMap[p.id]?.dpaAmount,
+          cltv: eligibilityMap[p.id]?.cltv,
+          broker_eligible: p.broker_eligible,
+        })),
+        stackingAnalyzed: stackSelection.length >= 2,
+      },
+      risk_flags: eligibleCount === 0 ? [{ severity: 'WARNING', message: `No eligible DPA programs found for ${activeState}` }] : [],
+    });
+  }, [eligibilityMap, eligibleCount, ineligibleCount, basePrograms, activeState, scenarioId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Toggle stack
+  const toggleStack = (id) => {
+    setStackSelection(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  // Request Approval → open AEShareForm pre-populated with program context
+  const handleRequestApproval = useCallback((program) => {
+    setAeShareTarget({ program });
+    // Optimistically mark as requested if currently unknown
+    if ((lenderApprovals[program.id] || 'unknown') === 'unknown') {
+      handleLenderApproval(program.id, 'requested');
+    }
+  }, [lenderApprovals, handleLenderApproval]);
+
+  // Non-GA live search
+  const handleNonGASearch = async () => {
+    if (activeState === 'GA') return;
+    setSearchLoading(true);
+    setSearchError(null);
+    setHasSearched(true);
+    setNonGAPrograms([]);
+
+    try {
+      const county = scenario?.county || '';
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 3000,
+          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+          system: `You are a down payment assistance program research specialist. Search the web for current DPA programs in the specified state. Respond ONLY with a valid JSON array. No markdown fences, no preamble, no explanation. Each object must have exactly these fields: id (short lowercase slug), name (string), provider (string), type (one of: grant|forgivable|deferred_loan|second_mortgage), amount_type (fixed|percentage), amount (number), min_fico (number, use 620 if unknown), max_dti (number, use 45 if unknown), max_purchase_price (number or null), ami_percent (number or null), max_income_note (string), first_time_buyer_required (boolean), broker_eligible (boolean), eligible_loan_types (array of strings), counties (string — "statewide" or comma-separated county names), stackable (boolean, default false), notes (string), website (string or ""). Return 5-10 programs maximum. Return ONLY the JSON array.`,
+          messages: [{
+            role: 'user',
+            content: `Find current down payment assistance programs in ${activeState}${county ? `, focusing on ${county} county area` : ''}. Include the state HFA agency program and major city/county programs. Borrower context: purchase price $${scenario?.propertyValue || 'unknown'}, loan type ${scenario?.loanType || 'not specified'}, income $${scenario?.annualIncome || 'unknown'}/yr. Return JSON array only.`
+          }]
+        })
+      });
+
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+
+      const textBlock = data.content?.find(b => b.type === 'text');
+      if (!textBlock?.text) throw new Error('No response content received');
+
+      const raw = textBlock.text.trim();
+      const jsonMatch = raw.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) throw new Error('Could not find JSON array in response — try again');
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      const enriched = parsed.map((p, i) => ({
+        shortName: (p.name || '').split('–')[0].split('-')[0].trim().slice(0, 40),
+        providerAbbr: (p.provider || '').split(' ').slice(0, 3).join(' '),
+        interest_rate: 0,
+        forgivable_years: null,
+        deferred_until: null,
+        homebuyer_ed: false,
+        stack_exceptions: [],
+        tags: ['ai-sourced', activeState.toLowerCase()],
+        ...p,
+        id: p.id || `${activeState.toLowerCase()}-ai-${i}`,
+        state: activeState,
+        ai_sourced: true,
+        stackable: p.stackable || false,
+      }));
+      setNonGAPrograms(enriched);
+    } catch (err) {
+      setSearchError(err.message || 'Search failed — please try again');
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  // ─── RENDER ──────────────────────────────────────────────────────────────────
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg, color: C.textPrimary, fontFamily: "'Inter', -apple-system, sans-serif", paddingBottom: 100 }}>
+      <ModuleNav moduleNumber={9} />
+      {/* ── HERO BANNER ── */}
+      <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)', borderBottom: '1px solid #1e293b', padding: '24px 24px 20px' }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
+            <div>
+              {/* Module badge row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#6366f1', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)', borderRadius: 20, padding: '3px 10px' }}>
+                  M09
+                </span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                  Stage 2 — Lender Fit
+                </span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 20, padding: '3px 10px' }}>
+                  ● LIVE
+                </span>
               </div>
-            ))}</div>
-          </div>
-          {evaluation.warnings?.length>0&&<div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-1"><p className="text-xs font-semibold text-amber-700">Warnings</p>{evaluation.warnings.map((w,i)=><p key={i} className="text-xs text-amber-700">⚠️ {w}</p>)}</div>}
-          <div><h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Lender Approval</h4>
-            <div className="flex items-center gap-3 flex-wrap">
-              <LenderApprovalBadge approvalState={approvalState} lenderName={lenderName} lenderId="mock"/>
-              {approvalState===APPROVAL_STATES.UNKNOWN&&<button onClick={onRequestApproval} className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-white bg-[#1B3A6B] hover:bg-blue-800 rounded-lg px-3 py-1.5"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>Request Approval via AE</button>}
+              {/* Title */}
+              <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: '#ffffff', letterSpacing: '-0.5px', fontFamily: "'DM Serif Display', serif" }}>
+                DPA Intelligence™
+              </h1>
+              <p style={{ margin: '6px 0 12px', fontSize: 13, color: '#94a3b8', fontFamily: "'DM Sans', sans-serif" }}>
+                Nationwide down payment assistance engine — Georgia seed data + AI-powered out-of-state search
+              </p>
+              {/* Capability chips */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {['State Programs', 'Lender Programs', 'AI Web Search', 'Stack Combos', 'DPA Score Ranking'].map(chip => (
+                  <span key={chip} style={{ fontSize: 11, color: '#cbd5e1', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 20, padding: '3px 10px', fontFamily: "'DM Sans', sans-serif" }}>
+                    {chip}
+                  </span>
+                ))}
+              </div>
             </div>
+            {/* Live stats */}
+            {activeState === 'GA' && (
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                {[
+                  { val: eligibleCount, label: 'Eligible', color: '#10b981', bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.3)' },
+                  { val: ineligibleCount, label: 'Ineligible', color: '#f87171', bg: 'rgba(248,113,113,0.12)', border: 'rgba(248,113,113,0.3)' },
+                  { val: basePrograms.length - eligibleCount - ineligibleCount, label: 'Verify', color: '#94a3b8', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.2)' },
+                  ...(lenderProgramsForState.length > 0 ? [{ val: lenderProgramsForState.length, label: 'Lender', color: '#34d399', bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.3)' }] : []),
+                ].map(({ val, label, color, bg, border }) => (
+                  <div key={label} style={{ textAlign: 'center', padding: '10px 16px', background: bg, border: `1px solid ${border}`, borderRadius: 10, minWidth: 64 }}>
+                    <div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1, fontFamily: "'DM Sans', sans-serif" }}>{val}</div>
+                    <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 3, fontFamily: "'DM Sans', sans-serif" }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          {program.stacking_rules?.subordinate_financing_rules&&<div><h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1.5">Stacking Rules</h4><p className="text-xs text-gray-600">{program.stacking_rules.subordinate_financing_rules}</p>{program.stacking_rules.mi_impact_rules&&<p className="text-xs text-gray-500 mt-1">MI: {program.stacking_rules.mi_impact_rules}</p>}</div>}
         </div>
       </div>
+
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '20px 24px' }}>
+        {/* Decision Record Banner */}
+        <DecisionRecordBanner moduleId={MODULE_ID} scenarioId={scenarioId} />
+
+        {/* ── NEXT STEP INTELLIGENCE™ ── */}
+        {scenarioId && primarySuggestion && (
+          <div style={{ background: '#ffffff', borderRadius: 16, border: '1px solid #e2e8f0', padding: '20px 24px', marginBottom: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12, fontFamily: "'DM Sans', sans-serif" }}>
+              Recommended Next Action
+            </p>
+            <NextStepCard
+              suggestion={primarySuggestion}
+              secondarySuggestions={secondarySuggestions}
+              onFollow={logFollow}
+              onOverride={logOverride}
+              loanPurpose={loanPurpose}
+              scenarioId={scenarioId}
+            />
+          </div>
+        )}
+
+        {/* Scenario Context Bar */}
+        <ScenarioContextBar scenario={scenario} activeState={activeState} />
+
+        {/* State Selector */}
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: '16px 20px', marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <label style={{ fontSize: 11, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 4 }}>
+                Property State
+              </label>
+              <input
+                type="text"
+                value={activeState}
+                onChange={e => setActiveState(e.target.value.toUpperCase().slice(0, 2))}
+                placeholder="GA"
+                maxLength={2}
+                style={{
+                  background: C.card, border: `1px solid ${C.border}`, borderRadius: 6,
+                  color: C.textPrimary, padding: '6px 10px', fontSize: 15, fontWeight: 700,
+                  width: 60, textAlign: 'center', letterSpacing: 1,
+                }}
+              />
+            </div>
+            {activeState !== 'GA' && (
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, color: C.textSecondary, marginBottom: 8 }}>
+                  {hasSearched && nonGAPrograms.length > 0
+                    ? `✓ Found ${nonGAPrograms.length} DPA programs in ${activeState} via AI web search`
+                    : `AI will search for current DPA programs in ${activeState} using live web search.`}
+                </div>
+                <button
+                  onClick={handleNonGASearch}
+                  disabled={searchLoading}
+                  style={{
+                    background: searchLoading ? C.surface : C.blue, color: '#fff',
+                    border: 'none', borderRadius: 6, padding: '8px 18px',
+                    fontSize: 13, fontWeight: 600, cursor: searchLoading ? 'wait' : 'pointer',
+                    opacity: searchLoading ? 0.7 : 1,
+                  }}>
+                  {searchLoading ? '🔍 Searching...' : `🔍 Search ${activeState} DPA Programs`}
+                </button>
+                {searchError && (
+                  <div style={{ fontSize: 12, color: '#fca5a5', marginTop: 8 }}>⚠ {searchError}</div>
+                )}
+              </div>
+            )}
+            {activeState === 'GA' && (
+              <div style={{ fontSize: 12, color: C.textMuted }}>
+                ✓ Georgia — {GEORGIA_DPA_PROGRAMS.length} programs loaded from verified seed database
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Stacking Panel */}
+        {stackSelection.length >= 2 && (
+          <StackingPanel analysis={stackAnalysis} onClear={() => setStackSelection([])} />
+        )}
+
+        {/* Filter Bar */}
+        <div style={{
+          background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10,
+          padding: '12px 16px', marginBottom: 20, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center',
+        }}>
+          <input
+            type="text"
+            placeholder="Search programs..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            style={{
+              background: C.card, border: `1px solid ${C.border}`, borderRadius: 6,
+              color: C.textPrimary, padding: '7px 12px', fontSize: 13, flex: 1, minWidth: 180,
+            }}
+          />
+          <select
+            value={filterType}
+            onChange={e => setFilterType(e.target.value)}
+            style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.textSecondary, padding: '7px 10px', fontSize: 13, cursor: 'pointer' }}>
+            <option value="all">All Types</option>
+            <option value="grant">Grants</option>
+            <option value="forgivable">Forgivable</option>
+            <option value="deferred_loan">Deferred Loans</option>
+            <option value="second_mortgage">2nd Mortgages</option>
+          </select>
+          <ToggleFilter label="Broker-Eligible Only" active={filterBrokerOnly} onToggle={() => setFilterBrokerOnly(p => !p)} color={C.green} />
+          <ToggleFilter label="Eligible Only" active={filterEligibleOnly} onToggle={() => setFilterEligibleOnly(p => !p)} color={C.blue} />
+          {stackSelection.length > 0 && (
+            <button
+              onClick={() => setStackSelection([])}
+              style={{ fontSize: 12, color: C.amber, background: 'none', border: `1px solid ${C.amberDark}`, borderRadius: 5, cursor: 'pointer', padding: '5px 10px' }}>
+              Clear Stack ({stackSelection.length})
+            </button>
+          )}
+          <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 'auto' }}>
+            {filteredPrograms.length} of {basePrograms.length} programs
+          </span>
+        </div>
+
+        {/* Non-GA empty state */}
+        {activeState !== 'GA' && !searchLoading && !hasSearched && (
+          <div style={{ textAlign: 'center', padding: '60px 20px', color: C.textMuted }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🔍</div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: C.textSecondary, marginBottom: 8 }}>
+              Ready to search {activeState} DPA programs
+            </div>
+            <div style={{ fontSize: 13 }}>
+              Click "Search {activeState} DPA Programs" above to find current programs via live web search.
+            </div>
+          </div>
+        )}
+
+        {activeState !== 'GA' && !searchLoading && hasSearched && nonGAPrograms.length === 0 && !searchError && (
+          <div style={{ textAlign: 'center', padding: '60px 20px', color: C.textMuted }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: C.textSecondary, marginBottom: 8 }}>No programs returned</div>
+            <div style={{ fontSize: 13 }}>Try searching again — results may vary. Consider verifying directly with the state HFA.</div>
+          </div>
+        )}
+
+        {activeState !== 'GA' && nonGAPrograms.length > 0 && (
+          <div style={{ background: '#1a1421', border: `1px solid #4c1d95`, borderRadius: 8, padding: '10px 16px', marginBottom: 16, fontSize: 12, color: '#c4b5fd' }}>
+            🤖 AI-Researched Programs — These results were found via live web search and have not been manually verified. Always confirm program details with the state HFA or program administrator before promising DPA to a borrower.
+          </div>
+        )}
+
+        {/* Program Grid */}
+        {(activeState === 'GA' || filteredPrograms.length > 0) && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(480px, 1fr))', gap: 16 }}>
+            {filteredPrograms.map(program => (
+              <ProgramCard
+                key={program.id}
+                program={program}
+                eligibility={eligibilityMap[program.id] || { eligible: 'unknown', issues: [], warnings: [] }}
+                lenderStatus={lenderApprovals[program.id] || 'unknown'}
+                onLenderChange={handleLenderApproval}
+                stackSelected={stackSelection.includes(program.id)}
+                onToggleStack={toggleStack}
+                isExpanded={!!expandedCards[program.id]}
+                onToggleExpand={() => toggleExpand(program.id)}
+                onRequestApproval={handleRequestApproval}
+              />
+            ))}
+          </div>
+        )}
+
+        {filteredPrograms.length === 0 && basePrograms.length > 0 && (
+          <div style={{ textAlign: 'center', padding: '40px 20px', color: C.textMuted }}>
+            <div style={{ fontSize: 13 }}>No programs match your current filters.</div>
+            <button onClick={() => { setSearchQuery(''); setFilterType('all'); setFilterBrokerOnly(false); setFilterEligibleOnly(false); }}
+              style={{ marginTop: 10, fontSize: 12, color: C.blue, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+              Clear all filters
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* AE Share Form Modal — Request Approval */}
+      {aeShareTarget && (
+        <AEShareForm
+          scenarioId={scenarioId}
+          prePopulate={{
+            subject: `DPA Approval Request — ${aeShareTarget.program.name}`,
+            programName: aeShareTarget.program.name,
+            programProvider: aeShareTarget.program.provider,
+            programType: aeShareTarget.program.type,
+            notes: `Requesting lender approval to broker the ${aeShareTarget.program.name} DPA program offered by ${aeShareTarget.program.provider}. Please confirm eligibility and submit required approvals.`,
+          }}
+          onClose={() => setAeShareTarget(null)}
+          onSent={() => {
+            handleLenderApproval(aeShareTarget.program.id, 'requested');
+            setAeShareTarget(null);
+          }}
+        />
+      )}
+
+</div>
+  );
+}
+
+// ─── MINOR UI HELPERS ─────────────────────────────────────────────────────────
+function StatBadge({ value, label, color }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '6px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 8 }}>
+      <span style={{ fontSize: 18, fontWeight: 800, color, lineHeight: 1 }}>{value}</span>
+      <span style={{ fontSize: 10, color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</span>
     </div>
+  );
+}
+
+function ToggleFilter({ label, active, onToggle, color }) {
+  return (
+    <button
+      onClick={onToggle}
+      style={{
+        padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+        border: `1px solid ${active ? color : C.border}`,
+        background: active ? `${color}22` : 'transparent',
+        color: active ? color : C.textMuted,
+        transition: 'all 0.15s',
+      }}>
+      {active ? '✓ ' : ''}{label}
+    </button>
   );
 }
