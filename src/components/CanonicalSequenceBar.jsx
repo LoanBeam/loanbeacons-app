@@ -5,34 +5,49 @@ import { useNavigate } from 'react-router-dom';
 import { collection, query, where, limit, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 
+// ── Canonical Sequence™ — 28 Modules ─────────────────────────────────────────
+// Order matches the official Canonical Sequence dropdown list exactly.
+// Stage 1: Pre-Structure (M01–M07)
+// Stage 2: Lender Fit   (M08–M17)
+// Stage 3: Optimization (M18–M26)
+// Stage 4: Verify & Submit (M27–M28)
+// CRA Intel is background infrastructure — intentionally excluded from sequence.
 const SEQ = [
+  // ── Stage 1: Pre-Structure ─────────────────────────────────────────────────
   { key: 'SCENARIO_CREATOR',     num: 1,  label: 'Scenario Creator',     route: '/scenario-creator',      stage: 1, live: true  },
   { key: 'QUALIFYING_INTEL',     num: 2,  label: 'Qualifying Intel',      route: '/qualifying-intel',      stage: 1, live: true  },
   { key: 'INCOME_ANALYZER',      num: 3,  label: 'Income Analyzer',       route: '/income-analyzer',       stage: 1, live: true  },
-  { key: 'ASSET_ANALYZER',       num: 4,  label: 'Asset Analyzer',        route: '/asset-analyzer',        stage: 1, live: true  },
+  { key: 'ASSET_ANALYZER',       num: 4,  label: 'Asset Intel',           route: '/asset-analyzer',        stage: 1, live: true  },
   { key: 'CREDIT_INTEL',         num: 5,  label: 'Credit Intel',          route: '/credit-intel',          stage: 1, live: true  },
-  { key: 'LENDER_MATCH',         num: 6,  label: 'Lender Match',          route: '/lender-match',          stage: 2, live: true  },
-  { key: 'DPA_INTEL',            num: 7,  label: 'DPA Intelligence',      route: '/dpa-intelligence',      stage: 2, live: true  },
-  { key: 'AUS_RESCUE',           num: 8,  label: 'AUS Rescue',            route: '/aus-rescue',            stage: 2, live: true  },
-  { key: 'PROPERTY_INTEL',       num: 9,  label: 'Property Intel',        route: '/property-intel',        stage: 2, live: false },
-  { key: 'TITLE_INTEL',          num: 10, label: 'Title Intel',           route: '/title-intel',           stage: 2, live: false },
-  { key: 'CLOSING_COST_CALC',    num: 11, label: 'Closing Costs',         route: '/closing-cost-calc',     stage: 2, live: false },
-  { key: 'CRA_INTEL',            num: 12, label: 'CRA Intel',             route: '/cra-intel',             stage: 2, live: true  },
-  { key: 'RATE_INTEL',           num: 13, label: 'Rate Intel',            route: '/rate-intel',            stage: 3, live: false },
-  { key: 'DISCLOSURE_INTEL',     num: 14, label: 'Disclosure Intel',      route: '/disclosure-intel',      stage: 3, live: true  },
-  { key: 'COMPLIANCE_INTEL',     num: 15, label: 'Compliance Intel',      route: '/compliance-intel',      stage: 3, live: true  },
-  { key: 'FLOOD_INTEL',          num: 16, label: 'Flood Intel',           route: '/flood-intel',           stage: 3, live: true  },
-  { key: 'REHAB_INTEL',          num: 17, label: 'Rehab Intelligence',    route: '/rehab-intelligence',    stage: 3, live: true  },
-  { key: 'INTELLIGENT_CHECKLIST',num: 18, label: 'Checklist',             route: '/intelligent-checklist', stage: 3, live: true  },
-  { key: 'PIGGYBACK_OPTIMIZER',  num: 19, label: 'Piggyback Optimizer',   route: '/piggyback-optimizer',   stage: 3, live: true  },
-  { key: 'BANK_STATEMENT_INTEL', num: 20, label: 'Bank Statement',        route: '/bank-statement-intel',  stage: 3, live: false },
-  { key: 'FHA_STREAMLINE',       num: 21, label: 'FHA Streamline',        route: '/fha-streamline',        stage: 4, live: true  },
-  { key: 'VA_IRRRL',             num: 22, label: 'VA IRRRL',              route: '/va-irrrl',              stage: 4, live: true  },
-  { key: 'DEBT_CONSOLIDATION',   num: 23, label: 'Debt Consolidation',    route: '/debt-consolidation',    stage: 4, live: true  },
-  { key: 'MI_OPTIMIZER',         num: 24, label: 'MI Optimizer',          route: '/mi-optimizer',          stage: 4, live: true  },
-  { key: 'RATE_BUYDOWN',         num: 25, label: 'Rate Buydown',          route: '/rate-buydown',          stage: 4, live: true  },
-  { key: 'ARM_STRUCTURE',        num: 26, label: 'ARM Structure',         route: '/arm-structure',         stage: 4, live: true  },
+  { key: 'DEBT_CONSOLIDATION',   num: 6,  label: 'Debt Consolidation',    route: '/debt-consolidation',    stage: 1, live: true  },
+  { key: 'BANK_STATEMENT_INTEL', num: 7,  label: 'Bank Statement Intel',  route: '/bank-statement-intel',  stage: 1, live: true  },
+
+  // ── Stage 2: Lender Fit ────────────────────────────────────────────────────
+  { key: 'LENDER_MATCH',         num: 8,  label: 'Lender Match',          route: '/lender-match',          stage: 2, live: true  },
+  { key: 'DPA_INTEL',            num: 9,  label: 'DPA Intelligence',      route: '/dpa-intelligence',      stage: 2, live: true  },
+  { key: 'AUS_RESCUE',           num: 10, label: 'AUS Rescue',            route: '/aus-rescue',            stage: 2, live: true  },
+  { key: 'FHA_STREAMLINE',       num: 11, label: 'FHA Streamline',        route: '/fha-streamline',        stage: 2, live: true  },
+  { key: 'VA_IRRRL',             num: 12, label: 'VA IRRRL',              route: '/va-irrrl',              stage: 2, live: true  },
+  { key: 'USDA_INTEL',           num: 13, label: 'USDA Intelligence',     route: '/usda-intelligence',     stage: 2, live: true  },
+  { key: 'CONVENTIONAL_REFI',    num: 14, label: 'Conventional Refi',     route: '/conventional-refi',     stage: 2, live: false },
+  { key: 'RATE_BUYDOWN',         num: 15, label: 'Rate Buydown',          route: '/rate-buydown',          stage: 2, live: true  },
+  { key: 'MI_OPTIMIZER',         num: 16, label: 'MI Optimizer',          route: '/mi-optimizer',          stage: 2, live: true  },
+  { key: 'ARM_STRUCTURE',        num: 17, label: 'ARM Structure',         route: '/arm-structure',         stage: 2, live: true  },
+
+  // ── Stage 3: Optimization ──────────────────────────────────────────────────
+  { key: 'REHAB_INTEL',          num: 18, label: 'Rehab Intelligence',    route: '/rehab-intelligence',    stage: 3, live: true  },
+  { key: 'RATE_INTEL',           num: 19, label: 'Rate Intel',            route: '/rate-intel',            stage: 3, live: true  },
+  { key: 'CLOSING_COST_CALC',    num: 20, label: 'Closing Cost Calc',     route: '/closing-cost-calc',     stage: 3, live: true  },
+  { key: 'PROPERTY_INTEL',       num: 21, label: 'Collateral Intel',      route: '/property-intel',        stage: 3, live: true  },
+  { key: 'PIGGYBACK_OPTIMIZER',  num: 22, label: 'Piggyback Optimizer',   route: '/piggyback-optimizer',   stage: 3, live: true  },
+  { key: 'TITLE_INTEL',          num: 23, label: 'Title Intel',           route: '/title-intel',           stage: 3, live: true  },
+  { key: 'DISCLOSURE_INTEL',     num: 24, label: 'Disclosure Intel',      route: '/disclosure-intel',      stage: 3, live: true  },
+  { key: 'COMPLIANCE_INTEL',     num: 25, label: 'Compliance Intel',      route: '/compliance-intel',      stage: 3, live: true  },
+  { key: 'FLOOD_INTEL',          num: 26, label: 'Flood Intel',           route: '/flood-intel',           stage: 3, live: true  },
+
+  // ── Stage 4: Verify & Submit ───────────────────────────────────────────────
   { key: 'DECISION_RECORD',      num: 27, label: 'Decision Record',       route: '/decision-records',      stage: 4, live: true  },
+  { key: 'INTELLIGENT_CHECKLIST',num: 28, label: 'Intelligent Checklist', route: '/intelligent-checklist', stage: 4, live: true  },
 ];
 
 // Matches platform color palette exactly
@@ -52,7 +67,7 @@ const WHITE15 = 'rgba(255,255,255,0.15)';
 const WHITE08 = 'rgba(255,255,255,0.08)';
 
 const STAGE_COLORS = { 1: INDIGO, 2: '#f59e0b', 3: GREEN, 4: '#3b82f6' };
-const STAGE_LABELS = { 1: 'Pre-Structure', 2: 'Lender Fit', 3: 'Final Structure', 4: 'Verify & Submit' };
+const STAGE_LABELS = { 1: 'Pre-Structure', 2: 'Lender Fit', 3: 'Optimization', 4: 'Verify & Submit' };
 
 export default function CanonicalSequenceBar({ currentModuleKey, scenarioId, recordId }) {
   const navigate = useNavigate();
@@ -73,7 +88,7 @@ export default function CanonicalSequenceBar({ currentModuleKey, scenarioId, rec
 
   const ci = SEQ.findIndex(m => m.key === currentModuleKey);
   const prev = SEQ.slice(0, ci).filter(m => m.live).pop() || null;
-const next = SEQ.slice(ci + 1).find(m => m.live) || null;
+  const next = SEQ.slice(ci + 1).find(m => m.live) || null;
   const currentMod = ci >= 0 ? SEQ[ci] : null;
   const stageColor = currentMod ? STAGE_COLORS[currentMod.stage] : INDIGO;
 
@@ -105,7 +120,7 @@ const next = SEQ.slice(ci + 1).find(m => m.live) || null;
                 <div style={{ fontSize: 15, fontWeight: 800, color: WHITE, letterSpacing: '-0.01em' }}>
                   Canonical Sequence™
                   <span style={{ marginLeft: 10, fontSize: 11, fontWeight: 600, color: INDIGO_LIGHT, background: INDIGO_BG, border: `1px solid ${INDIGO_BORDER}`, borderRadius: 20, padding: '2px 10px' }}>
-                    27 Modules
+                    28 Modules
                   </span>
                 </div>
                 <div style={{ fontSize: 12, color: WHITE30, marginTop: 3 }}>
@@ -143,34 +158,38 @@ const next = SEQ.slice(ci + 1).find(m => m.live) || null;
                       </span>
                     </div>
                     {/* Module list */}
-                    <div style={{ padding: '8px' }}>
+                    <div style={{ padding: '8px 6px' }}>
                       {mods.map(mod => {
                         const state = st(mod);
                         const isCur = state === 'cur';
                         const isLog = state === 'log';
                         return (
-                          <button key={mod.key} onClick={() => go(mod)} style={{
-                            display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                            padding: '6px 8px', marginBottom: 3, borderRadius: 7, textAlign: 'left',
-                            cursor: mod.live ? 'pointer' : 'default', opacity: mod.live ? 1 : 0.35,
-                            background: isCur ? `${sc}20` : isLog ? GREEN_BG : 'transparent',
-                            border: isCur ? `1px solid ${sc}` : isLog ? `1px solid ${GREEN_BORDER}` : `1px solid transparent`,
-                          }}>
-                            <div style={{
-                              width: 24, height: 24, borderRadius: 6, flexShrink: 0,
-                              background: isCur ? sc : isLog ? GREEN : WHITE08,
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          <button
+                            key={mod.key}
+                            onClick={() => go(mod)}
+                            disabled={!mod.live}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 8,
+                              width: '100%', padding: '7px 8px', borderRadius: 7, marginBottom: 2,
+                              border: isCur ? `1px solid ${sc}55` : '1px solid transparent',
+                              background: isCur ? `${sc}20` : isLog ? `${GREEN}10` : 'transparent',
+                              cursor: mod.live ? 'pointer' : 'default',
+                              opacity: mod.live ? 1 : 0.35,
+                              textAlign: 'left',
                             }}>
-                              <span style={{ fontSize: 10, fontWeight: 800, color: isCur || isLog ? '#000' : WHITE30 }}>
-                                {isLog && !isCur ? '✓' : mod.num}
-                              </span>
-                            </div>
-                            <span style={{ fontSize: 12, fontWeight: isCur ? 700 : 500, color: isCur ? sc : isLog ? GREEN : WHITE60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                            <span style={{
+                              width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: 9, fontWeight: 900,
+                              background: isCur ? sc : isLog ? GREEN : WHITE08,
+                              color: isCur ? '#000' : isLog ? '#000' : WHITE30,
+                              border: isCur ? 'none' : isLog ? 'none' : `1px solid ${WHITE15}`,
+                            }}>
+                              {isLog && !isCur ? '✓' : mod.num}
+                            </span>
+                            <span style={{ fontSize: 12, fontWeight: isCur ? 700 : 500, color: isCur ? sc : isLog ? GREEN : WHITE60, flex: 1 }}>
                               {mod.label}
                             </span>
-                            {isCur && (
-                              <span style={{ fontSize: 9, fontWeight: 700, color: sc, background: `${sc}20`, border: `1px solid ${sc}44`, borderRadius: 20, padding: '1px 7px', flexShrink: 0 }}>HERE</span>
-                            )}
                             {!mod.live && (
                               <span style={{ fontSize: 9, color: WHITE30, flexShrink: 0 }}>soon</span>
                             )}
@@ -212,7 +231,7 @@ const next = SEQ.slice(ci + 1).find(m => m.live) || null;
           ← {prev ? prev.num : ''}
         </button>
 
-        {/* Current module badge — matches platform header style */}
+        {/* Current module badge */}
         <div style={{
           flexShrink: 0, background: `${stageColor}20`, border: `1px solid ${stageColor}55`,
           borderRadius: 8, padding: '5px 14px',
@@ -284,7 +303,7 @@ const next = SEQ.slice(ci + 1).find(m => m.live) || null;
           <div style={{ fontSize: 9, color: WHITE30, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Logged</div>
         </div>
 
-        {/* All Modules — matches platform button style */}
+        {/* All Modules */}
         <button onClick={() => setExpanded(e => !e)} style={{
           padding: '7px 16px', borderRadius: 8,
           border: expanded ? `1px solid ${INDIGO}` : `1px solid ${INDIGO_BORDER}`,
