@@ -1,5 +1,5 @@
 // src/modules/RehabIntelligence.jsx
-// LoanBeacons™ — Module 17 | Stage 2: Lender Fit
+// LoanBeacons™ — Module 18 | Stage 2: Lender Fit
 // Rehab Intelligence™ — Agency renovation · Hard Money · Non-QM · DSCR Fix & Hold
 
 import { useState, useEffect, useCallback } from 'react';
@@ -9,8 +9,7 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-
+import ModuleNav from '../components/ModuleNav';
 // ─── Cost Ranges ──────────────────────────────────────────────────────────────
 const COST_RANGES = {
   ROOF_REPLACEMENT:  { low: 8000,   high: 20000,  label: 'Roof Replacement' },
@@ -604,7 +603,7 @@ export default function RehabIntelligence() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514', max_tokens: 1500,
+          model: 'claude-sonnet-4-6', max_tokens: 1500,
           messages: [{ role: 'user', content: `You are a senior renovation and hard money mortgage specialist. Analyze this deal.
 
 SCENARIO:
@@ -639,18 +638,21 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
     if (!rehabCost) return;
     setRecordSaving(true);
     try {
-      const riskFlags = [];
-      if (eligibleProducts.length === 0) riskFlags.push({ field: 'eligibility', message: 'No products eligible', severity: 'HIGH' });
-      if (hasStructural && selectedProduct && !selectedProduct.allowsStructural) riskFlags.push({ field: 'structural', message: 'Structural work — product conflict', severity: 'HIGH' });
-      if (selectedProduct?.lenderType === 'hardmoney' && profitMarginPct < 15) riskFlags.push({ field: 'margin', message: 'Profit margin <15% — thin deal', severity: 'MEDIUM' });
-      if (dscr > 0 && dscr < 1.0) riskFlags.push({ field: 'dscr', message: 'DSCR below 1.0 — may not qualify', severity: 'HIGH' });
-      const writtenId = await reportFindings({
-        verdict: eligibleProducts.length > 0 ? (aiAnalysis?.verdict || 'ACCEPTABLE') : 'NEEDS REVIEW',
-        summary: `Rehab Intelligence — ${form.loanPurpose?.replace(/_/g, ' ')} · Reno: ${fmt0(rehabCost)} · ARV: ${fmt0(arv)} · ${eligibleProducts.length} product(s) eligible · ${selectedProduct?.label || 'No product'}`,
-        riskFlags,
-        findings: { loanPurpose: form.loanPurpose, rehabCost, arv, totalCost, hasStructural, selectedProduct: selectedProduct?.id, eligibleProducts, creditScore: form.creditScore, exitStrategy: form.exitStrategy, flipExperience: form.flipExperience, loNotes },
-        completeness: { purposeSet: !!form.loanPurpose, rehabEntered: !!rehabCost, productSelected: !!selectedProductId, aiRun: !!aiAnalysis },
-      });
+      const flags = [];
+      if (eligibleProducts.length === 0) flags.push({ flagCode: 'NO_ELIGIBLE_PRODUCTS', sourceModule: 'REHAB_INTELLIGENCE', severity: 'HIGH', detail: 'No renovation products eligible for this scenario' });
+      if (hasStructural && selectedProduct && !selectedProduct.allowsStructural) flags.push({ flagCode: 'STRUCTURAL_CONFLICT', sourceModule: 'REHAB_INTELLIGENCE', severity: 'HIGH', detail: 'Structural work present — selected product does not allow it' });
+      if (selectedProduct?.lenderType === 'hardmoney' && profitMarginPct < 15) flags.push({ flagCode: 'THIN_MARGIN', sourceModule: 'REHAB_INTELLIGENCE', severity: 'MEDIUM', detail: `Profit margin ${fmtPct(profitMarginPct)} is below 15% threshold` });
+      if (dscr > 0 && dscr < 1.0) flags.push({ flagCode: 'DSCR_BELOW_MIN', sourceModule: 'REHAB_INTELLIGENCE', severity: 'HIGH', detail: `DSCR ${dscr.toFixed(2)} is below 1.0 minimum` });
+
+      const findings = {
+        verdict: eligibleProducts.length > 0 ? (aiAnalysis?.verdict || 'ACCEPTABLE') : 'NEEDS_REVIEW',
+        summary: `Rehab Intelligence — ${form.loanPurpose?.replace(/_/g, ' ')} · Reno: ${fmt0(rehabCost)} · ARV: ${fmt0(arv)} · ${eligibleProducts.length} product(s) eligible · ${selectedProduct?.label || 'No product selected'}`,
+        loanPurpose: form.loanPurpose, rehabCost, arv, totalCost, hasStructural,
+        selectedProduct: selectedProduct?.id, eligibleProducts, creditScore: form.creditScore,
+        exitStrategy: form.exitStrategy, flipExperience: form.flipExperience, loNotes,
+      };
+
+      const writtenId = await reportFindings('REHAB_INTELLIGENCE', findings, [], flags, '1.0.0');
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
     setRecordSaving(false);
@@ -683,7 +685,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-orange-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-orange-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-orange-900/40">17</div>
+              <div className="w-11 h-11 bg-orange-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-orange-900/40">18</div>
               <div>
                 <span className="text-xs font-bold tracking-widest text-orange-400 uppercase">Stage 2 — Lender Fit</span>
                 <h1 className="text-2xl font-bold text-white mt-0.5">Rehab Intelligence™</h1>
@@ -765,6 +767,17 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
+      {/* Decision Record Banner — always first */}
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="Rehab Intelligence™"
+        moduleKey="REHAB_INTELLIGENCE"
+        onSave={handleSaveToRecord}
+      />
+
+      {/* Canonical Sequence Nav */}
+      <ModuleNav moduleNumber={18} />
+
       {/* Hero */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #f97316 0%, transparent 50%), radial-gradient(circle at 80% 20%, #f59e0b 0%, transparent 40%)' }} />
@@ -772,7 +785,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 17</div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 18</div>
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Rehab Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl">Agency renovation · Fix & Flip · Bridge · DSCR Fix & Hold · Non-QM · AI bid analysis</p>
               <div className="flex gap-2 mt-3">
@@ -813,8 +826,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Rehab Intelligence™" moduleNumber="17" scenarioId={scenarioId} />
-      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2"><DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="REHAB_INTEL" /></div>
+      <ScenarioHeader moduleTitle="Rehab Intelligence™" moduleNumber="18" scenarioId={scenarioId} />
 
       {/* Tab Bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
@@ -1748,7 +1760,6 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
           </div>
         </div>
       </div>
-      <CanonicalSequenceBar currentModuleKey="REHAB_INTEL" scenarioId={scenarioId} recordId={savedRecordId} />
-    </div>
+</div>
   );
 }

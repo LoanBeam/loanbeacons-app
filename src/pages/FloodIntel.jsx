@@ -84,7 +84,6 @@ function LetterCard({ body }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="rounded-3xl border-2 border-cyan-200 bg-cyan-50 overflow-hidden">
-      <ModuleNav moduleNumber={26} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">📋 Flood Insurance Summary Letter</div>
         <div className="flex gap-2">
@@ -281,17 +280,24 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
-      const riskFlags = [];
-      if (isSFHA && !bldgCov) riskFlags.push({ field: 'insurance', message: 'SFHA property — no flood insurance entered', severity: 'HIGH' });
-      if (coverageGap > 0)   riskFlags.push({ field: 'coverage', message: 'Coverage gap: ' + fmt0(coverageGap) + ' below minimum required', severity: 'HIGH' });
-      if (issueChecks > 0)   riskFlags.push({ field: 'checklist', message: issueChecks + ' checklist item(s) flagged as issues', severity: 'MEDIUM' });
-      const writtenId = await reportFindings({
-        verdict: !isSFHA ? 'No SFHA — Flood insurance not required' : coverageOK && issueChecks === 0 ? 'SFHA — Insurance in place and adequate' : 'SFHA — Action required',
-        summary: `Flood Intelligence — Zone ${selectedZone || 'Not entered'} · SFHA: ${isSFHA ? 'Yes' : 'No'} · Min required: ${fmt0(minCoverage)} · Building coverage: ${fmt0(bldgCov)} · Checklist: ${completedChecks}/${CHECKLIST.length} complete`,
-        riskFlags,
-        findings: { selectedZone, isSFHA, mapNumber, mapDate, determinationDate, loanAmount: loanAmt, replacementCost: replCost, buildingCoverage: bldgCov, minCoverage, coverageGap, insuranceType, insuranceCarrier, policyNumber, annualPremium: parseFloat(annualPremium) || null, checkStatuses, loNotes },
-        completeness: { zoneSelected: !!selectedZone, insuranceEntered: !!bldgCov, checklistStarted: completedChecks > 0, aiRun: !!aiAnalysis },
-      });
+      const flags = [];
+      if (isSFHA && !bldgCov) flags.push({ flagCode: 'NO_FLOOD_INSURANCE', sourceModule: 'FLOOD_INTEL', severity: 'HIGH',   detail: 'SFHA property — no flood insurance entered' });
+      if (coverageGap > 0)   flags.push({ flagCode: 'COVERAGE_GAP',        sourceModule: 'FLOOD_INTEL', severity: 'HIGH',   detail: 'Coverage gap: ' + fmt0(coverageGap) + ' below minimum required' });
+      if (issueChecks > 0)   flags.push({ flagCode: 'CHECKLIST_ISSUES',    sourceModule: 'FLOOD_INTEL', severity: 'MEDIUM', detail: issueChecks + ' checklist item(s) flagged as issues' });
+      const writtenId = await reportFindings(
+        'FLOOD_INTEL',
+        {
+          verdict: !isSFHA ? 'No SFHA — Flood insurance not required' : coverageOK && issueChecks === 0 ? 'SFHA — Insurance in place and adequate' : 'SFHA — Action required',
+          summary: `Flood Intelligence — Zone ${selectedZone || 'Not entered'} · SFHA: ${isSFHA ? 'Yes' : 'No'} · Min required: ${fmt0(minCoverage)} · Building coverage: ${fmt0(bldgCov)} · Checklist: ${completedChecks}/${CHECKLIST.length} complete`,
+          selectedZone, isSFHA, mapNumber, mapDate, determinationDate,
+          loanAmount: loanAmt, replacementCost: replCost, buildingCoverage: bldgCov,
+          minCoverage, coverageGap, insuranceType, insuranceCarrier, policyNumber,
+          annualPremium: parseFloat(annualPremium) || null, checkStatuses, loNotes,
+        },
+        [],
+        flags,
+        '1.0.0'
+      );
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
     setRecordSaving(false);
@@ -405,6 +411,14 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="Flood Intelligence™"
+        moduleKey="FLOOD_INTEL"
+        onSave={handleSaveToRecord}
+      />
+      <ModuleNav moduleNumber={26} />
+
       {/* Hero */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #0891b2 0%, transparent 50%), radial-gradient(circle at 80% 20%, #0e7490 0%, transparent 40%)' }} />
@@ -412,7 +426,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 16</div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 26</div>
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Flood Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl">FEMA flood zone · NFIP requirements · Insurance tracking · Coverage calculator · AI risk assessment</p>
             </div>
@@ -449,8 +463,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Flood Intelligence™" moduleNumber="16" scenarioId={scenarioId} />
-      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2"><DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="FLOOD_INTEL" /></div>
+      <ScenarioHeader moduleTitle="Flood Intelligence™" moduleNumber="26" scenarioId={scenarioId} />
 
       {/* Tab Bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
@@ -707,12 +720,6 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
                     );
                   })}
                 </div>
-                <div className="p-6 border-t border-slate-200 flex justify-end">
-                  <button onClick={handleSaveToRecord} disabled={recordSaving}
-                    className={'px-8 py-3 rounded-2xl text-sm font-bold transition-colors ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
-                    {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record™'}
-                  </button>
-                </div>
               </div>
             )}
 
@@ -763,12 +770,6 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
                     <textarea value={loNotes} onChange={e => setLoNotes(e.target.value)} rows={4}
                       placeholder="Zone dispute notes, LOMA application status, private insurance verification, lender overlay requirements..."
                       className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-cyan-400 resize-none" />
-                    <div className="mt-4 flex justify-end">
-                      <button onClick={handleSaveToRecord} disabled={recordSaving}
-                        className={'px-8 py-3 rounded-2xl text-sm font-bold transition-colors ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
-                        {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record™'}
-                      </button>
-                    </div>
                   </div>
                 </div>
 

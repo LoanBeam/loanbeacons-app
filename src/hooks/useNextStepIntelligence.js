@@ -307,6 +307,112 @@ function runRulesEngine({ currentModuleKey, loanPurpose, findings, scenarioData,
     }
   }
 
+  if (currentModuleKey === 'FHA_STREAMLINE') {
+    const ntbSatisfied      = f.ntbSatisfied !== false;
+    const seasoningOk       = f.seasoningPass !== false;
+    const eligibilityStatus = (f.eligibilityStatus || '').toUpperCase();
+
+    if (!seasoningOk) {
+      raw.push(suggest('SCENARIO_CREATOR',
+        'Seasoning requirement not met — 210 days from first payment required. Return to Scenario Creator and update the loan dates before proceeding.',
+        'HIGH', { canSkip: false }));
+    } else if (eligibilityStatus === 'INELIGIBLE') {
+      raw.push(suggest('CONVENTIONAL_REFI',
+        'FHA Streamline eligibility failed. Evaluate Conventional Refi as an alternative path.',
+        'HIGH'));
+    } else if (!ntbSatisfied) {
+      raw.push(suggest('RATE_BUYDOWN',
+        'Net Tangible Benefit test not satisfied. Rate Buydown Calculator may help restructure the rate to meet NTB thresholds.',
+        'HIGH'));
+    } else {
+      raw.push(suggest('CLOSING_COST_CALC',
+        'Streamline eligible and NTB satisfied. Proceed to Closing Cost Calculator to finalize net tangible benefit and recoupment.',
+        'MEDIUM'));
+      raw.push(suggest('DISCLOSURE_INTEL',
+        'Run Disclosure Intelligence to verify CD timing and rescission period requirements.',
+        'LOW'));
+    }
+  }
+
+  if (currentModuleKey === 'VA_IRRRL') {
+    const benefitPass  = f.benefitPass || f.ntbPass || f.netTangibleBenefitPass || false;
+    const seasoningOk  = f.seasoningPass !== false;
+    const eligStatus   = (f.eligibilityStatus || '').toUpperCase();
+
+    if (!seasoningOk) {
+      raw.push(suggest('SCENARIO_CREATOR',
+        'VA IRRRL seasoning requirement not met — 210 days from first payment required. Return to Scenario Creator and correct the loan dates.',
+        'HIGH', { canSkip: false }));
+    } else if (eligStatus === 'INELIGIBLE') {
+      raw.push(suggest('CONVENTIONAL_REFI',
+        'VA IRRRL eligibility failed. Evaluate Conventional Refi as an alternative path.',
+        'HIGH'));
+    } else if (!benefitPass) {
+      raw.push(suggest('RATE_BUYDOWN',
+        'Net Tangible Benefit test not met. Use Rate Buydown Calculator to restructure the rate and satisfy the VA benefit test.',
+        'HIGH'));
+    } else {
+      raw.push(suggest('CLOSING_COST_CALC',
+        'VA IRRRL eligible and Net Tangible Benefit confirmed. Proceed to Closing Cost Calculator.',
+        'MEDIUM'));
+      raw.push(suggest('DISCLOSURE_INTEL',
+        'Run Disclosure Intelligence to verify CD and rescission period requirements.',
+        'LOW'));
+    }
+  }
+
+  if (currentModuleKey === 'USDA_INTEL') {
+    const eligible       = f.eligible !== false && f.usda_eligible !== false;
+    const incomePass     = f.incomePass !== false && f.incomeLimitPass !== false;
+    const propertyPass   = f.propertyPass !== false && f.ruralEligible !== false;
+
+    if (!propertyPass) {
+      raw.push(suggest('LENDER_MATCH',
+        'Property is not in a USDA-eligible rural area. Return to Lender Match and filter for Conventional or FHA lenders.',
+        'HIGH', { canSkip: false }));
+    } else if (!incomePass) {
+      raw.push(suggest('INCOME_ANALYZER',
+        'Borrower income exceeds USDA area limit. Re-run Income Analyzer — consider excluding non-qualifying income sources.',
+        'HIGH'));
+    } else if (eligible) {
+      raw.push(suggest('CLOSING_COST_CALC',
+        'USDA eligibility confirmed. Proceed to Closing Cost Calculator — note USDA guarantee fee must be included.',
+        'MEDIUM'));
+      raw.push(suggest('AUS_RESCUE',
+        'Run AUS Rescue to confirm GUS approval path and document any overlays.',
+        'LOW'));
+    } else {
+      raw.push(suggest('AUS_RESCUE',
+        'USDA eligibility uncertain. Run AUS Rescue to evaluate alternative program paths.',
+        'MEDIUM'));
+    }
+  }
+
+  if (currentModuleKey === 'CONVENTIONAL_REFI') {
+    const ltv            = parseFloat(f.ltv || f.ltvPct || 0);
+    const requiresMI     = f.requiresMI || f.hasMI || (ltv > 80) || false;
+    const cashOutEligible = f.cashOutEligible !== false;
+    const eligible       = f.eligible !== false;
+
+    if (!eligible) {
+      raw.push(suggest('AUS_RESCUE',
+        'Conventional Refi eligibility not confirmed. Run AUS Rescue to identify the blocking factor and evaluate alternative programs.',
+        'HIGH'));
+    } else if (loanPurpose === 'cash_out_refi' && !cashOutEligible) {
+      raw.push(suggest('PROPERTY_INTEL',
+        'Cash-out eligibility blocked — LTV or program constraint. Run Collateral Intelligence to assess current value defensibility.',
+        'HIGH'));
+    } else if (requiresMI && ltv > 80) {
+      raw.push(suggest('MI_OPTIMIZER',
+        `LTV at ${ltv}% requires MI. Run MI Optimizer to minimize the monthly MI burden before finalizing.`,
+        'MEDIUM'));
+    } else {
+      raw.push(suggest('CLOSING_COST_CALC',
+        'Conventional Refi eligible. Proceed to Closing Cost Calculator.',
+        'LOW'));
+    }
+  }
+
   if (currentModuleKey === 'ASSET_ANALYZER') {
     const sufficient  = f.sufficientFunds !== false;
     const reservePass = f.reservePass    !== false;
@@ -363,6 +469,44 @@ function runRulesEngine({ currentModuleKey, loanPurpose, findings, scenarioData,
   }
 
   // ─── STAGE 3 ────────────────────────────────
+
+  if (currentModuleKey === 'RATE_INTEL') {
+    const rateLocked  = f.rateLocked || f.locked || false;
+    const pricingRisk = (f.pricingRisk || '').toUpperCase();
+
+    if (pricingRisk === 'HIGH') {
+      raw.push(suggest('RATE_BUYDOWN',
+        'High pricing risk identified. Run Rate Buydown Calculator to evaluate whether points or seller concessions improve the rate structure.',
+        'HIGH'));
+    } else if (rateLocked) {
+      raw.push(suggest('CLOSING_COST_CALC',
+        'Rate locked. Proceed to Closing Cost Calculator with confirmed rate and pricing.',
+        'LOW'));
+    } else {
+      raw.push(suggest('CLOSING_COST_CALC',
+        'Rate analysis complete. Proceed to Closing Cost Calculator.',
+        'LOW'));
+    }
+  }
+
+  if (currentModuleKey === 'PIGGYBACK_OPTIMIZER') {
+    const piggybackViable = f.piggybackViable !== false;
+    const miEliminated    = f.miEliminated || f.miRemoved || false;
+
+    if (!piggybackViable) {
+      raw.push(suggest('MI_OPTIMIZER',
+        'Piggyback structure not viable for this scenario. Run MI Optimizer to find the lowest-cost MI alternative.',
+        'MEDIUM'));
+    } else if (miEliminated) {
+      raw.push(suggest('CLOSING_COST_CALC',
+        'Piggyback structure eliminates MI. Proceed to Closing Cost Calculator with blended payment confirmed.',
+        'LOW'));
+    } else {
+      raw.push(suggest('CLOSING_COST_CALC',
+        'Piggyback analysis complete. Proceed to Closing Cost Calculator.',
+        'LOW'));
+    }
+  }
 
   if (currentModuleKey === 'RATE_BUYDOWN') {
     const breakEven = parseInt(f.breakEvenMonths || f.breakeven || 0);

@@ -688,7 +688,7 @@ export default function ClosingCostCalc() {
           'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
+          model: 'claude-sonnet-4-20250514',
           max_tokens: 1024,
           tools: [{ type: 'web_search_20250305', name: 'web_search' }],
           messages: [{
@@ -1032,17 +1032,20 @@ export default function ClosingCostCalc() {
               }, 0);
 
               return (
-                <div key={group.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                  {/* Compact section header */}
-                  <div className="flex items-center justify-between px-6 py-3 border-b border-slate-100 bg-slate-50">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">{group.icon}</span>
-                      <span className={'text-sm font-bold ' + gc.accent.replace('300','700').replace('text-','text-')}>{group.label}</span>
-                      <span className="text-xs text-slate-400">{groupFees.length} fee{groupFees.length > 1 ? 's' : ''}</span>
+                <div key={group.id} className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className={'bg-gradient-to-r px-8 py-5 flex items-center justify-between ' + gc.header}>
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{group.icon}</span>
+                      <div>
+                        <div className={'text-xs font-bold uppercase tracking-widest mb-0.5 ' + gc.accent}>{group.label}</div>
+                        <div className="text-xs text-slate-400">{groupFees.length} fee{groupFees.length > 1 ? 's' : ''} · hover ? for education</div>
+                      </div>
                     </div>
-                    <span className={'text-base font-black ' + gc.accent}>{fmt0(groupTotal)}</span>
+                    <div className="text-right">
+                      <div className="text-xs text-slate-400 mb-0.5">Est. Buyer Cost</div>
+                      <div className={'text-xl font-black ' + gc.accent}>{fmt0(groupTotal)}</div>
+                    </div>
                   </div>
-                  {/* Fee rows — single line each */}
                   <div className="divide-y divide-slate-100">
                     {groupFees.map((fee) => {
                       const val = feeValues[fee.id] || 0;
@@ -1050,36 +1053,41 @@ export default function ClosingCostCalc() {
                       const pc = PAYER_COLORS[payer] || PAYER_COLORS.buyer;
                       const isConfirmed = !!feeOverrides[fee.id];
                       return (
-                        <div key={fee.id} className={'flex items-center gap-3 px-6 py-3 ' + (isConfirmed ? 'bg-emerald-50/40' : 'bg-white')}>
-                          {/* Fee name + tooltip */}
-                          <div className="flex-1 min-w-0 flex items-center gap-1.5">
-                            <span className="text-sm font-semibold text-slate-800 truncate">{fee.label}</span>
-                            <FeeTooltip fee={fee} loanType={loanType} />
-                            {isConfirmed && <span className="text-emerald-500 text-xs font-bold flex-shrink-0">✓</span>}
+                        <div key={fee.id} className={'px-8 py-4 flex items-center gap-4 ' + (isConfirmed ? 'bg-slate-50/50' : 'bg-white')}>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-sm font-semibold text-slate-800 truncate">{fee.label}</span>
+                              <FeeTooltip fee={fee} loanType={loanType} />
+                              {isConfirmed && <span className="text-xs text-emerald-600 font-bold">✓</span>}
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={'text-xs font-bold px-2 py-0.5 rounded-lg border ' + pc.bg + ' ' + pc.text + ' ' + pc.border}>
+                                {pc.label}
+                              </span>
+                              {fee.negotiable && <span className="text-xs text-slate-400 italic">negotiable</span>}
+                            </div>
                           </div>
-                          {/* Payer badge */}
-                          <span className={'text-xs font-semibold px-2 py-0.5 rounded-md flex-shrink-0 ' + pc.bg + ' ' + pc.text}>
-                            {pc.label}
-                          </span>
-                          {/* Payer select */}
-                          <select value={payer} onChange={(e) => setFeePayer(fee.id, e.target.value)}
-                            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 text-slate-600 bg-white focus:outline-none focus:border-indigo-400 flex-shrink-0">
-                            <option value="buyer">Buyer</option>
-                            <option value="seller">Seller</option>
-                            <option value="lender">Lender</option>
-                            <option value="split">Split</option>
-                          </select>
-                          {/* Amount */}
-                          <div className="relative flex-shrink-0">
-                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs pointer-events-none">$</span>
-                            <input
-                              type="number"
-                              value={val || ''}
-                              onChange={(e) => setFeeValue(fee.id, e.target.value)}
-                              onBlur={() => confirmFee(fee.id)}
-                              placeholder="0"
-                              className={'w-24 pl-5 pr-2 py-1.5 border-2 rounded-lg text-sm font-bold text-right focus:outline-none ' + (isConfirmed ? 'border-emerald-300 bg-emerald-50 text-emerald-700 focus:border-emerald-400' : 'border-slate-200 bg-slate-50 text-slate-700 focus:border-indigo-400')}
-                            />
+                          <div className="flex items-center gap-3 shrink-0">
+                            {/* Payer toggle */}
+                            <select value={payer} onChange={(e) => setFeePayer(fee.id, e.target.value)}
+                              className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 text-slate-600 bg-white focus:outline-none focus:border-indigo-400">
+                              <option value="buyer">Buyer</option>
+                              <option value="seller">Seller</option>
+                              <option value="lender">Lender</option>
+                              <option value="split">Split</option>
+                            </select>
+                            {/* Amount input */}
+                            <div className="relative">
+                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                              <input
+                                type="number"
+                                value={val || ''}
+                                onChange={(e) => setFeeValue(fee.id, e.target.value)}
+                                onBlur={() => confirmFee(fee.id)}
+                                placeholder="0"
+                                className={'w-28 pl-6 pr-3 py-2 border-2 rounded-xl text-sm font-semibold text-right focus:outline-none ' + (isConfirmed ? 'border-emerald-300 bg-emerald-50 text-emerald-700 focus:border-emerald-400' : 'border-slate-200 bg-slate-50 text-slate-700 focus:border-indigo-400')}
+                              />
+                            </div>
                           </div>
                         </div>
                       );
@@ -1088,6 +1096,20 @@ export default function ClosingCostCalc() {
                 </div>
               );
             })}
+
+            {/* Save */}
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
+              <div className="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                  <h3 className="font-bold text-slate-800">Save to Decision Record™</h3>
+                  <p className="text-slate-500 text-sm">Logs all fee estimates, payer assignments, and cash-to-close to the audit trail.</p>
+                </div>
+                <button onClick={handleSaveToRecord} disabled={recordSaving}
+                  className={'px-8 py-3 rounded-2xl text-sm font-bold ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
+                  {recordSaving ? 'Saving...' : savedRecordId ? '✓ Saved' : '💾 Save Decision Record™'}
+                </button>
+              </div>
+            </div>
 
             {/* Letters */}
             <CCLetter

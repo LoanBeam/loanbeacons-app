@@ -716,7 +716,7 @@ CRITICAL RULES:
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
-      <ModuleNav moduleNumber={8} />
+      <ModuleNav moduleNumber={10} />
 
       {/* ── Decision Record + NSI — consistent with Bank Statement Intel ── */}
       <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">

@@ -301,7 +301,6 @@ function LetterCard({ title, icon, body }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="rounded-3xl border-2 border-indigo-200 bg-indigo-50 overflow-hidden">
-      <ModuleNav moduleNumber={25} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
         <div className="flex gap-2">
@@ -600,27 +599,26 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
-      const riskFlags = [];
+      const flags = [];
       if (criticalPending.length > 0) {
-        criticalPending.forEach(item => riskFlags.push({ field: item.id, message: item.label + ' — pending', severity: 'HIGH' }));
+        criticalPending.forEach(item => flags.push({ flagCode: item.id.toUpperCase(), sourceModule: 'DISCLOSURE_INTEL', severity: 'HIGH', detail: item.label + ' — pending' }));
       }
-      if (deadlines.le_due && daysUntil(deadlines.le_due) < 0) riskFlags.push({ field: 'le_due', message: 'Loan Estimate deadline has passed', severity: 'HIGH' });
-      if (deadlines.cd_due && daysUntil(deadlines.cd_due) < 0) riskFlags.push({ field: 'cd_due', message: 'Closing Disclosure deadline has passed', severity: 'HIGH' });
-      const writtenId = await reportFindings({
-        verdict: complianceScore >= 80 ? 'Compliant' : complianceScore >= 50 ? 'In Progress' : 'Action Required',
-        summary: `Disclosure Intelligence — ${loanType || 'Loan'} ${loanPurpose || ''} · Compliance score: ${complianceScore}% · ${issuedCount} issued · ${pendingCount} pending · ${naCount} N/A`,
-        riskFlags,
-        findings: {
+      if (deadlines.le_due && daysUntil(deadlines.le_due) < 0) flags.push({ flagCode: 'LE_DEADLINE_PASSED', sourceModule: 'DISCLOSURE_INTEL', severity: 'HIGH', detail: 'Loan Estimate deadline has passed' });
+      if (deadlines.cd_due && daysUntil(deadlines.cd_due) < 0) flags.push({ flagCode: 'CD_DEADLINE_PASSED', sourceModule: 'DISCLOSURE_INTEL', severity: 'HIGH', detail: 'Closing Disclosure deadline has passed' });
+      const writtenId = await reportFindings(
+        'DISCLOSURE_INTEL',
+        {
+          verdict: complianceScore >= 80 ? 'Compliant' : complianceScore >= 50 ? 'In Progress' : 'Action Required',
+          summary: `Disclosure Intelligence — ${loanType || 'Loan'} ${loanPurpose || ''} · Compliance score: ${complianceScore}% · ${issuedCount} issued · ${pendingCount} pending · ${naCount} N/A`,
           loanType, loanPurpose, applicationDate, closingDate,
           complianceScore, issuedCount, pendingCount, naCount,
           statuses, pendingItems: pendingItems.map(i => i.id),
           deadlines, loNotes,
         },
-        completeness: {
-          appDateEntered: !!applicationDate, closingDateEntered: !!closingDate,
-          loanTypeSet: !!loanType, noOutstandingCritical: criticalPending.length === 0,
-        },
-      });
+        [],
+        flags,
+        '1.0.0'
+      );
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
     setRecordSaving(false);
@@ -745,6 +743,14 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="Disclosure Intelligence™"
+        moduleKey="DISCLOSURE_INTEL"
+        onSave={handleSaveToRecord}
+      />
+      <ModuleNav moduleNumber={24} />
+
       {/* Hidden print zone for Trigger Lead Shield */}
       <div id="tls-print-zone" ref={tlsPrintRef} style={{ display: 'none' }} />
 
@@ -755,7 +761,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 14</div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 24</div>
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Disclosure Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl">TRID · RESPA · ECOA · Deadline calculator · Compliance tracking · AI risk assessment</p>
             </div>
@@ -794,10 +800,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Disclosure Intelligence™" moduleNumber="14" scenarioId={scenarioId} />
-      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
-        <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="DISCLOSURE_INTEL" />
-      </div>
+      <ScenarioHeader moduleTitle="Disclosure Intelligence™" moduleNumber="24" scenarioId={scenarioId} />
 
       {/* Tab Bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
@@ -984,13 +987,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
                   })}
                 </div>
                 <div className="p-6 border-t border-slate-200">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm text-slate-500">{issuedCount} issued · {pendingCount} pending · {naCount} N/A</div>
-                    <button onClick={handleSaveToRecord} disabled={recordSaving}
-                      className={'px-8 py-3 rounded-2xl text-sm font-bold transition-colors ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
-                      {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record™'}
-                    </button>
-                  </div>
+                  <div className="text-sm text-slate-500">{issuedCount} issued · {pendingCount} pending · {naCount} N/A</div>
                 </div>
               </div>
             )}
@@ -1046,12 +1043,6 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
                     <textarea value={loNotes} onChange={e => setLoNotes(e.target.value)} rows={4}
                       placeholder="Exception documentation, timing notes, lender instructions, re-disclosure triggers, borrower acknowledgments..."
                       className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-400 resize-none" />
-                    <div className="mt-4 flex justify-end">
-                      <button onClick={handleSaveToRecord} disabled={recordSaving}
-                        className={'px-8 py-3 rounded-2xl text-sm font-bold transition-colors ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
-                        {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record™'}
-                      </button>
-                    </div>
                   </div>
                 </div>
 

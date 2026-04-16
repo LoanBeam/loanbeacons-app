@@ -28,6 +28,7 @@ const LOAN_TYPES_BY_PURPOSE = {
       { value: 'HOMESTYLE', label: 'HomeStyle Renovation' },
     ]},
     { group: 'Non-QM', options: [
+      { value: 'NON_QM_FULL_DOC', label: 'Full Doc Non-QM' },
       { value: 'BANK_STMT_PERSONAL', label: 'Bank Statement (Personal)' },
       { value: 'BANK_STMT_BUSINESS', label: 'Bank Statement (Business)' },
       { value: 'DSCR', label: 'DSCR' },
@@ -36,6 +37,13 @@ const LOAN_TYPES_BY_PURPOSE = {
       { value: 'NON_QM_PNL', label: 'P&L Only' },
       { value: 'FOREIGN_NATIONAL', label: 'Foreign National' },
       { value: 'ITIN', label: 'ITIN' },
+    ]},
+    { group: 'Hard Money / Private', options: [
+      { value: 'HARD_MONEY', label: 'Hard Money' },
+      { value: 'HARD_MONEY_PURCHASE', label: 'Hard Money — Purchase' },
+      { value: 'HARD_MONEY_REHAB', label: 'Hard Money — Rehab / Fix & Flip' },
+      { value: 'PRIVATE_MONEY', label: 'Private Money' },
+      { value: 'BRIDGE_LOAN', label: 'Bridge Loan' },
     ]},
   ],
   RATE_TERM_REFI: [
@@ -51,6 +59,7 @@ const LOAN_TYPES_BY_PURPOSE = {
       { value: 'HOME_POSSIBLE', label: 'Home Possible (Freddie Mac)' },
     ]},
     { group: 'Non-QM', options: [
+      { value: 'NON_QM_FULL_DOC', label: 'Full Doc Non-QM' },
       { value: 'BANK_STMT_PERSONAL', label: 'Bank Statement (Personal)' },
       { value: 'BANK_STMT_BUSINESS', label: 'Bank Statement (Business)' },
       { value: 'DSCR', label: 'DSCR' },
@@ -59,6 +68,11 @@ const LOAN_TYPES_BY_PURPOSE = {
       { value: 'NON_QM_PNL', label: 'P&L Only' },
       { value: 'FOREIGN_NATIONAL', label: 'Foreign National' },
       { value: 'ITIN', label: 'ITIN' },
+    ]},
+    { group: 'Hard Money / Private', options: [
+      { value: 'HARD_MONEY', label: 'Hard Money' },
+      { value: 'PRIVATE_MONEY', label: 'Private Money' },
+      { value: 'BRIDGE_LOAN', label: 'Bridge Loan' },
     ]},
   ],
   CASH_OUT: [
@@ -71,12 +85,18 @@ const LOAN_TYPES_BY_PURPOSE = {
       { value: 'JUMBO', label: 'Jumbo' },
     ]},
     { group: 'Non-QM', options: [
+      { value: 'NON_QM_FULL_DOC', label: 'Full Doc Non-QM' },
       { value: 'BANK_STMT_PERSONAL', label: 'Bank Statement (Personal)' },
       { value: 'BANK_STMT_BUSINESS', label: 'Bank Statement (Business)' },
       { value: 'DSCR', label: 'DSCR' },
       { value: 'ASSET_DEPLETION', label: 'Asset Depletion' },
       { value: 'NON_QM_1099', label: '1099 Only' },
       { value: 'NON_QM_PNL', label: 'P&L Only' },
+    ]},
+    { group: 'Hard Money / Private', options: [
+      { value: 'HARD_MONEY', label: 'Hard Money' },
+      { value: 'PRIVATE_MONEY', label: 'Private Money' },
+      { value: 'BRIDGE_LOAN', label: 'Bridge Loan' },
     ]},
   ],
   STREAMLINE: [
@@ -133,6 +153,7 @@ const LOAN_TYPES_BY_PURPOSE = {
       { value: 'HOMEREADY', label: 'HomeReady' },
       { value: 'HOME_POSSIBLE', label: 'Home Possible' },
       { value: 'HOMESTYLE', label: 'HomeStyle' },
+      { value: 'NON_QM_FULL_DOC', label: 'Full Doc Non-QM' },
       { value: 'BANK_STMT_PERSONAL', label: 'Bank Statement (Personal)' },
       { value: 'BANK_STMT_BUSINESS', label: 'Bank Statement (Business)' },
       { value: 'DSCR', label: 'DSCR' },
@@ -142,6 +163,8 @@ const LOAN_TYPES_BY_PURPOSE = {
       { value: 'FOREIGN_NATIONAL', label: 'Foreign National' },
       { value: 'ITIN', label: 'ITIN' },
       { value: 'HARD_MONEY', label: 'Hard Money' },
+      { value: 'HARD_MONEY_PURCHASE', label: 'Hard Money — Purchase' },
+      { value: 'HARD_MONEY_REHAB', label: 'Hard Money — Rehab / Fix & Flip' },
       { value: 'PRIVATE_MONEY', label: 'Private Money' },
       { value: 'BRIDGE_LOAN', label: 'Bridge Loan' },
       { value: 'CONVENTIONAL_INVESTMENT', label: 'Conventional Investment' },

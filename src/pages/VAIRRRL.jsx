@@ -10,7 +10,9 @@ import { getFirestore, collection, query, orderBy, limit, getDocs } from 'fireba
 import { app } from '../firebase/config';
 import VAIRRRLPricingCommission from './VAIRRRLPricingCommission';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import NextStepCard from '../components/NextStepCard';
 import { MODULE_KEYS } from '../constants/decisionRecordConstants';
 
 const functions = getFunctions(app);
@@ -139,7 +141,7 @@ const S = {
 };
 
 export default function VAIRRRL() {
-  const CURRENT_MODULE = 11;
+  const CURRENT_MODULE = 12;
   const prevMod = MODULES[CURRENT_MODULE - 2];
   const nextMod = MODULES[CURRENT_MODULE];
 
@@ -524,6 +526,19 @@ export default function VAIRRRL() {
   const paymentTestPass  = paymentSavings > 0;
   const recoupTestPass   = recoupMos <= 36;
   const benefitTestPass  = rateTestPass && paymentTestPass;
+
+  // ── Next Step Intelligence™ — VA IRRRL is always rate_term_refi
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'VA_IRRRL',
+      loanPurpose:             'rate_term_refi',
+      decisionRecordFindings:  { VA_IRRRL: { benefitPass: benefitTestPass, ntbPass: benefitTestPass } },
+      scenarioData:            {},
+      completedModules:        [],
+      scenarioId:              selectedScenId,
+      onWriteToDecisionRecord: null,
+    });
+
   const fundingFeeAmt    = fundingFeeExempt ? 0 : newLoanAmt * 0.005;
   const totalLoanWFee    = newLoanAmt + fundingFeeAmt;
   const cashOut          = parseFloat(cashOutAmount) || 0;
@@ -1956,6 +1971,20 @@ export default function VAIRRRL() {
       </div>
 
       {tabRenderers[activeTab]?.()}
+
+      {/* ── Next Step Intelligence™ ── */}
+      {drRecordId && primarySuggestion && (
+        <div style={{ marginBottom: 20 }}>
+          <NextStepCard
+            suggestion={primarySuggestion}
+            secondarySuggestions={secondarySuggestions}
+            onFollow={logFollow}
+            onOverride={logOverride}
+            loanPurpose="rate_term_refi"
+            scenarioId={selectedScenId}
+          />
+        </div>
+      )}
 
       <DecisionRecordBanner
         recordId={drRecordId}

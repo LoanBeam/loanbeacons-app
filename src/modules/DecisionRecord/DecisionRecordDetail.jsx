@@ -1,803 +1,1309 @@
-// src/modules/DecisionRecord/DecisionRecordDetail.jsx
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../firebase/config';
-import { getAuth } from 'firebase/auth';
+// ═══════════════════════════════════════════════════════════════════
+//  src/modules/DecisionRecord/DecisionRecord.jsx
+//  LoanBeacons — Decision Record™  Module 21
+//  Canonical Sequence Audit Trail Dashboard
+// ═══════════════════════════════════════════════════════════════════
 
-// ─── Module label map (matches MODULE_KEYS from constants) ───────────────────
-const MODULE_LABELS = {
-  SCENARIO_CREATOR:      { num: 1,  label: 'Scenario Creator',       route: '/scenario-creator'    },
-  QUALIFYING_INTEL:      { num: 2,  label: 'Qualifying Intelligence', route: '/qualifying-intel'           },
-  INCOME_ANALYZER:       { num: 3,  label: 'Income Analyzer',         route: '/income-analyzer'               },
-  ASSET_ANALYZER:        { num: 4,  label: 'Asset Analyzer',          route: '/asset-analyzer'               },
-  CREDIT_INTEL:          { num: 5,  label: 'Credit Intelligence',     route: '/credit-intel'               },
-  LENDER_MATCH:          { num: 6,  label: 'Lender Match™',           route: '/lender-match'         },
-  DPA_INTEL:             { num: 7,  label: 'DPA Intelligence™',       route: '/dpa-intelligence'                  },
-  AUS_RESCUE:            { num: 8,  label: 'AUS Rescue™',             route: '/aus-rescue'           },
-  PROPERTY_INTEL:        { num: 9,  label: 'Property Intelligence',   route: '/property-intel'             },
-  TITLE_INTEL:           { num: 10, label: 'Title Intelligence',      route: '/title-intel'                },
-  CLOSING_COST_CALC:     { num: 11, label: 'Closing Cost Calculator', route: '/closing-cost-calc'        },
-  CRA_INTEL:             { num: 12, label: 'CRA Intelligence',        route: '/cra-intel'                  },
-  RATE_INTEL:            { num: 13, label: 'Rate Intelligence',       route: '/rate-intel'                 },
-  DISCLOSURE_INTEL:      { num: 14, label: 'Disclosure Intelligence', route: '/disclosure-intel'          },
-  COMPLIANCE_INTEL:      { num: 15, label: 'Compliance Intelligence', route: '/compliance-intel'           },
-  FLOOD_INTEL:           { num: 16, label: 'Flood Intelligence',      route: '/flood-intel'                },
-  REHAB_INTEL:           { num: 17, label: 'Rehab Intelligence™',     route: '/rehab-intelligence'  },
-  FHA_STREAMLINE:        { num: 18, label: 'FHA Streamline',          route: '/fha-streamline'      },
-  VA_IRRRL:              { num: 19, label: 'VA IRRRL',                route: '/va-irrrl'            },
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate }                   from 'react-router-dom';
+import {
+  collection, query, where, onSnapshot,
+  orderBy, getDocs,
+}                                                   from 'firebase/firestore';
+import { getAuth }                                  from 'firebase/auth';
+import { db }                                       from '../../firebase/config';
+import {
+  MODULE_KEYS,
+  RECORD_STATUS,
+  FLAG_SEVERITY,
+  LIVE_MODULE_KEYS,
+  ALL_MODULE_KEYS,
+  DISPOSITION_OPTIONS,
+}                                                   from '../../constants/decisionRecordConstants';
+import './DecisionRecord.css';
+
+// ─── Module display metadata ──────────────────────────────────────
+const MODULE_META = {
+  scenario_creator:       { label: 'Scenario Creator',       stage: 1, icon: '⚡' },
+  income_analysis:        { label: 'Income Analysis',         stage: 1, icon: '💰' },
+  asset_review:           { label: 'Asset Review',            stage: 1, icon: '🏦' },
+  credit_analysis:        { label: 'Credit Analysis',         stage: 1, icon: '📊' },
+  property_analysis:      { label: 'Property Analysis',       stage: 1, icon: '🏠' },
+  lender_match:           { label: 'Lender Match™',           stage: 2, icon: '🎯' },
+  program_eligibility:    { label: 'Program Eligibility',     stage: 2, icon: '✅' },
+  aus_rescue:             { label: 'AUS Rescue™',             stage: 2, icon: '🛟' },
+  non_qm_pathways:        { label: 'Non-QM Pathways',         stage: 2, icon: '🔀' },
+  dpa_eligibility:        { label: 'DPA Intelligence™',       stage: 2, icon: '🏛️' },
+  lender_profile_builder: { label: 'Lender Profile Builder', stage: 2, icon: '🔧' },
+  cra_intelligence:       { label: 'CRA Intelligence',        stage: 3, icon: '🗺️' },
+  rate_scenario:          { label: 'Rate Buydown Calculator', stage: 3, icon: '📉' },
+  closing_cost_estimator: { label: 'Closing Cost Estimator',  stage: 3, icon: '🧮' },
+  cash_to_close:          { label: 'Cash to Close',           stage: 3, icon: '💵' },
+  rehab_intelligence:     { label: 'Rehab Intelligence™',     stage: 3, icon: '🔨' },
+  document_checklist:     { label: 'Document Checklist',      stage: 4, icon: '📋' },
+  compliance_review:      { label: 'Compliance Review',       stage: 4, icon: '⚖️' },
+  ae_share_service:       { label: 'AE Share Service',        stage: 4, icon: '📤' },
+  submission_package:     { label: 'Submission Package',      stage: 4, icon: '📦' },
+  decision_record:        { label: 'Decision Record™',        stage: 4, icon: '🔒' },
 };
 
-const SEVERITY_CONFIG = {
-  CRITICAL: { bg: 'bg-red-50',    border: 'border-red-300',   text: 'text-red-800',    icon: '🔴', badge: 'bg-red-600 text-white'    },
-  HIGH:     { bg: 'bg-orange-50', border: 'border-orange-300',text: 'text-orange-800', icon: '🟠', badge: 'bg-orange-500 text-white'  },
-  MEDIUM:   { bg: 'bg-amber-50',  border: 'border-amber-300', text: 'text-amber-800',  icon: '🟡', badge: 'bg-amber-400 text-slate-900'},
-  LOW:      { bg: 'bg-blue-50',   border: 'border-blue-200',  text: 'text-blue-800',   icon: '🔵', badge: 'bg-blue-200 text-blue-800'  },
-  INFO:     { bg: 'bg-slate-50',  border: 'border-slate-200', text: 'text-slate-600',  icon: '⚪', badge: 'bg-slate-200 text-slate-600'},
+const STAGE_META = [
+  { id: 1, label: 'Pre-Structure & Initial Analysis',   short: 'Pre-Structure',   color: '#818cf8' },
+  { id: 2, label: 'Lender Fit & Program Intelligence',  short: 'Lender Fit',      color: '#38bdf8' },
+  { id: 3, label: 'Final Structure Optimization',       short: 'Final Structure', color: '#22d3ee' },
+  { id: 4, label: 'Verification & Submit',              short: 'Verification',    color: '#34d399' },
+];
+
+const FLAG_COLORS = {
+  info:     { bg: '#0f1e35', border: '#2563eb', text: '#93c5fd', dot: '#3b82f6'  },
+  warning:  { bg: '#1f1200', border: '#d97706', text: '#fcd34d', dot: '#f59e0b'  },
+  critical: { bg: '#1f0505', border: '#dc2626', text: '#fca5a5', dot: '#ef4444'  },
 };
 
-// ─── Completeness Score Ring ─────────────────────────────────────────────────
-function ScoreRing({ score }) {
-  const r = 44;
-  const circ = 2 * Math.PI * r;
-  const offset = circ - (score / 100) * circ;
-  const color = score >= 80 ? '#10b981' : score >= 50 ? '#f59e0b' : '#ef4444';
-  const label = score >= 80 ? 'Strong' : score >= 50 ? 'Partial' : 'Incomplete';
+// ─── Helpers ─────────────────────────────────────────────────────
+function fmtTs(ts) {
+  if (!ts) return '—';
+  try {
+    const d = ts?.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch { return '—'; }
+}
+
+function fmtTsShort(ts) {
+  if (!ts) return '—';
+  try {
+    const d = ts?.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch { return '—'; }
+}
+
+// ─── Completeness Ring ────────────────────────────────────────────
+function CompletenessRing({ score = 0, reported = 0, total = 0 }) {
+  const r      = 56;
+  const circ   = 2 * Math.PI * r;
+  const pct    = Math.round(score * 100);
+  const offset = circ - score * circ;
+  const color  = pct >= 90 ? '#34d399' : pct >= 75 ? '#38bdf8' : pct >= 50 ? '#f59e0b' : '#ef4444';
+
   return (
-    <div className="flex flex-col items-center">
-      <div className="relative w-28 h-28">
-        <svg width="112" height="112" className="-rotate-90" viewBox="0 0 112 112">
-          <circle cx="56" cy="56" r={r} fill="none" stroke="#e2e8f0" strokeWidth="8" />
-          <circle cx="56" cy="56" r={r} fill="none" stroke={color} strokeWidth="8"
-            strokeDasharray={circ} strokeDashoffset={offset}
-            strokeLinecap="round" style={{ transition: 'stroke-dashoffset 0.8s ease' }} />
-        </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-2xl font-black text-slate-800" style={{ fontFamily: 'monospace' }}>{score}%</span>
-        </div>
-      </div>
-      <div className="text-xs font-semibold mt-1" style={{ color }}>{label}</div>
+    <div className="dr-ring-wrap">
+      <svg width="148" height="148" viewBox="0 0 148 148">
+        {/* Glow base */}
+        <circle cx="74" cy="74" r={r} fill="none" stroke="#111f35" strokeWidth="14" />
+        {/* Progress arc */}
+        <circle
+          cx="74" cy="74" r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth="14"
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={offset}
+          transform="rotate(-90 74 74)"
+          style={{ transition: 'stroke-dashoffset 1s cubic-bezier(.4,0,.2,1), stroke .4s ease', filter: `drop-shadow(0 0 8px ${color}60)` }}
+        />
+        {/* Percentage */}
+        <text x="74" y="68" textAnchor="middle" fill={color}
+          fontSize="28" fontWeight="700" fontFamily="'JetBrains Mono', monospace"
+          style={{ filter: `drop-shadow(0 0 4px ${color}80)` }}>
+          {pct}%
+        </text>
+        <text x="74" y="84" textAnchor="middle" fill="#475569" fontSize="9"
+          fontFamily="'Outfit', sans-serif" letterSpacing="0.15em">
+          COMPLETE
+        </text>
+        <text x="74" y="100" textAnchor="middle" fill="#334155" fontSize="10"
+          fontFamily="'JetBrains Mono', monospace">
+          {reported}/{total} modules
+        </text>
+      </svg>
     </div>
   );
 }
 
-// ─── Section wrapper ─────────────────────────────────────────────────────────
-function Section({ id, title, badge, badgeColor = 'bg-amber-100 text-amber-800', children, defaultOpen = true }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div id={id} className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm mb-4">
-      <button onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors text-left">
-        <div className="flex items-center gap-3">
-          <span className="font-bold text-slate-800">{title}</span>
-          {badge !== undefined && (
-            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${badgeColor}`}>{badge}</span>
-          )}
-        </div>
-        <span className="text-slate-400 text-lg">{open ? '▾' : '▸'}</span>
-      </button>
-      {open && <div className="border-t border-slate-100">{children}</div>}
-    </div>
-  );
-}
+// ─── Smart field renderers ────────────────────────────────────────
+const CURRENCY_FIELDS = ['loanAmount','purchasePrice','grossVerifiedAssets','cashNeededToClose','postCloseReserves','netCashToClose','totalBuyerFees','sellerCredits','downPayment','annualPremium','totalLienAmount','coverageGap','minCoverage','buildingCoverage','replacementCost','rehabCost','arv','totalCost','profitMargin'];
+const PCT_FIELDS      = ['loanApr','aporRate','aprSpread','ltv','qualRate','fullyIndexed','startRate','rateCeiling','shockPct','complianceScore','dti'];
+const BOOL_FIELDS     = ['isHPML','isSFHA','paymentShock','hasStructural','extractionApplied','vestingConfirmed'];
 
-// ─── Module Findings Grid ────────────────────────────────────────────────────
-function ModuleFindingsGrid({ moduleVersionTags, evidence }) {
-  const navigate = useNavigate();
-  const evidenceByModule = {};
-  (evidence || []).forEach(e => {
-    if (!evidenceByModule[e.moduleKey]) evidenceByModule[e.moduleKey] = [];
-    evidenceByModule[e.moduleKey].push(e);
-  });
-
-  const allModuleKeys = Object.keys(MODULE_LABELS);
-  const ranModuleKeys = Object.keys(moduleVersionTags || {});
-
-  return (
-    <div className="p-5">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {allModuleKeys.map(key => {
-          const cfg = MODULE_LABELS[key];
-          const ran = ranModuleKeys.includes(key);
-          const version = moduleVersionTags?.[key];
-          const items = evidenceByModule[key] || [];
-          const flaggedItems = items.filter(i => i.flagged);
-
-          return (
-            <div key={key}
-              className={`rounded-lg border p-3 ${ran ? 'border-slate-200 bg-white' : 'border-dashed border-slate-200 bg-slate-50'}`}>
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-black text-slate-400 font-mono w-5 text-right">{cfg.num}</span>
-                  <span className={`text-sm font-semibold ${ran ? 'text-slate-800' : 'text-slate-400'}`}>{cfg.label}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {flaggedItems.length > 0 && (
-                    <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">⚑ {flaggedItems.length}</span>
-                  )}
-                  <span className={`w-2.5 h-2.5 rounded-full ${ran ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                </div>
-              </div>
-              {ran && items.length > 0 && (
-                <div className="space-y-1 mt-2 border-t border-slate-100 pt-2">
-                  {items.slice(0, 3).map((item, i) => (
-                    <div key={i} className="flex justify-between text-xs">
-                      <span className="text-slate-500 truncate max-w-[60%]">{item.label}</span>
-                      <span className={`font-mono font-semibold truncate max-w-[38%] text-right ${item.flagged ? 'text-red-600' : 'text-slate-700'}`}>
-                        {item.value}
-                      </span>
-                    </div>
-                  ))}
-                  {items.length > 3 && (
-                    <div className="text-xs text-slate-400 text-right">+{items.length - 3} more</div>
-                  )}
-                </div>
-              )}
-              {ran && version && (
-                <div className="text-xs text-slate-300 font-mono mt-1">v{version}</div>
-              )}
-              {/* Navigate to module button */}
-              <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-                {!ran && <span className="text-xs text-slate-400 italic">Not yet run</span>}
-                {ran && <span className="text-xs text-emerald-600 font-semibold">✓ Logged</span>}
-                <button
-                  onClick={() => navigate(cfg.route)}
-                  className={`text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors ${
-                    ran
-                      ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
-                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200'
-                  }`}
-                >
-                  {ran ? 'Re-run →' : 'Open Module →'}
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ─── Risk Flags Panel ────────────────────────────────────────────────────────
-function RiskFlagsPanel({ riskFlags }) {
-  const flags = riskFlags || [];
-  if (flags.length === 0) {
-    return (
-      <div className="p-6 text-center">
-        <div className="text-2xl mb-2">✅</div>
-        <div className="text-slate-500 text-sm">No risk flags recorded</div>
-      </div>
-    );
+function fmtFieldValue(key, val) {
+  if (val === null || val === undefined) return '—';
+  if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+  if (CURRENCY_FIELDS.some(f => key.toLowerCase().includes(f.toLowerCase())) && typeof val === 'number') {
+    return (val < 0 ? '-$' : '$') + Math.abs(val).toLocaleString('en-US', { maximumFractionDigits: 0 });
   }
-
-  // Normalize severity to uppercase — service may write lowercase
-  const normalize = (f) => ({
-    ...f,
-    severity: (f.severity || 'INFO').toUpperCase(),
-    // Service writes: flag_code, detail, source_module — UI expected: code, message, moduleKey
-    code:      f.flag_code    || f.code      || '',
-    message:   f.detail       || f.message   || f.flag_code || f.code || '',
-    moduleKey: f.source_module || f.moduleKey || '',
-  });
-
-  const sorted = [...flags].map(normalize).sort((a, b) => {
-    const order = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, WARNING: 3, LOW: 4, INFO: 5 };
-    return (order[a.severity] ?? 6) - (order[b.severity] ?? 6);
-  });
-
-  return (
-    <div className="p-5 space-y-3">
-      {sorted.map((flag, i) => {
-        const cfg = SEVERITY_CONFIG[flag.severity] || SEVERITY_CONFIG.INFO;
-        return (
-          <div key={i} className={`rounded-lg border p-4 ${cfg.bg} ${cfg.border}`}>
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <span className="text-lg mt-0.5">{cfg.icon}</span>
-                <div>
-                  <div className={`font-semibold text-sm ${cfg.text}`}>{flag.message}</div>
-                  {flag.code && flag.code !== flag.message && (
-                    <div className="text-xs font-mono text-slate-400 mt-0.5">{flag.code}</div>
-                  )}
-                  {flag.moduleKey && (
-                    <div className="text-xs text-slate-500 mt-1">
-                      Source: {MODULE_LABELS[flag.moduleKey]?.label || flag.moduleKey}
-                    </div>
-                  )}
-                  {flag.resolution && (
-                    <div className="text-xs text-slate-600 mt-2 bg-white bg-opacity-60 rounded px-2 py-1">
-                      💡 {flag.resolution}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <span className={`text-xs font-bold px-2 py-0.5 rounded whitespace-nowrap ${cfg.badge}`}>
-                {flag.severity}
-              </span>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
+  if (PCT_FIELDS.some(f => key.toLowerCase().includes(f.toLowerCase())) && typeof val === 'number') {
+    return val.toFixed(val > 2 ? 1 : 3) + '%';
+  }
+  if (typeof val === 'number') return val.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  if (typeof val === 'string' && val.length > 60) return val.substring(0, 60) + '…';
+  return String(val);
 }
 
-// ─── Evidence Log ────────────────────────────────────────────────────────────
-function EvidenceLog({ evidence }) {
-  const [filterModule, setFilterModule] = useState('ALL');
-  const items = evidence || [];
-  const moduleKeys = ['ALL', ...new Set(items.map(e => e.moduleKey).filter(Boolean))];
+function fieldValueClass(key, val) {
+  if (typeof val !== 'number') return '';
+  const k = key.toLowerCase();
+  if (k.includes('shortfall') || k.includes('gap') || (k.includes('reserve') && val < 0) || (k.includes('postclose') && val < 0)) return 'fv-bad';
+  if ((k.includes('nsf') || k.includes('flag') || k.includes('fail') || k.includes('critical')) && val > 0) return 'fv-bad';
+  if ((k.includes('warn') || k.includes('review') || k.includes('largedep') || k.includes('lien')) && val > 0) return 'fv-warn';
+  if (k.includes('score') && val >= 80) return 'fv-good';
+  if (k.includes('score') && val < 50) return 'fv-bad';
+  if ((k.includes('dti') || k.includes('qualifying')) && val > 50) return 'fv-bad';
+  if ((k.includes('dti') || k.includes('qualifying')) && val <= 43) return 'fv-good';
+  if (k.includes('pass') && val > 0) return 'fv-good';
+  if (k.includes('profit') && val > 0) return 'fv-good';
+  if (k.includes('profit') && val < 0) return 'fv-bad';
+  return '';
+}
 
-  const filtered = filterModule === 'ALL' ? items : items.filter(e => e.moduleKey === filterModule);
+const SKIP_FIELDS = ['verdict','summary','timestamp','loNotes','source','completeness','statuses','feeBreakdown','checkStatuses','results','flaggedIssues','pendingItems','eligibleProducts','reported_at','module_version'];
+const LABEL_MAP = {
+  loanAmount:'Loan Amount', purchasePrice:'Purchase Price', grossVerifiedAssets:'Verified Assets',
+  cashNeededToClose:'Cash to Close', postCloseReserves:'Post-Close Reserves', loanApr:'Loan APR',
+  aporRate:'APOR Rate', aprSpread:'APR Spread', isHPML:'HPML', complianceScore:'Compliance Score',
+  passCount:'Passing', failCount:'Failing', reviewCount:'Review', qualRate:'Qualifying Rate',
+  fullyIndexed:'Fully Indexed Rate', startRate:'Start Rate', rateCeiling:'Rate Ceiling',
+  paymentShock:'Payment Shock', shockPct:'Payment Change', isSFHA:'SFHA Zone', coverageGap:'Coverage Gap',
+  buildingCoverage:'Building Coverage', minCoverage:'Min Required', rehabCost:'Renovation Cost',
+  arv:'After-Repair Value', profitMargin:'Profit Margin', ltv:'LTV', dti:'DTI',
+  criticalIssueCount:'Critical Issues', highIssueCount:'High Issues', lienCount:'Liens',
+  totalLienAmount:'Total Lien Amount', issuedCount:'Issued', pendingCount:'Pending',
+  // Asset Analyzer fields
+  reserveMonths:'Reserve Months', largeDepRequiringSourcing:'Large Deposits to Source',
+  nsfEventCount:'NSF Events', totalFlagCount:'Flags Raised', nonBorrowerFlagsResolved:'Flags Resolved',
+  totalStatementsUploaded:'Statements Uploaded', totalAccountsReviewed:'Accounts Reviewed',
+  excludedAmounts:'Excluded Amounts', statementMonths:'Statement Months',
+  programGuideline:'Guideline Applied', loNotes:'LO Notes',
+  // Qualifying / Rate
+  qualifyingDTI:'Qualifying DTI', qualifyingRate:'Qualifying Rate', noteRate:'Note Rate',
+  adjustedRate:'Adjusted Rate', lockPeriod:'Lock Period', lockAdj:'Lock Adjustment',
+  monthlyPI:'Monthly P&I', marketTrend:'Market Trend', lenderCreditAmt:'Lender Credit',
+  // Property / Collateral
+  overallVerdict:'Collateral Verdict', criticalFlagCount:'Critical Flags',
+  flipRisk:'Flip Risk', condoProjectApproved:'Condo Approved',
+  // Title
+  vestingConfirmed:'Vesting Confirmed', titleOrdered:'Title Ordered',
+  titleReceived:'Title Received', unconfirmedPayoffs:'Unconfirmed Payoffs',
+  aiRiskRating:'AI Risk Rating', aiClosingReadiness:'Closing Readiness',
+  // Flood
+  selectedZone:'Flood Zone', mapNumber:'FEMA Map Number',
+  annualPremium:'Annual Premium', insuranceCarrier:'Carrier',
+  // Disclosure
+  issuedCount:'Disclosures Issued', naCount:'N/A Items',
+};
+
+function FindingCard({ finding }) {
+  const [showRaw, setShowRaw] = React.useState(false);
+  const verdict  = finding.verdict || finding.summary || '';
+  const summary  = finding.summary || '';
+  const isAction = /action|critical|fail|high.risk|needs.review/i.test(verdict);
+  const isGood   = /clear|clean|compliant|acceptable|no.flag/i.test(verdict);
+  const badgeCls = isAction ? 'vb-critical' : isGood ? 'vb-clear' : verdict ? 'vb-review' : 'vb-default';
+  const badgeIcon = isAction ? '⛔' : isGood ? '✅' : verdict ? '⚠️' : '📋';
+
+  const displayFields = Object.entries(finding).filter(([k, v]) => {
+    if (SKIP_FIELDS.includes(k)) return false;
+    if (typeof v === 'object' || Array.isArray(v)) return false;
+    if (k === 'verdict' || k === 'summary') return false;
+    return true;
+  });
+
+  const rawData = Object.fromEntries(
+    Object.entries(finding).filter(([k]) => !['reported_at','module_version'].includes(k))
+  );
 
   return (
     <div>
-      {/* Module filter tabs */}
-      <div className="px-5 pt-4 pb-2 flex gap-2 flex-wrap border-b border-slate-100">
-        {moduleKeys.map(k => (
-          <button key={k}
-            onClick={() => setFilterModule(k)}
-            className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${filterModule === k ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-            {k === 'ALL' ? 'All' : (MODULE_LABELS[k]?.label || k)}
-          </button>
-        ))}
-      </div>
-
-      {filtered.length === 0 ? (
-        <div className="p-6 text-center text-slate-400 text-sm">No evidence items found</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-100 bg-slate-50">
-                <th className="text-left px-5 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Module</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Label</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Value</th>
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">Flag</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {filtered.map((item, i) => (
-                <tr key={i} className={item.flagged ? 'bg-red-50' : 'hover:bg-slate-50'}>
-                  <td className="px-5 py-2.5 text-xs text-slate-500">
-                    {MODULE_LABELS[item.moduleKey]?.label || item.moduleKey || '—'}
-                  </td>
-                  <td className="px-4 py-2.5 text-slate-700">{item.label}</td>
-                  <td className="px-4 py-2.5 font-mono text-xs font-semibold text-slate-800">{item.value}</td>
-                  <td className="px-4 py-2.5">
-                    {item.flagged && <span className="text-red-600 font-bold">⚑</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {verdict && (
+        <span className={`dr-verdict-badge ${badgeCls}`}>{badgeIcon} {verdict}</span>
+      )}
+      {summary && summary !== verdict && (
+        <div className="dr-finding-summary">{summary}</div>
+      )}
+      {displayFields.length > 0 && (
+        <div className="dr-finding-fields">
+          {displayFields.map(([k, v]) => (
+            <div key={k} className="dr-field-item">
+              <div className="dr-field-label">{LABEL_MAP[k] || k.replace(/([A-Z])/g,' $1').replace(/_/g,' ').trim()}</div>
+              <div className={`dr-field-value ${fieldValueClass(k, v)}`}>{fmtFieldValue(k, v)}</div>
+            </div>
+          ))}
         </div>
       )}
+      <button className="dr-raw-toggle" onClick={() => setShowRaw(v => !v)}>
+        {showRaw ? '▲ Hide raw data' : '▼ View raw data'}
+      </button>
+      {showRaw && <div style={{ marginTop: 10 }}><JsonBlock data={rawData} /></div>}
     </div>
   );
 }
 
-// ─── LO Attestation Flow ─────────────────────────────────────────────────────
-function LOAttestationFlow({ record, onSave, onLock, onSubmit, saving, locked, submitted }) {
-  const [notes, setNotes] = useState(record.lo_notes || '');
-  const [attested, setAttested] = useState(record.lo_attestation?.confirmed || false);
-  const [loName, setLoName] = useState(record.lo_attestation?.loName || '');
-  const [loNmls, setLoNmls] = useState(record.lo_attestation?.loNmls || '');
+// ─── JSON Pretty Viewer (kept for raw data toggle) ────────────────
+function JsonBlock({ data }) {
+  // Colorize JSON output
+  const json = JSON.stringify(data, null, 2);
+  const lines = json.split('\n').map((line, i) => {
+    const keyMatch   = line.match(/^(\s*)("[\w_]+")(\s*:\s*)(.*)/);
+    const strVal     = line.match(/:\s*"(.+)"[,]?$/);
+    const numVal     = line.match(/:\s*(\d[\d.]*)[,]?$/);
+    const boolNull   = line.match(/:\s*(true|false|null)[,]?$/);
 
-  const canLock = attested && loName.trim() && !locked;
-  const canSubmit = locked && !submitted;
-
-  return (
-    <div className="p-5 space-y-5">
-      {/* LO Notes */}
-      <div>
-        <label className="block text-sm font-semibold text-slate-700 mb-2">Loan Officer Notes</label>
-        <textarea
-          value={notes}
-          onChange={e => setNotes(e.target.value)}
-          disabled={submitted}
-          placeholder="Add any qualifying notes, compensating factors, or documentation references…"
-          rows={4}
-          className="w-full px-3 py-2.5 rounded-lg border border-slate-300 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none disabled:bg-slate-50 disabled:text-slate-400"
-        />
-        {!submitted && (
-          <button onClick={() => onSave({ lo_notes: notes })}
-            disabled={saving}
-            className="mt-2 text-xs text-amber-700 hover:text-amber-900 font-semibold disabled:opacity-50">
-            {saving ? 'Saving…' : '💾 Save Notes'}
-          </button>
-        )}
-      </div>
-
-      {/* Attestation fields */}
-      {!submitted && (
-        <div className="border-t border-slate-100 pt-4">
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
-            <p className="text-xs text-amber-800 leading-relaxed">
-              <strong>Attestation:</strong> By signing below, I certify that I have reviewed all module findings in this Decision Record, 
-              that the information is accurate to the best of my knowledge, and that this file is ready for submission.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">LO Full Name</label>
-              <input type="text" value={loName} onChange={e => setLoName(e.target.value)}
-                disabled={locked}
-                placeholder="Jane Smith"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-slate-50" />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">NMLS ID</label>
-              <input type="text" value={loNmls} onChange={e => setLoNmls(e.target.value)}
-                disabled={locked}
-                placeholder="123456"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-slate-50" />
-            </div>
-          </div>
-          <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${attested ? 'bg-emerald-50 border-emerald-300' : 'bg-slate-50 border-slate-300 hover:bg-slate-100'} ${locked ? 'pointer-events-none' : ''}`}>
-            <input type="checkbox" checked={attested} onChange={e => setAttested(e.target.checked)}
-              disabled={locked}
-              className="mt-0.5 w-4 h-4 accent-emerald-600" />
-            <span className="text-xs text-slate-700">
-              I attest that this Decision Record is complete and accurate, and I authorize this record to be locked and submitted.
-            </span>
-          </label>
+    if (keyMatch) {
+      return (
+        <div key={i} className="dr-json-line">
+          <span style={{ color: '#475569' }}>{keyMatch[1]}</span>
+          <span style={{ color: '#7dd3fc' }}>{keyMatch[2]}</span>
+          <span style={{ color: '#475569' }}>{keyMatch[3]}</span>
+          {strVal  && <span style={{ color: '#86efac' }}>"{strVal[1]}"</span>}
+          {numVal  && <span style={{ color: '#fda4af' }}>{numVal[1]}</span>}
+          {boolNull && <span style={{ color: '#c084fc' }}>{boolNull[1]}</span>}
+          {!strVal && !numVal && !boolNull && <span style={{ color: '#94a3b8' }}>{keyMatch[4]}</span>}
         </div>
-      )}
-
-      {/* Action buttons */}
-      <div className="flex flex-wrap gap-3 pt-2 border-t border-slate-100">
-        {!locked && (
-          <button onClick={() => onLock({ lo_notes: notes, lo_attestation: { confirmed: attested, loName, loNmls, attestedAt: new Date().toISOString() } })}
-            disabled={!canLock || saving}
-            className="px-5 py-2.5 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-            🔒 Lock Record
-          </button>
-        )}
-        {locked && !submitted && (
-          <>
-            <div className="flex items-center gap-2 text-sm text-blue-700 bg-blue-50 border border-blue-200 px-4 py-2 rounded-lg">
-              🔒 Record Locked
-            </div>
-            <button onClick={onSubmit}
-              disabled={saving}
-              className="px-5 py-2.5 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors">
-              ✅ Submit Record
-            </button>
-          </>
-        )}
-        {submitted && (
-          <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 px-4 py-2 rounded-lg font-semibold">
-            ✅ Submitted — {record.lo_attestation?.loName || 'LO'} · {record.submittedAt?.toDate ? record.submittedAt.toDate().toLocaleDateString() : '—'}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+      );
+    }
+    return <div key={i} className="dr-json-line"><span style={{ color: '#334155' }}>{line}</span></div>;
+  });
+  return <div className="dr-json-block">{lines}</div>;
 }
 
-// ─── Main Detail Component ───────────────────────────────────────────────────
-export default function DecisionRecordDetail() {
-  const { id } = useParams();
-  const navigate = useNavigate();
-  const [record, setRecord] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-  const [toast, setToast] = useState(null);
-  const [showAttestationPrompt, setShowAttestationPrompt] = useState(false);
+// ═══════════════════════════════════════════════════════════════════
+//  Main Component
+// ═══════════════════════════════════════════════════════════════════
+export default function DecisionRecord() {
+  const { scenarioId: paramId } = useParams();
+  const navigate                = useNavigate();
+  const auth                    = getAuth();
+  const user                    = auth.currentUser;
 
+  const [scenarios,       setScenarios]       = useState([]);
+  const [selectedId,      setSelectedId]      = useState(paramId || '');
+  const [record,          setRecord]          = useState(null);
+  const [loading,         setLoading]         = useState(false);
+  const [noRecord,        setNoRecord]        = useState(false);
+  const [activeTab,       setActiveTab]       = useState('overview');
+  const [expandedModule,  setExpandedModule]  = useState(null);
+  const [searchFindings,  setSearchFindings]  = useState('');
+
+  // ── Case Brief state ─────────────────────────────────────────────
+  const [briefAI,         setBriefAI]         = useState(null);
+  const [briefLoading,    setBriefLoading]    = useState(false);
+  const [briefError,      setBriefError]      = useState('');
+  const [flagResponses,   setFlagResponses]   = useState({});
+
+  // ── Scenario search state ─────────────────────────────────────────
+  const [scenarioSearch,  setScenarioSearch]  = useState('');
+  const [searchOpen,      setSearchOpen]      = useState(false);
+
+  // ── Load scenarios dropdown ──────────────────────────────────────
   useEffect(() => {
-    async function load() {
-      try {
-        const snap = await getDoc(doc(db, 'decisionRecords', id));
-        if (!snap.exists()) { setError('Decision Record not found'); return; }
-        const data = { id: snap.id, ...snap.data() };
+    // scenarios collection has no userId field — query without filter
+ const q = query(collection(db, 'scenarios'));
+    const unsub = onSnapshot(q, snap => {
+      setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, err => {
+      console.warn('[DecisionRecord] scenarios fetch failed:', err.message);
+    });
+    return unsub;
+  }, []);
 
-        // If header is missing borrower name, fetch scenario directly as fallback
-        const h = data.header || {};
-        const hasBorrower = h.borrowerName?.trim() || h.borrowerFirstName?.trim() || h.name?.trim();
-        const scenarioId = h.scenarioId || data.scenarioId || data['$scenarioId'] || h['$scenarioId'];
+  // ── Real-time listener on decisionRecords ────────────────────────
+  useEffect(() => {
+    if (!selectedId) { setRecord(null); setNoRecord(false); return; }
+    setLoading(true);
+    setNoRecord(false);
 
-        if (!hasBorrower && scenarioId) {
-          try {
-            const scenSnap = await getDoc(doc(db, 'scenarios', scenarioId));
-            if (scenSnap.exists()) {
-              const s = scenSnap.data();
-              const firstName = s.firstName || s.borrower?.firstName || '';
-              const lastName  = s.lastName  || s.borrower?.lastName  || '';
-              const borrowerName = (firstName || lastName)
-                ? `${firstName} ${lastName}`.trim()
-                : (s.borrowerName || s.name || '');
-              data.header = {
-                ...h,
-                borrowerName:    borrowerName || h.borrowerName || '',
-                loanType:        h.loanType    || s.loanType    || s.program    || '',
-                loanPurpose:     h.loanPurpose || s.loanPurpose || s.purpose    || '',
-                propertyAddress: h.propertyAddress || s.streetAddress || s.propertyAddress || s.address || '',
-              };
-            }
-          } catch (e) {
-            console.warn('[DecisionRecordDetail] Scenario fallback fetch failed:', e.message);
-          }
-        }
+    const q = query(
+  collection(db, 'decisionRecords'),
+  where('scenarioId', '==', selectedId)
+);
 
-        setRecord(data);
-      } catch (e) {
-        setError(e.message);
-      } finally {
+    const unsub = onSnapshot(q, snap => {
+      if (snap.empty) {
+        setRecord(null);
+        setNoRecord(true);
         setLoading(false);
+        return;
       }
-    }
-    load();
-  }, [id]);
+      // Take the latest version (highest record_version)
+      setRecord(snap.docs[0].data());
+      setNoRecord(false);
+      setLoading(false);
+    }, err => {
+      console.warn('[DecisionRecord] record fetch failed:', err.message);
+      setLoading(false);
+    });
 
-  // Auto-prompt when completeness reaches 100% and record is not yet locked
-  useEffect(() => {
-    if (!record) return;
-    const score = record.completeness_score || 0;
-    const pct = score <= 1 ? Math.round(score * 100) : Math.round(score);
-    if (pct >= 100 && !record.locked && !record.submittedAt) {
-      setShowAttestationPrompt(true);
-    }
-  }, [record]);
+    return unsub;
+  }, [selectedId]);
 
-  function showToast(msg, type = 'success') {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  }
+  // ── Derived data ─────────────────────────────────────────────────
+  const systemFindings = record?.system_findings || {};
+  const reportedKeys   = Object.keys(systemFindings);
+  const liveKeys       = LIVE_MODULE_KEYS || [];
+  const allModuleKeys  = Object.values(MODULE_KEYS);
+  const score          = record?.completeness_score || 0;
+  const riskFlags      = record?.risk_flags         || [];
+  const evidence       = record?.evidence           || [];
+  const missingMods    = record?.missing_modules    || [];
+  const status         = record?.status             || RECORD_STATUS.DRAFT;
 
-  async function handleSave(updates) {
-    setSaving(true);
-    try {
-      await updateDoc(doc(db, 'decisionRecords', id), { ...updates, updatedAt: serverTimestamp() });
-      setRecord(r => ({ ...r, ...updates }));
-      showToast('Saved');
-    } catch (e) {
-      showToast(e.message, 'error');
-    } finally {
-      setSaving(false);
-    }
-  }
+  const criticalCount = riskFlags.filter(f => f.severity === FLAG_SEVERITY.CRITICAL).length;
+  const warningCount  = riskFlags.filter(f => f.severity === FLAG_SEVERITY.WARNING ).length;
+  const infoCount     = riskFlags.filter(f => f.severity === FLAG_SEVERITY.INFO    ).length;
 
-  async function handleLock(updates) {
-    setSaving(true);
-    try {
-      await updateDoc(doc(db, 'decisionRecords', id), {
-        ...updates,
-        locked: true,
-        lockedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      setRecord(r => ({ ...r, ...updates, locked: true }));
-      showToast('Record locked');
-    } catch (e) {
-      showToast(e.message, 'error');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleSubmit() {
-    setSaving(true);
-    try {
-      await updateDoc(doc(db, 'decisionRecords', id), {
-        submittedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      setRecord(r => ({ ...r, submittedAt: true }));
-      showToast('Record submitted successfully!');
-    } catch (e) {
-      showToast(e.message, 'error');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-      <div className="flex items-center gap-3 text-slate-500">
-        <div className="animate-spin w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full" />
-        Loading decision record…
-      </div>
-    </div>
-  );
-
-  if (error) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-      <div className="bg-red-50 border border-red-200 rounded-xl p-6 max-w-md text-center">
-        <div className="text-red-700 font-semibold mb-2">Error</div>
-        <div className="text-red-600 text-sm">{error}</div>
-        <button onClick={() => navigate('/decision-records')} className="mt-4 text-sm text-slate-600 underline">← Back to list</button>
-      </div>
-    </div>
-  );
-
-  const { header = {}, evidence = [], completeness_score = 0, lo_attestation = {}, lo_notes = '', locked, submittedAt } = record;
-
-  // Service writes moduleVersionTags under header.moduleVersionTags (NOT root)
-  // Service writes risk flags as risk_flags (NOT riskFlags)
-  // Service writes completeness as 0.0–1.0 fraction (NOT percentage)
-  const moduleVersionTags = header.moduleVersionTags || record.moduleVersionTags || {};
-  const riskFlags = record.risk_flags || record.riskFlags || [];
-  const completeness_pct = completeness_score <= 1
-    ? Math.round(completeness_score * 100)
-    : Math.round(completeness_score);
-
-  const borrower = header.borrowerName?.trim()
-    || [header.borrowerFirstName, header.borrowerLastName].filter(Boolean).join(' ').trim()
-    || header.name?.trim()
-    || null;
-
-  const moduleCount = Object.keys(moduleVersionTags).length;
-  const criticalFlags = riskFlags.filter(f => f.severity === 'CRITICAL' || f.severity === 'HIGH').length;
-  const status = locked ? (submittedAt ? 'submitted' : 'locked') : 'draft';
-  const STATUS_CONFIG = {
-    submitted: { label: 'Submitted', bg: 'bg-emerald-100', text: 'text-emerald-800' },
-    locked:    { label: 'Locked',    bg: 'bg-blue-100',    text: 'text-blue-800'    },
-    draft:     { label: 'In Progress', bg: 'bg-amber-100', text: 'text-amber-800'   },
+  const statusMap = {
+    [RECORD_STATUS.DRAFT]:    { bg: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8', label: 'DRAFT',     glow: '#3b82f6' },
+    [RECORD_STATUS.LOCKING]:  { bg: '#fffbeb', border: '#fde68a', text: '#92400e', label: 'LOCKING',   glow: '#f59e0b' },
+    [RECORD_STATUS.LOCKED]:   { bg: '#f0fdf4', border: '#bbf7d0', text: '#15803d', label: '🔒 LOCKED',  glow: '#22c55e' },
   };
-  const statusCfg = STATUS_CONFIG[status];
+  const sc = statusMap[status] || statusMap[RECORD_STATUS.DRAFT];
 
-  function fmtTs(ts) {
-    if (!ts) return '—';
+  const modulesByStage = STAGE_META.map(s => ({
+    ...s,
+    modules: allModuleKeys.filter(k => MODULE_META[k]?.stage === s.id),
+  }));
+
+  // Filter for search
+  const filteredReportedKeys = searchFindings.trim()
+    ? reportedKeys.filter(k => {
+        const meta = MODULE_META[k];
+        return (
+          (meta?.label || k).toLowerCase().includes(searchFindings.toLowerCase()) ||
+          JSON.stringify(systemFindings[k]).toLowerCase().includes(searchFindings.toLowerCase())
+        );
+      })
+    : reportedKeys;
+
+  const tabs = [
+    { id: 'overview', label: 'Overview'                                         },
+    { id: 'findings', label: 'Findings',   count: reportedKeys.length           },
+    { id: 'flags',    label: 'Risk Flags', count: riskFlags.length,  alert: criticalCount > 0 },
+    { id: 'evidence', label: 'Evidence',   count: evidence.length               },
+    { id: 'notes',    label: 'Notes & Lock'                                     },
+    { id: 'brief',    label: '📄 Case Brief'                                    },
+  ];
+
+  // ── Generate AI Case Brief ───────────────────────────────────────
+  const generateBrief = async () => {
+    setBriefLoading(true);
+    setBriefError('');
     try {
-      const d = ts.toDate ? ts.toDate() : ts.seconds ? new Date(ts.seconds * 1000) : new Date(ts);
-      return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
-    } catch { return '—'; }
+      const h = record.header || {};
+      const moduleSummaries = Object.entries(systemFindings).map(([key, f]) => {
+        const meta = MODULE_META[key] || { label: key };
+        return `${meta.label}: ${f.verdict || f.summary || 'Logged'}`;
+      }).join('. ');
+      const flagSummary = riskFlags.length === 0
+        ? 'No risk flags identified.'
+        : riskFlags.map(f => `${f.severity?.toUpperCase()} — ${f.detail || f.flagCode}`).join('; ');
+
+      const prompt = `You are a senior mortgage compliance officer writing a formal Decision Record case brief for a loan file. Write a professional 3-paragraph narrative in plain English — no bullet points, no headers, just formal prose.
+
+FILE DATA:
+Borrower: ${h.borrowerName || 'Unknown'}
+Property: ${h.propertyAddress || 'Not provided'}
+Loan Type: ${h.loanType || 'Not specified'}
+Loan Purpose: ${h.loanPurpose || 'Not specified'}
+LO: ${h.loName || 'Not provided'}
+Modules Completed: ${reportedKeys.length} of ${liveKeys.length}
+Completeness Score: ${Math.round(score * 100)}%
+Record Status: ${status}
+Module Findings: ${moduleSummaries || 'None recorded yet.'}
+Risk Flags: ${flagSummary}
+LO Notes: ${record.lo_notes?.text || 'None.'}
+Attested: ${record.lo_attestation?.certified ? 'Yes — certified by ' + record.lo_attestation.certified_by : 'Not yet attested'}
+Record Created: ${fmtTs(record.header?.createdAt)}
+Last Updated: ${fmtTs(record.header?.updatedAt)}
+
+PARAGRAPH 1: Deal profile. Describe the borrower, property, loan type, purpose, and LO in formal language.
+PARAGRAPH 2: Analysis status. Describe which modules have been run and what they found — in plain professional English, not JSON. Note which critical modules have not yet been run.
+PARAGRAPH 3: Risk assessment and overall posture. Describe each risk flag in plain language and the overall file status. If no flags, note the clean posture. End with the attestation status.
+
+Write exactly 3 paragraphs. Be factual, formal, and concise. This document may be reviewed by regulators.`;
+
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 1200,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      });
+      if (!resp.ok) throw new Error('API error ' + resp.status);
+      const data = await resp.json();
+      const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      setBriefAI(text);
+    } catch (e) {
+      setBriefError('Could not generate narrative: ' + e.message);
+    }
+    setBriefLoading(false);
+  };
+
+  // ── Scenario display name helper ─────────────────────────────────
+  function scenarioLabel(s) {
+    const name = [s.firstName, s.lastName].filter(Boolean).join(' ')
+              || s.borrowerName
+              || 'Unknown Borrower';
+    const addr = s.streetAddress || s.propertyAddress || '';
+    return addr ? `${name}  ·  ${addr}` : name;
   }
 
-  // Suggested next modules (first 3 not yet run)
-  const allKeys = Object.keys(MODULE_LABELS);
-  const notRun = allKeys.filter(k => !moduleVersionTags[k]);
-  const nextModules = notRun.slice(0, 3);
-
+  // ──────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg text-sm font-semibold shadow-lg ${toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'}`}>
-          {toast.msg}
-        </div>
-      )}
+    <div className="dr-root">
 
-      {/* ── 100% Completeness Auto-Prompt ── */}
-      {showAttestationPrompt && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center pb-8 px-4 pointer-events-none">
-          <div className="bg-white border-2 border-emerald-400 rounded-2xl shadow-2xl p-6 max-w-lg w-full pointer-events-auto animate-bounce-once">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-xl bg-emerald-500 flex items-center justify-center shrink-0 shadow">
-                <span className="text-2xl">🏆</span>
-              </div>
-              <div className="flex-1">
-                <h3 className="text-slate-900 font-black text-lg mb-1">All Modules Complete!</h3>
-                <p className="text-slate-600 text-sm leading-relaxed mb-4">
-                  This Decision Record has reached 100% completeness. All 19 module findings are logged. 
-                  You can now lock and sign the record to create a tamper-evident audit trail.
-                </p>
-                <div className="flex gap-3">
-                  <a href="#attestation"
-                    onClick={() => setShowAttestationPrompt(false)}
-                    className="px-5 py-2.5 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors">
-                    🔒 Lock & Sign Now
-                  </a>
-                  <button
-                    onClick={() => setShowAttestationPrompt(false)}
-                    className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">
-                    Review First
-                  </button>
-                </div>
-              </div>
-              <button onClick={() => setShowAttestationPrompt(false)}
-                className="text-slate-300 hover:text-slate-500 text-xl leading-none mt-0.5">✕</button>
+      {/* ══ TOP BAR ═══════════════════════════════════════════════ */}
+      <div className="dr-topbar">
+        <div className="dr-topbar-left">
+          <span className="dr-module-num">21</span>
+          <div className="dr-topbar-titles">
+            <h1 className="dr-title">Decision Record™</h1>
+            <span className="dr-subtitle">Canonical Sequence Audit Trail</span>
+          </div>
+        </div>
+        <div className="dr-topbar-center">
+          {/* ── Scenario Search ── */}
+          <div style={{ position: 'relative', width: '100%', maxWidth: 520 }}>
+            {/* Input */}
+            <div style={{ position: 'relative' }}>
+              <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: 14, pointerEvents: 'none' }}>🔍</span>
+              <input
+                type="text"
+                value={scenarioSearch}
+                onChange={e => { setScenarioSearch(e.target.value); setSearchOpen(true); }}
+                onFocus={() => setSearchOpen(true)}
+                onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+                placeholder={selectedId ? scenarioLabel(scenarios.find(s => s.id === selectedId) || {}) : '— Search scenarios —'}
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  background: '#1e293b', border: `1px solid ${searchOpen ? '#f97316' : '#334155'}`,
+                  borderRadius: 10, color: '#f1f5f9',
+                  fontFamily: "'DM Sans', sans-serif", fontSize: 13,
+                  padding: '10px 14px 10px 38px',
+                  outline: 'none', transition: 'border-color .2s',
+                  boxShadow: searchOpen ? '0 0 0 3px rgba(249,115,22,.2)' : 'none',
+                }}
+              />
+              {selectedId && !scenarioSearch && (
+                <span style={{ position: 'absolute', left: 38, top: '50%', transform: 'translateY(-50%)', width: 8, height: 8, borderRadius: '50%', background: '#f97316', flexShrink: 0 }} />
+              )}
             </div>
+
+            {/* Dropdown */}
+            {searchOpen && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 999,
+                background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12,
+                boxShadow: '0 8px 32px rgba(0,0,0,.14)', overflow: 'hidden', maxHeight: 360, overflowY: 'auto',
+              }}>
+                {(() => {
+                  const q = scenarioSearch.toLowerCase().trim();
+                  const filtered = scenarios.filter(s => {
+                    if (!q) return true;
+                    const name = scenarioLabel(s).toLowerCase();
+                    const lt = (s.loanType || s.program || '').toLowerCase();
+                    const addr = (s.streetAddress || s.propertyAddress || '').toLowerCase();
+                    return name.includes(q) || lt.includes(q) || addr.includes(q);
+                  });
+
+                  if (filtered.length === 0) return (
+                    <div style={{ padding: '16px 18px', fontSize: 13, color: '#94a3b8', textAlign: 'center' }}>
+                      No scenarios match "{scenarioSearch}"
+                    </div>
+                  );
+
+                  return filtered.map(s => {
+                    const name = [s.firstName, s.lastName].filter(Boolean).join(' ') || s.borrowerName || 'Unknown Borrower';
+                    const addr = s.streetAddress || s.propertyAddress || '';
+                    const lt   = s.loanType || s.program || '';
+                    const purpose = s.loanPurpose || s.purpose || '';
+                    const isSelected = s.id === selectedId;
+                    const loanColors = { FHA: '#3b82f6', CONVENTIONAL: '#7c3aed', VA: '#16a34a', USDA: '#059669' };
+                    const ltColor = Object.entries(loanColors).find(([k]) => lt.toUpperCase().includes(k))?.[1] || '#94a3b8';
+
+                    return (
+                      <div key={s.id}
+                        onMouseDown={() => { setSelectedId(s.id); setScenarioSearch(''); setSearchOpen(false); setActiveTab('overview'); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 12,
+                          padding: '11px 16px', cursor: 'pointer',
+                          background: isSelected ? '#fff7ed' : '#fff',
+                          borderBottom: '1px solid #f8fafc',
+                          transition: 'background .1s',
+                        }}
+                        onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = '#f8fafc'; }}
+                        onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '#fff'; }}
+                      >
+                        {isSelected && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#f97316', flexShrink: 0 }} />}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', truncate: true, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {name}
+                          </div>
+                          {addr && <div style={{ fontSize: 11, color: '#64748b', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{addr}</div>}
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          {lt && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: ltColor + '18', color: ltColor, border: `1px solid ${ltColor}40` }}>{lt}</span>}
+                          {purpose && <span style={{ fontSize: 10, color: '#94a3b8', padding: '2px 6px', borderRadius: 4, background: '#f8fafc', border: '1px solid #e2e8f0' }}>{purpose.replace(/_/g,' ')}</span>}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="dr-topbar-right">
+          {record && (
+            <div className="dr-status-pill" style={{ background: sc.bg, border: `1px solid ${sc.border}`, color: sc.text, boxShadow: `0 0 12px ${sc.glow}30` }}>
+              {sc.label}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ══ EMPTY STATES ══════════════════════════════════════════ */}
+      {!selectedId && (
+        <div className="dr-splash">
+          <div className="dr-splash-glow" />
+          <div className="dr-splash-icon">⚖️</div>
+          <h2 className="dr-splash-title">Decision Record™</h2>
+          <p className="dr-splash-body">
+            Select a scenario above to view its complete audit trail —<br />
+            every module finding, risk flag, and decision logged by the Canonical Sequence.
+          </p>
+          <div className="dr-splash-stats">
+            <div className="dr-splash-stat"><span className="dr-splash-num">21</span><span>Modules</span></div>
+            <div className="dr-splash-stat"><span className="dr-splash-num">4</span><span>Stages</span></div>
+            <div className="dr-splash-stat"><span className="dr-splash-num">∞</span><span>Audit Trail</span></div>
           </div>
         </div>
       )}
 
-      {/* ── Sticky Header ── */}
-      <div className="bg-slate-900 px-6 py-5 border-b border-slate-800 sticky top-0 z-30">
-        <div className="max-w-5xl mx-auto">
-          <div className="flex items-start justify-between">
-            <div>
-              <button onClick={() => navigate('/decision-records')}
-                className="text-slate-400 hover:text-amber-400 text-sm mb-2 flex items-center gap-1 transition-colors">
-                ← Decision Records
-              </button>
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="w-8 h-8 rounded-lg bg-amber-500 flex items-center justify-center shrink-0">
-                  <span className="text-slate-900 font-black text-sm">21</span>
-                </div>
-                <h1 className="text-white text-xl font-bold">{borrower || 'Unnamed Borrower'}</h1>
-                <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${statusCfg.bg} ${statusCfg.text}`}>{statusCfg.label}</span>
-              </div>
-              <div className="flex items-center gap-3 mt-1 ml-11 flex-wrap">
-                {header.loanType    && <span className="text-xs text-amber-400 font-bold">{header.loanType}</span>}
-                {header.loanPurpose && <span className="text-xs text-slate-400">{header.loanPurpose}</span>}
-                {(header.propertyAddress || header.borrowerAddress || header.streetAddress) && (
-                  <span className="text-xs text-slate-500">📍 {header.propertyAddress || header.borrowerAddress || header.streetAddress}</span>
+      {selectedId && loading && (
+        <div className="dr-splash">
+          <div className="dr-spinner" />
+          <p style={{ color: '#475569', marginTop: 16 }}>Loading Decision Record…</p>
+        </div>
+      )}
+
+      {selectedId && !loading && noRecord && (
+        <div className="dr-splash">
+          <div className="dr-splash-icon" style={{ fontSize: 48 }}>📭</div>
+          <h2 className="dr-splash-title" style={{ fontSize: 22 }}>No Record Yet</h2>
+          <p className="dr-splash-body">
+            This scenario hasn't generated a Decision Record yet.<br />
+            Open it and run through the Canonical Sequence — findings will populate here automatically.
+          </p>
+        </div>
+      )}
+
+      {/* ══ MAIN DASHBOARD ════════════════════════════════════════ */}
+      {record && !loading && (
+        <div className="dr-main">
+
+          {/* ── Record Header Card ── */}
+          <div className="dr-header-card">
+            <div className="dr-header-left">
+              <div className="dr-hc-top">
+                <span className="dr-record-ver">v{record.record_version || 1}</span>
+                {record.change_reason && (
+                  <span className="dr-change-reason">Revised: {record.change_reason}</span>
                 )}
               </div>
+              <div className="dr-borrower-name">
+                {record.header?.borrowerName || 'Unknown Borrower'}
+              </div>
+              <div className="dr-header-chips">
+                {record.header?.propertyAddress && (
+                  <span className="dr-chip"><span className="dr-chip-icon">🏠</span>{record.header.propertyAddress}</span>
+                )}
+                {record.header?.loanType && (
+                  <span className="dr-chip"><span className="dr-chip-icon">📋</span>{record.header.loanType}</span>
+                )}
+                {record.header?.loanPurpose && (
+                  <span className="dr-chip"><span className="dr-chip-icon">🎯</span>{record.header.loanPurpose}</span>
+                )}
+                {record.header?.loName && (
+                  <span className="dr-chip"><span className="dr-chip-icon">👤</span>{record.header.loName}</span>
+                )}
+                {record.header?.branchId && (
+                  <span className="dr-chip dr-chip-dim"><span className="dr-chip-icon">🏢</span>{record.header.branchId}</span>
+                )}
+              </div>
+              <div className="dr-header-timestamps">
+                <span>Created {fmtTsShort(record.header?.createdAt)}</span>
+                <span className="dr-ts-sep">·</span>
+                <span>Updated {fmtTsShort(record.header?.updatedAt)}</span>
+                <span className="dr-ts-sep">·</span>
+                <span>Record ID: <code>{record.recordId?.substring(0, 12) || '—'}</code></span>
+              </div>
             </div>
-            <div className="flex items-center gap-6 text-right shrink-0">
-              <div>
-                <div className="text-slate-400 text-xs uppercase tracking-widest mb-1">Modules</div>
-                <div className="text-white font-black font-mono text-xl">{moduleCount}<span className="text-slate-500 text-sm font-normal"> / 19</span></div>
+
+            <div className="dr-header-center">
+              <CompletenessRing score={score} reported={reportedKeys.length} total={liveKeys.length} />
+            </div>
+
+            <div className="dr-header-right">
+              <div className="dr-flag-summary">
+                {criticalCount > 0 && (
+                  <div className="dr-flag-summary-row critical">
+                    <span className="dr-flag-summary-dot" />
+                    <span className="dr-flag-summary-count">{criticalCount}</span>
+                    <span>Critical</span>
+                  </div>
+                )}
+                {warningCount > 0 && (
+                  <div className="dr-flag-summary-row warning">
+                    <span className="dr-flag-summary-dot" />
+                    <span className="dr-flag-summary-count">{warningCount}</span>
+                    <span>Warning</span>
+                  </div>
+                )}
+                {infoCount > 0 && (
+                  <div className="dr-flag-summary-row info">
+                    <span className="dr-flag-summary-dot" />
+                    <span className="dr-flag-summary-count">{infoCount}</span>
+                    <span>Info</span>
+                  </div>
+                )}
+                {riskFlags.length === 0 && (
+                  <div className="dr-flag-summary-clean">
+                    <span>✅</span>
+                    <span>No risk flags</span>
+                  </div>
+                )}
               </div>
-              <div>
-                <div className="text-slate-400 text-xs uppercase tracking-widest mb-1">Complete</div>
-                <div className={`font-black font-mono text-xl ${completeness_pct >= 80 ? 'text-emerald-400' : completeness_pct >= 50 ? 'text-amber-400' : 'text-slate-400'}`}>
-                  {completeness_pct}%
-                </div>
+
+              {/* Attestation quick-status */}
+              <div className={`dr-attest-quick ${record.lo_attestation?.certified ? 'certified' : 'pending'}`}>
+                {record.lo_attestation?.certified ? '✅ LO Attested' : '⏳ Awaiting Attestation'}
               </div>
-              {criticalFlags > 0 && (
-                <div>
-                  <div className="text-slate-400 text-xs uppercase tracking-widest mb-1">Flags</div>
-                  <div className="text-red-400 font-black font-mono text-xl">{riskFlags.length}</div>
+
+              {/* Final disposition if logged */}
+              {systemFindings['decision_record']?.disposition && (
+                <div className="dr-disposition-badge">
+                  <span className="dr-disposition-label">Disposition</span>
+                  <span className="dr-disposition-value">{systemFindings['decision_record'].disposition}</span>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Scroll nav */}
-          <div className="flex gap-5 mt-4 ml-11 border-t border-slate-800 pt-3">
-            {['overview','modules','risk-flags','evidence','attestation'].map(s => (
-              <a key={s} href={`#${s}`}
-                className="text-xs text-slate-400 hover:text-amber-400 capitalize transition-colors">
-                {s.replace('-', ' ')}
-              </a>
+          {/* ── Tab Bar ── */}
+          <div className="dr-tabs">
+            {tabs.map(t => (
+              <button
+                key={t.id}
+                className={`dr-tab ${activeTab === t.id ? 'active' : ''} ${t.alert ? 'tab-alert' : ''}`}
+                onClick={() => setActiveTab(t.id)}
+              >
+                {t.label}
+                {t.count !== undefined && (
+                  <span className={`dr-tab-badge ${t.alert ? 'tab-badge-alert' : ''}`}>{t.count}</span>
+                )}
+              </button>
             ))}
           </div>
-        </div>
-      </div>
 
-      <div className="max-w-5xl mx-auto px-6 py-6 space-y-4">
+          {/* ══ TAB: OVERVIEW ════════════════════════════════════ */}
+          {activeTab === 'overview' && (
+            <div className="dr-tab-pane">
 
-        {/* ── What Is This? Banner (shown when record is new) ── */}
-        {moduleCount === 0 && (
-          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5">
-            <div className="flex items-start gap-4">
-              <div className="text-3xl">📋</div>
-              <div className="flex-1">
-                <h2 className="text-indigo-900 font-bold text-base mb-1">This is {borrower ? `${borrower}'s` : 'a'} Decision Record</h2>
-                <p className="text-indigo-700 text-sm leading-relaxed mb-3">
-                  A Decision Record is a complete audit trail for this loan scenario. As you run each LoanBeacons module — 
-                  AUS Rescue, Lender Match, DPA Intelligence, and more — their findings are automatically logged here. 
-                  When all relevant modules are complete, you lock and submit the record.
-                </p>
-                <div className="flex items-center gap-2 text-indigo-600 text-xs font-semibold">
-                  <span className="w-5 h-5 rounded-full bg-indigo-200 flex items-center justify-center text-indigo-800 font-black">1</span> Run modules on this scenario
-                  <span className="text-indigo-300 mx-1">→</span>
-                  <span className="w-5 h-5 rounded-full bg-indigo-200 flex items-center justify-center text-indigo-800 font-black">2</span> Click Save to Decision Record
-                  <span className="text-indigo-300 mx-1">→</span>
-                  <span className="w-5 h-5 rounded-full bg-indigo-200 flex items-center justify-center text-indigo-800 font-black">3</span> Lock & submit below
-                </div>
+              {/* Stage progress cards */}
+              <div className="dr-stage-row">
+                {modulesByStage.map(stage => {
+                  const stageReported = stage.modules.filter(k => systemFindings[k]).length;
+                  const stageTotal    = stage.modules.length;
+                  const pct           = stageTotal > 0 ? stageReported / stageTotal : 0;
+                  const allDone       = stageReported === stageTotal;
+                  return (
+                    <div key={stage.id} className="dr-stage-card"
+                      style={{ '--sc': stage.color }}>
+                      <div className="dr-stage-header">
+                        <span className="dr-stage-num-badge">Stage {stage.id}</span>
+                        {allDone && <span className="dr-stage-done">✓</span>}
+                      </div>
+                      <div className="dr-stage-title">{stage.short}</div>
+                      <div className="dr-stage-bar-track">
+                        <div
+                          className="dr-stage-bar-fill"
+                          style={{ width: `${pct * 100}%`, background: stage.color, boxShadow: `0 0 8px ${stage.color}60` }}
+                        />
+                      </div>
+                      <div className="dr-stage-count" style={{ color: stage.color }}>
+                        {stageReported} / {stageTotal}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            </div>
-          </div>
-        )}
 
-        {/* ── Overview Row ── */}
-        <div id="overview" className="grid grid-cols-3 gap-4">
-          {/* Completeness */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center gap-5">
-            <ScoreRing score={completeness_pct} />
-            <div>
-              <div className="text-xs text-slate-500 uppercase tracking-wide mb-2">Completeness</div>
-              <div className="text-sm font-semibold text-slate-700">{moduleCount} / 19 modules</div>
-              <div className="text-xs text-slate-400 mt-1">{(evidence || []).length} evidence items</div>
-              <div className="text-xs text-slate-400">{riskFlags.length} risk flags</div>
-            </div>
-          </div>
-
-          {/* Scenario data */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <div className="text-xs text-slate-500 uppercase tracking-wide mb-3">Loan Details</div>
-            <div className="space-y-2 text-sm">
-              {[
-                ['Borrower',     borrower],
-                ['Loan Purpose', header.loanPurpose || header.purpose],
-                ['Loan Type',    header.loanType || header.program],
-                ['Property',     header.propertyAddress || header.borrowerAddress || header.streetAddress],
-              ].map(([k, v]) => v ? (
-                <div key={k} className="flex justify-between gap-2">
-                  <span className="text-slate-400 shrink-0">{k}</span>
-                  <span className="text-slate-700 font-medium text-xs text-right truncate max-w-[55%]">{v}</span>
-                </div>
-              ) : null)}
-              {!borrower && !header.loanType && (
-                <p className="text-slate-400 text-xs italic">Scenario data will appear here after your first module save.</p>
-              )}
-            </div>
-          </div>
-
-          {/* Audit trail */}
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-            <div className="text-xs text-slate-500 uppercase tracking-wide mb-3">Audit Trail</div>
-            <div className="space-y-2 text-xs">
-              {[
-                ['Created',   fmtTs(record.createdAt)],
-                ['Updated',   fmtTs(record.updatedAt)],
-                ['Locked',    fmtTs(record.lockedAt)],
-                ['Submitted', fmtTs(record.submittedAt)],
-                ['Signed By', lo_attestation?.loName || '—'],
-                ['NMLS',      lo_attestation?.loNmls || '—'],
-              ].map(([k, v]) => (
-                <div key={k} className="flex justify-between gap-2">
-                  <span className="text-slate-400">{k}</span>
-                  <span className={`font-mono text-right ${v === '—' ? 'text-slate-300' : 'text-slate-700'}`}>{v}</span>
+              {/* Module grid by stage */}
+              {modulesByStage.map(stage => (
+                <div key={stage.id} className="dr-stage-section">
+                  <div className="dr-stage-section-head" style={{ '--sc': stage.color }}>
+                    <span className="dr-stage-section-dot" style={{ background: stage.color, boxShadow: `0 0 6px ${stage.color}` }} />
+                    <span className="dr-stage-section-num">Stage {stage.id}</span>
+                    <span className="dr-stage-section-label">{stage.label}</span>
+                  </div>
+                  <div className="dr-module-grid">
+                    {stage.modules.map(key => {
+                      const meta      = MODULE_META[key] || { label: key, icon: '⬜' };
+                      const finding   = systemFindings[key];
+                      const isLive    = liveKeys.includes(key);
+                      const reported  = !!finding;
+                      return (
+                        <div
+                          key={key}
+                          className={`dr-module-card ${reported ? 'mc-reported' : ''} ${!isLive ? 'mc-future' : ''}`}
+                          style={{ '--sc': stage.color }}
+                          title={reported ? `Click to view ${meta.label} findings` : undefined}
+                          onClick={() => {
+                            if (reported) {
+                              setActiveTab('findings');
+                              setExpandedModule(key);
+                            }
+                          }}
+                        >
+                          <div className="dr-mc-top">
+                            <span className="dr-mc-icon">{meta.icon}</span>
+                            <span className={`dr-mc-dot ${reported ? 'dot-on' : 'dot-off'}`}
+                              style={reported ? { background: stage.color, boxShadow: `0 0 5px ${stage.color}` } : {}} />
+                          </div>
+                          <div className="dr-mc-name">{meta.label}</div>
+                          {reported && (
+                            <div className="dr-mc-ts">{fmtTsShort(finding.reported_at)}</div>
+                          )}
+                          {!isLive && <span className="dr-mc-future">future</span>}
+                          {reported && <div className="dr-mc-hover-text">View Findings →</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               ))}
-            </div>
-          </div>
-        </div>
 
-        {/* ── Next Steps (shown when modules < 3 run) ── */}
-        {moduleCount < 3 && nextModules.length > 0 && (
-          <div className="bg-white border border-amber-200 rounded-xl p-5 shadow-sm">
-            <div className="flex items-center gap-2 mb-4">
-              <span className="text-amber-500 text-lg">⚡</span>
-              <span className="font-bold text-slate-800">Suggested Next Modules</span>
-              <span className="text-xs text-slate-400 ml-1">— run these to build the audit trail</span>
+              {/* Missing modules notice */}
+              {missingMods.length > 0 && (
+                <div className="dr-missing-panel">
+                  <div className="dr-missing-head">
+                    <span className="dr-missing-icon">⏳</span>
+                    <span>Pending Live Modules ({missingMods.length})</span>
+                  </div>
+                  <div className="dr-missing-chips">
+                    {missingMods.map(k => (
+                      <span key={k} className="dr-missing-chip">
+                        {MODULE_META[k]?.icon} {MODULE_META[k]?.label || k}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              {nextModules.map(key => {
-                const cfg = MODULE_LABELS[key];
+          )}
+
+          {/* ══ TAB: FINDINGS ════════════════════════════════════ */}
+          {activeTab === 'findings' && (
+            <div className="dr-tab-pane">
+              <div className="dr-findings-toolbar">
+                <span className="dr-findings-count">{reportedKeys.length} modules reported</span>
+                <input
+                  className="dr-search-input"
+                  type="text"
+                  placeholder="Search findings…"
+                  value={searchFindings}
+                  onChange={e => setSearchFindings(e.target.value)}
+                />
+              </div>
+
+              {filteredReportedKeys.length === 0 && (
+                <div className="dr-empty-pane">
+                  {reportedKeys.length === 0
+                    ? 'No module findings recorded yet.'
+                    : 'No findings match your search.'}
+                </div>
+              )}
+
+              {filteredReportedKeys.map(key => {
+                const finding    = systemFindings[key];
+                const meta       = MODULE_META[key] || { label: key, icon: '⬜', stage: 0 };
+                const stageMeta  = STAGE_META.find(s => s.id === meta.stage);
+                const isExpanded = expandedModule === key;
+                // Strip metadata fields from displayed findings
+                const displayData = Object.fromEntries(
+                  Object.entries(finding).filter(([k]) => !['reported_at', 'module_version'].includes(k))
+                );
+
                 return (
-                  <button key={key} onClick={() => navigate(cfg.route)}
-                    className="flex items-center gap-3 p-3 rounded-lg border border-dashed border-amber-300 hover:border-amber-500 hover:bg-amber-50 transition-all text-left group">
-                    <div className="w-7 h-7 rounded-full bg-amber-100 flex items-center justify-center text-xs font-black text-amber-700 shrink-0 group-hover:bg-amber-200">
-                      {cfg.num}
+                  <div key={key}
+                    className={`dr-finding-block ${isExpanded ? 'fb-open' : ''}`}
+                    style={{ '--sc': stageMeta?.color || '#38bdf8' }}>
+                    <div
+                      className="dr-finding-head"
+                      onClick={() => setExpandedModule(isExpanded ? null : key)}
+                    >
+                      <span className="dr-finding-icon">{meta.icon}</span>
+                      <div className="dr-finding-titles">
+                        <span className="dr-finding-name">{meta.label}</span>
+                        <span className="dr-finding-stage-chip" style={{ color: stageMeta?.color }}>
+                          Stage {meta.stage} · {stageMeta?.short}
+                        </span>
+                      </div>
+                      <div className="dr-finding-meta-row">
+                        <span className="dr-finding-ts">{fmtTsShort(finding.reported_at)}</span>
+                        <span className="dr-finding-ver">v{finding.module_version || '1.0.0'}</span>
+                      </div>
+                      <span className="dr-finding-chevron">{isExpanded ? '▲' : '▼'}</span>
                     </div>
-                    <div>
-                      <div className="text-sm font-semibold text-slate-700 group-hover:text-amber-700">{cfg.label}</div>
-                      <div className="text-xs text-amber-600 font-medium mt-0.5">Open →</div>
-                    </div>
-                  </button>
+
+                    {isExpanded && (
+                      <div className="dr-finding-body">
+                        <FindingCard finding={finding} />
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
+          )}
+
+          {/* ══ TAB: RISK FLAGS ══════════════════════════════════ */}
+          {activeTab === 'flags' && (
+            <div className="dr-tab-pane">
+              {riskFlags.length === 0 && (
+                <div className="dr-clean-state">
+                  <div className="dr-clean-icon">✅</div>
+                  <div className="dr-clean-title">Clean Record</div>
+                  <div className="dr-clean-body">No risk flags have been raised on this Decision Record.</div>
+                </div>
+              )}
+
+              {[FLAG_SEVERITY.CRITICAL, FLAG_SEVERITY.WARNING, FLAG_SEVERITY.INFO].map(sev => {
+                const flags = riskFlags.filter(f => f.severity === sev);
+                if (!flags.length) return null;
+                const fc    = FLAG_COLORS[sev] || FLAG_COLORS.info;
+                const label = sev.toUpperCase();
+
+                return (
+                  <div key={sev} className="dr-flag-group">
+                    <div className="dr-flag-group-head" style={{ color: fc.dot }}>
+                      <span className="dr-flag-group-dot" style={{ background: fc.dot, boxShadow: `0 0 6px ${fc.dot}` }} />
+                      {label}
+                      <span className="dr-flag-group-count" style={{ background: fc.bg, color: fc.text, borderColor: fc.border }}>
+                        {flags.length}
+                      </span>
+                    </div>
+                    {flags.map((f, i) => (
+                      <div key={i} className="dr-flag-item"
+                        style={{ background: fc.bg, borderLeft: `3px solid ${fc.border}` }}>
+                        <div className="dr-flag-code" style={{ color: fc.dot }}>{f.flag_code}</div>
+                        <div className="dr-flag-source">
+                          {MODULE_META[f.source_module]?.icon} {MODULE_META[f.source_module]?.label || f.source_module}
+                        </div>
+                        <div className="dr-flag-detail">{f.detail || '—'}</div>
+                        <div className="dr-flag-ts">{fmtTsShort(f.flagged_at)}</div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ══ TAB: EVIDENCE ════════════════════════════════════ */}
+          {activeTab === 'evidence' && (
+            <div className="dr-tab-pane">
+              {evidence.length === 0 && (
+                <div className="dr-empty-pane">No evidence items attached to this record.</div>
+              )}
+              <div className="dr-evidence-grid">
+                {evidence.map((ev, i) => (
+                  <div key={i} className="dr-evidence-card">
+                    <div className="dr-ev-type">{ev.type}</div>
+                    <div className="dr-ev-source">{ev.source_name || '—'}</div>
+                    {ev.source_id  && <div className="dr-ev-row"><span>ID</span><code>{ev.source_id}</code></div>}
+                    {ev.version_tag && <div className="dr-ev-row"><span>Version</span><code>{ev.version_tag}</code></div>}
+                    {ev.retrieved_by && <div className="dr-ev-row"><span>By</span><span>{ev.retrieved_by}</span></div>}
+                    <div className="dr-ev-ts">{fmtTs(ev.retrieved_at)}</div>
+                    {ev.source_url && (
+                      <a href={ev.source_url} target="_blank" rel="noreferrer" className="dr-ev-link">
+                        View Source ↗
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ══ TAB: NOTES & LOCK ════════════════════════════════ */}
+          {activeTab === 'notes' && (
+            <div className="dr-tab-pane dr-notes-layout">
+
+              {/* LO Notes */}
+              <div className="dr-info-card">
+                <div className="dr-card-label">LO Notes</div>
+                {record.lo_notes?.text ? (
+                  <>
+                    <div className="dr-lo-notes-text">{record.lo_notes.text}</div>
+                    {record.lo_notes.tags?.length > 0 && (
+                      <div className="dr-lo-tags">
+                        {record.lo_notes.tags.map(t => (
+                          <span key={t} className="dr-lo-tag">{t.replace(/_/g, ' ')}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="dr-card-ts">Authored {fmtTs(record.lo_notes.authored_at)}</div>
+                  </>
+                ) : (
+                  <div className="dr-card-empty">No LO notes on this record yet.</div>
+                )}
+              </div>
+
+              {/* LO Attestation */}
+              <div className="dr-info-card">
+                <div className="dr-card-label">LO Attestation</div>
+                {record.lo_attestation?.certified ? (
+                  <div className="dr-attest-block certified">
+                    <div className="dr-attest-check-large">✅</div>
+                    <div>
+                      <div className="dr-attest-by">Certified by {record.lo_attestation.certified_by}</div>
+                      <div className="dr-card-ts">{fmtTs(record.lo_attestation.certified_at)}</div>
+                      <div className="dr-attest-quote">"I certify this record reflects the information available at the time of this decision."</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="dr-attest-block pending">
+                    <div className="dr-attest-warn">⏳</div>
+                    <div>
+                      <div className="dr-attest-pending-txt">Attestation required before record lock</div>
+                      <div className="dr-card-ts">The LO must certify this record before it can be sealed.</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Manager Review */}
+              <div className="dr-info-card">
+                <div className="dr-card-label">Manager Review</div>
+                <div className="dr-manager-status">
+                  <span className={`dr-manager-dot ${record.manager_review?.reviewed ? 'dot-green' : 'dot-dim'}`} />
+                  <span>{record.manager_review?.reviewed
+                    ? `Reviewed by ${record.manager_review.reviewed_by}`
+                    : 'Not yet reviewed by manager'}
+                  </span>
+                  {record.manager_review?.reviewed_at && (
+                    <span className="dr-card-ts" style={{ marginLeft: 'auto' }}>{fmtTsShort(record.manager_review.reviewed_at)}</span>
+                  )}
+                  {record.manager_review?.flagged_for_followup && (
+                    <span className="dr-follow-up-badge">🚩 Flagged for Follow-up</span>
+                  )}
+                </div>
+                {record.manager_review?.comments?.length > 0 && (
+                  <div className="dr-comments-list">
+                    {record.manager_review.comments.map((c, i) => (
+                      <div key={i} className="dr-comment">
+                        <span className="dr-comment-by">{c.authored_by}</span>
+                        <span className="dr-comment-txt">{c.text}</span>
+                        <span className="dr-comment-ts">{fmtTsShort(c.authored_at)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Final Disposition */}
+              {systemFindings['decision_record'] && (
+                <div className="dr-info-card dr-disposition-card">
+                  <div className="dr-card-label">Final Disposition</div>
+                  <div className="dr-disposition-main">
+                    {systemFindings['decision_record'].disposition || '—'}
+                  </div>
+                  {systemFindings['decision_record'].program_selected && (
+                    <div className="dr-dispo-row">
+                      <span>Program</span><span>{systemFindings['decision_record'].program_selected}</span>
+                    </div>
+                  )}
+                  {systemFindings['decision_record'].lender_selected && (
+                    <div className="dr-dispo-row">
+                      <span>Lender</span><span>{systemFindings['decision_record'].lender_selected}</span>
+                    </div>
+                  )}
+                  {systemFindings['decision_record'].loan_amount && (
+                    <div className="dr-dispo-row">
+                      <span>Loan Amount</span>
+                      <span>${Number(systemFindings['decision_record'].loan_amount).toLocaleString()}</span>
+                    </div>
+                  )}
+                  {systemFindings['decision_record'].interest_rate && (
+                    <div className="dr-dispo-row">
+                      <span>Interest Rate</span><span>{systemFindings['decision_record'].interest_rate}%</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Lock Info */}
+              {status === RECORD_STATUS.LOCKED && (
+                <div className="dr-info-card dr-lock-card">
+                  <div className="dr-card-label">🔒 Lock Info</div>
+                  <div className="dr-lock-row"><span>Locked At</span><span>{fmtTs(record.locked_at)}</span></div>
+                  <div className="dr-lock-row"><span>Locked By</span><span>{record.locked_by_user_id || '—'}</span></div>
+                  <div className="dr-lock-row"><span>Record Version</span><span>v{record.record_version}</span></div>
+                  {record.record_hash && (
+                    <div className="dr-lock-row dr-hash-row">
+                      <span>SHA-256</span>
+                      <code className="dr-hash-val">{record.record_hash}</code>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Version history note */}
+              {record.supersedes_record_id && (
+                <div className="dr-info-card dr-version-card">
+                  <div className="dr-card-label">Version History</div>
+                  <div className="dr-version-row">
+                    <span>Supersedes</span>
+                    <code>{record.supersedes_record_id}</code>
+                  </div>
+                  {record.change_reason && (
+                    <div className="dr-version-row">
+                      <span>Change Reason</span>
+                      <span>{record.change_reason}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+            </div>
+          )}
+
+          {/* ══ TAB: CASE BRIEF ══════════════════════════════════ */}
+          {activeTab === 'brief' && (
+            <div className="dr-tab-pane">
+              {/* Print styles */}
+              <style>{`
+                @media print {
+                  .dr-root > *:not(#dr-case-brief) { display: none !important; }
+                  .dr-topbar, .dr-tabs, .dr-footer, .dr-brief-toolbar { display: none !important; }
+                  #dr-case-brief { display: block !important; }
+                  body { background: white !important; }
+                }
+              `}</style>
+
+              {/* Toolbar */}
+              <div className="dr-brief-toolbar" style={{ display:'flex', alignItems:'center', gap:12, marginBottom:20, flexWrap:'wrap' }}>
+                <button onClick={generateBrief} disabled={briefLoading}
+                  style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 20px', background: briefLoading?'#1e293b':'#4f46e5', color:'#fff', border:'none', borderRadius:10, fontSize:13, fontWeight:700, cursor: briefLoading?'not-allowed':'pointer', opacity: briefLoading?0.7:1 }}>
+                  {briefLoading ? '⏳ Generating narrative…' : briefAI ? '↺ Regenerate AI Narrative' : '✨ Generate AI Narrative'}
+                </button>
+                {briefAI && (
+                  <button onClick={() => window.print()}
+                    style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 20px', background:'#0f172a', color:'#94a3b8', border:'1px solid #1e293b', borderRadius:10, fontSize:13, fontWeight:600, cursor:'pointer' }}>
+                    🖨️ Print / Save as PDF
+                  </button>
+                )}
+                <span style={{ fontSize:11, color:'#475569', marginLeft:'auto' }}>This document is for licensed mortgage professional use only</span>
+              </div>
+
+              {briefError && (
+                <div style={{ background:'#1f0505', border:'1px solid #7f1d1d', color:'#fca5a5', borderRadius:10, padding:'12px 16px', fontSize:13, marginBottom:16 }}>{briefError}</div>
+              )}
+
+              {/* ── CASE BRIEF DOCUMENT ── */}
+              <div id="dr-case-brief" style={{ background:'#fff', color:'#1e293b', borderRadius:12, padding:'48px 56px', fontFamily:"'Georgia', serif", maxWidth:900, margin:'0 auto', boxShadow:'0 4px 32px rgba(0,0,0,0.18)' }}>
+
+                {/* Document header */}
+                <div style={{ borderBottom:'3px double #1e293b', paddingBottom:20, marginBottom:28 }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+                    <div>
+                      <div style={{ fontSize:10, letterSpacing:'0.18em', color:'#64748b', textTransform:'uppercase', marginBottom:4 }}>LoanBeacons™ — Mortgage Intelligence Platform</div>
+                      <div style={{ fontSize:22, fontWeight:700, color:'#0f172a', marginBottom:2 }}>Decision Record™ — Case Brief</div>
+                      <div style={{ fontSize:12, color:'#475569' }}>Canonical Sequence Audit Trail · Module 21</div>
+                    </div>
+                    <div style={{ textAlign:'right', fontSize:11, color:'#64748b' }}>
+                      <div>Record ID: <span style={{ fontFamily:'monospace', fontSize:10 }}>{(record.recordId || '').substring(0,16) || '—'}</span></div>
+                      <div>Version: v{record.record_version || 1}</div>
+                      <div>Generated: {new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+                      <div style={{ marginTop:6, padding:'3px 10px', background: riskFlags.length > 0 ? '#fef3c7' : '#ecfdf5', border:`1px solid ${riskFlags.length>0?'#d97706':'#16a34a'}`, borderRadius:4, color: riskFlags.length>0?'#92400e':'#065f46', fontWeight:700, fontSize:11 }}>
+                        {riskFlags.length > 0 ? `⚠ ${riskFlags.filter(f=>['HIGH','CRITICAL'].includes(f.severity)).length} HIGH FLAGS` : '✓ CLEAN RECORD'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Deal identity */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:24, marginBottom:28, padding:'20px 24px', background:'#f8fafc', borderRadius:8, border:'1px solid #e2e8f0' }}>
+                  {[
+                    ['Borrower',       record.header?.borrowerName || '—'],
+                    ['Property',       record.header?.propertyAddress || '—'],
+                    ['Loan Type',      record.header?.loanType || '—'],
+                    ['Loan Purpose',   record.header?.loanPurpose || '—'],
+                    ['Loan Officer',   record.header?.loName || '—'],
+                    ['Modules Run',    `${reportedKeys.length} of ${liveKeys.length}`],
+                    ['Record Status',  status?.toUpperCase() || 'DRAFT'],
+                    ['Completeness',   `${Math.round(score * 100)}%`],
+                  ].map(([label, value]) => (
+                    <div key={label} style={{ display:'flex', gap:8 }}>
+                      <span style={{ fontFamily:"'DM Sans', sans-serif", fontSize:11, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.1em', minWidth:110, paddingTop:1 }}>{label}</span>
+                      <span style={{ fontSize:13, fontWeight:600, color:'#0f172a' }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Section 1: AI Narrative */}
+                <div style={{ marginBottom:32 }}>
+                  <div style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.15em', color:'#64748b', borderBottom:'1px solid #e2e8f0', paddingBottom:8, marginBottom:16 }}>I. Case Narrative</div>
+                  {briefAI ? (
+                    <div style={{ fontSize:14, lineHeight:1.85, color:'#1e293b' }}>
+                      {briefAI.split('\n\n').map((para, i) => para.trim() && (
+                        <p key={i} style={{ margin:'0 0 16px', textIndent:'2em' }}>{para.trim()}</p>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize:13, color:'#94a3b8', fontStyle:'italic', padding:'16px 0' }}>
+                      Click "Generate AI Narrative" above to create a professional case summary from the module findings. The narrative will be written in formal prose suitable for regulatory review.
+                    </div>
+                  )}
+                </div>
+
+                {/* Section 2: Module Findings Summary */}
+                <div style={{ marginBottom:32 }}>
+                  <div style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.15em', color:'#64748b', borderBottom:'1px solid #e2e8f0', paddingBottom:8, marginBottom:16 }}>II. Module Findings Summary</div>
+                  {reportedKeys.length === 0 ? (
+                    <div style={{ fontSize:13, color:'#94a3b8', fontStyle:'italic' }}>No module findings recorded yet.</div>
+                  ) : (
+                    <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12, fontFamily:"'DM Sans', sans-serif" }}>
+                      <thead>
+                        <tr style={{ background:'#f1f5f9' }}>
+                          <th style={{ textAlign:'left', padding:'8px 12px', fontWeight:600, color:'#475569', width:'28%' }}>Module</th>
+                          <th style={{ textAlign:'left', padding:'8px 12px', fontWeight:600, color:'#475569', width:'12%' }}>Date</th>
+                          <th style={{ textAlign:'left', padding:'8px 12px', fontWeight:600, color:'#475569' }}>Verdict / Summary</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportedKeys.map((key, i) => {
+                          const f = systemFindings[key];
+                          const meta = MODULE_META[key] || { label: key, icon: '⬜' };
+                          return (
+                            <tr key={key} style={{ borderBottom:'1px solid #f1f5f9', background: i%2===0?'#fff':'#fafafa' }}>
+                              <td style={{ padding:'8px 12px', fontWeight:600, color:'#1e293b' }}>{meta.icon} {meta.label}</td>
+                              <td style={{ padding:'8px 12px', color:'#64748b', whiteSpace:'nowrap' }}>{fmtTsShort(f.reported_at)}</td>
+                              <td style={{ padding:'8px 12px', color:'#334155', lineHeight:1.5 }}>{f.verdict || f.summary || '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* Section 3: Risk Flags with LO Response */}
+                <div style={{ marginBottom:32 }}>
+                  <div style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.15em', color:'#64748b', borderBottom:'1px solid #e2e8f0', paddingBottom:8, marginBottom:16 }}>III. Risk Flags & LO Response</div>
+                  {riskFlags.length === 0 ? (
+                    <div style={{ fontSize:13, color:'#15803d', background:'#f0fdf4', border:'1px solid #86efac', borderRadius:6, padding:'12px 16px' }}>
+                      ✅ No risk flags have been identified across all modules run to date. This record presents a clean risk profile.
+                    </div>
+                  ) : (
+                    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+                      {riskFlags.map((f, i) => {
+                        const isHigh = ['CRITICAL','HIGH'].includes(f.severity);
+                        const srcMeta = MODULE_META[f.source_module] || MODULE_META[f.sourceModule] || {};
+                        return (
+                          <div key={i} style={{ border:`1px solid ${isHigh?'#fca5a5':'#fed7aa'}`, borderRadius:8, overflow:'hidden' }}>
+                            <div style={{ background: isHigh?'#fff1f2':'#fff7ed', padding:'10px 16px', display:'flex', alignItems:'flex-start', gap:12 }}>
+                              <span style={{ fontSize:16, flexShrink:0 }}>{isHigh?'⛔':'⚠️'}</span>
+                              <div style={{ flex:1 }}>
+                                <div style={{ fontSize:11, fontWeight:700, color: isHigh?'#991b1b':'#92400e', textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:3 }}>
+                                  {f.severity} · {srcMeta.label || f.source_module || f.sourceModule || '—'}
+                                </div>
+                                <div style={{ fontSize:13, color:'#1e293b', lineHeight:1.5 }}>{f.detail || f.message || f.flagCode || '—'}</div>
+                              </div>
+                            </div>
+                            {/* LO Response field */}
+                            <div style={{ background:'#fff', padding:'10px 16px', borderTop:`1px dashed ${isHigh?'#fca5a5':'#fed7aa'}` }}>
+                              <div style={{ fontSize:10, fontWeight:700, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:6 }}>LO Response / Resolution Note</div>
+                              <textarea
+                                value={flagResponses[i] || ''}
+                                onChange={e => setFlagResponses(prev => ({...prev, [i]: e.target.value}))}
+                                placeholder="Describe how this flag was addressed, disclosed to borrower, or resolved…"
+                                rows={2}
+                                style={{ width:'100%', fontSize:12, padding:'8px 10px', border:'1px solid #e2e8f0', borderRadius:6, resize:'vertical', fontFamily:'inherit', color:'#1e293b', boxSizing:'border-box', outline:'none' }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Section 4: LO Attestation */}
+                <div style={{ marginBottom:32 }}>
+                  <div style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.15em', color:'#64748b', borderBottom:'1px solid #e2e8f0', paddingBottom:8, marginBottom:16 }}>IV. LO Attestation & Certification</div>
+                  {record.lo_attestation?.certified ? (
+                    <div style={{ background:'#f0fdf4', border:'1px solid #86efac', borderRadius:8, padding:'16px 20px' }}>
+                      <div style={{ fontSize:13, fontWeight:700, color:'#15803d', marginBottom:8 }}>✅ Certified by {record.lo_attestation.certified_by}</div>
+                      <div style={{ fontSize:12, color:'#166534', fontStyle:'italic', marginBottom:6 }}>"{record.lo_attestation.certified_at && `Attested on ${fmtTs(record.lo_attestation.certified_at)}`}"</div>
+                      <div style={{ fontSize:12, color:'#334155' }}>"I certify this record reflects the information available at the time of this decision."</div>
+                    </div>
+                  ) : (
+                    <div style={{ background:'#fefce8', border:'1px solid #fde047', borderRadius:8, padding:'16px 20px' }}>
+                      <div style={{ fontSize:13, fontWeight:700, color:'#854d0e', marginBottom:4 }}>⏳ Attestation Pending</div>
+                      <div style={{ fontSize:12, color:'#713f12' }}>This record has not yet been attested by the loan officer. Attestation is required before the record is considered complete.</div>
+                      <div style={{ marginTop:20, display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:20 }}>
+                        {['Loan Officer Signature / Date', 'NMLS License Number', 'Company Name'].map(l => (
+                          <div key={l}><div style={{ fontSize:10, color:'#92400e', marginBottom:4 }}>{l}</div><div style={{ borderBottom:'1px solid #1e293b', height:24 }}/></div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Protective disclaimer */}
+                <div style={{ marginTop:40, padding:'16px 20px', background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:8, fontSize:10, color:'#64748b', lineHeight:1.7 }}>
+                  <div style={{ fontWeight:700, textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:6, color:'#475569' }}>Professional Use Disclaimer</div>
+                  <p style={{ margin:0 }}>
+                    PROFESSIONAL USE ONLY. This Decision Record is generated by LoanBeacons™ mortgage intelligence software exclusively for use by licensed mortgage professionals. All findings, analyses, calculations, and recommendations contained herein are based solely on information entered by the user and do not constitute legal, regulatory, compliance, or financial advice. LoanBeacons LLC makes no warranty, express or implied, regarding the accuracy, completeness, regulatory compliance, or fitness for purpose of any analysis or output. The loan officer named herein bears sole professional responsibility for all lending decisions, borrower disclosures, and regulatory compliance obligations under applicable federal and state law including but not limited to RESPA, TILA, ECOA, the Fair Housing Act, and state mortgage licensing statutes. This document is intended to support — not replace — the independent professional judgment of a licensed mortgage originator. LoanBeacons LLC shall not be liable for any lending decision, regulatory finding, or legal outcome arising from the use of this platform.
+                  </p>
+                  <div style={{ marginTop:10, display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:8 }}>
+                    <span>© {new Date().getFullYear()} LoanBeacons LLC · loanbeacons.com · U.S. Provisional Patent Application No. 63/739,290</span>
+                    <span>Generated {new Date().toLocaleString()}</span>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* ── Record footer ── */}
+          <div className="dr-footer">
+            <span>LoanBeacons Decision Record™ · Module 21</span>
+            <span>·</span>
+            <span>{fmtTs(record.header?.updatedAt)}</span>
+            <span>·</span>
+            <span className="dr-footer-score"
+              style={{ color: score >= 0.9 ? '#34d399' : score >= 0.5 ? '#f59e0b' : '#ef4444' }}>
+              {Math.round(score * 100)}% complete
+            </span>
+            <span>·</span>
+            <span style={{ color: '#334155', fontSize: 10 }}>For licensed mortgage professional use only · Not legal or regulatory advice · LoanBeacons LLC</span>
           </div>
-        )}
 
-        {/* ── Module Findings ── */}
-        <div id="modules">
-          <Section title="Module Findings" badge={`${moduleCount} / 19`} badgeColor={moduleCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}>
-            <ModuleFindingsGrid moduleVersionTags={moduleVersionTags} evidence={evidence} />
-          </Section>
         </div>
-
-        {/* ── Risk Flags ── */}
-        <div id="risk-flags">
-          <Section title="Risk Flags" badge={riskFlags.length}
-            badgeColor={criticalFlags > 0 ? 'bg-red-100 text-red-700' : riskFlags.length > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}>
-            <RiskFlagsPanel riskFlags={riskFlags} />
-          </Section>
-        </div>
-
-        {/* ── Evidence Log ── */}
-        <div id="evidence">
-          <Section title="Evidence Log" badge={(evidence || []).length} badgeColor="bg-blue-100 text-blue-700" defaultOpen={(evidence || []).length > 0}>
-            <EvidenceLog evidence={evidence} />
-          </Section>
-        </div>
-
-        {/* ── LO Attestation ── */}
-        <div id="attestation">
-          <Section title="LO Attestation & Sign-Off" defaultOpen={moduleCount >= 5 && !record.submittedAt}>
-            <LOAttestationFlow
-              record={record}
-              onSave={handleSave}
-              onLock={handleLock}
-              onSubmit={handleSubmit}
-              saving={saving}
-              locked={!!locked}
-              submitted={!!submittedAt}
-            />
-          </Section>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

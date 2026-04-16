@@ -3,6 +3,10 @@ import { db } from "../firebase/config";
 import { doc, getDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { useSearchParams } from "react-router-dom";
 import ModuleNav from '../components/ModuleNav';
+import { useDecisionRecord } from "../hooks/useDecisionRecord";
+import { useNextStepIntelligence } from "../hooks/useNextStepIntelligence";
+import DecisionRecordBanner from "../components/DecisionRecordBanner";
+import NextStepCard from "../components/NextStepCard";
 const MODULE_KEY = "CONVENTIONAL_REFI_INTEL";
 const STORAGE_KEY = (scenarioId) => `lb_conventional_refi_${scenarioId}`;
 
@@ -93,6 +97,52 @@ export default function ConventionalRefiIntel() {
 
   // Decision Record
   const [savedToRecord, setSavedToRecord] = useState(false);
+
+  // ── Decision Record ────────────────────────────────────────────
+  const { reportFindings } = useDecisionRecord(scenarioId !== "default" ? scenarioId : null);
+  const [savedRecordId, setSavedRecordId] = useState(null);
+  const [recordSaving, setRecordSaving] = useState(false);
+
+  const handleSaveToRecord = async () => {
+    if (!scenarioId || scenarioId === "default") return;
+    setRecordSaving(true);
+    try {
+      const rnResult = refiNowResult || checkRefiNowEligibility();
+      const rpResult = refiPossibleResult || checkRefiPossibleEligibility();
+      const writtenId = await reportFindings("CONVENTIONAL_REFI", {
+        borrowerName:        borrowerName || null,
+        propertyAddress:     propertyAddress || null,
+        ownershipResult:     ownershipResult || null,
+        refiNowEligible:     rnResult.eligible,
+        refiPossibleEligible: rpResult.eligible,
+        eligible:            rnResult.eligible || rpResult.eligible,
+        rateDrop:            rnResult.rateDrop || rpResult.rateDrop || null,
+        recommendation:      recommendation || null,
+        savedAt:             new Date().toISOString(),
+      });
+      if (writtenId) setSavedRecordId(writtenId);
+    } catch (e) { console.warn('[DR] ConventionalRefi reportFindings failed:', e); }
+    setRecordSaving(false);
+  };
+
+  // ── Next Step Intelligence™ ────────────────────────────────────
+  const rnEligible = refiNowResult?.eligible || false;
+  const rpEligible = refiPossibleResult?.eligible || false;
+  const rawPurpose = (scenario?.loanPurpose || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('cash') ? 'cash_out_refi'
+    : rawPurpose.includes('purchase') ? 'purchase'
+    : 'rate_term_refi';
+
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'CONVENTIONAL_REFI',
+      loanPurpose,
+      decisionRecordFindings:  { CONVENTIONAL_REFI: { eligible: rnEligible || rpEligible, ltv: parseFloat(refiNow.ltv) || 0 } },
+      scenarioData:            scenario || {},
+      completedModules:        [],
+      scenarioId:              scenarioId !== "default" ? scenarioId : null,
+      onWriteToDecisionRecord: null,
+    });
 
   // ── Load Scenario ──────────────────────────────────────────────
   useEffect(() => {
@@ -822,7 +872,7 @@ Keep it under 300 words. Do not include placeholder brackets — write it as a c
               </div>
             )}
 
-            {/* Underwriter Note */}
+            {/* LO Note */}
             <div className="bg-amber-50 border border-amber-200 rounded-3xl p-5">
               <p className="text-xs font-bold text-amber-800 uppercase tracking-widest mb-2">⚑ LO Note</p>
               <ul className="text-sm text-amber-900 space-y-1">
@@ -832,6 +882,30 @@ Keep it under 300 words. Do not include placeholder brackets — write it as a c
                 <li>• This letter does not constitute a loan commitment or approval</li>
               </ul>
             </div>
+
+            {/* Next Step Intelligence™ */}
+            {savedRecordId && primarySuggestion && (
+              <div className="mb-5">
+                <NextStepCard
+                  suggestion={primarySuggestion}
+                  secondarySuggestions={secondarySuggestions}
+                  onFollow={logFollow}
+                  onOverride={logOverride}
+                  loanPurpose={loanPurpose}
+                  scenarioId={scenarioId !== "default" ? scenarioId : undefined}
+                />
+              </div>
+            )}
+
+            {/* Decision Record Banner */}
+            {scenarioId && scenarioId !== "default" && (
+              <DecisionRecordBanner
+                recordId={savedRecordId}
+                moduleName="Conventional Refi Intelligence™"
+                onSave={handleSaveToRecord}
+                saving={recordSaving}
+              />
+            )}
           </div>
         )}
       </div>

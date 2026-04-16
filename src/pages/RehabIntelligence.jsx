@@ -813,7 +813,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Rehab Intelligence™" moduleNumber="17" scenarioId={scenarioId} />
+      <ScenarioHeader moduleTitle="Rehab Intelligence™" moduleNumber="18" scenarioId={scenarioId} />
       <div className="max-w-7xl mx-auto px-6 pt-4 pb-2"><DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="REHAB_INTEL" /></div>
 
       {/* Tab Bar */}

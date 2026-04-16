@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { db } from "../firebase/config";
-import { collection, doc, getDoc, serverTimestamp } from "firebase/firestore";
-import { useDecisionRecord } from "../hooks/useDecisionRecord";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import DecisionRecordBanner from "../components/DecisionRecordBanner";
+import { useDecisionRecord } from "../hooks/useDecisionRecord";
 import { useNextStepIntelligence } from "../hooks/useNextStepIntelligence";
 import NextStepCard from "../components/NextStepCard";
 
@@ -16,6 +16,7 @@ const DTI_BACK_EXTENDED = 0.44;
 const FHA_UPFRONT_MIP = 0.0175;
 const FHA_ANNUAL_MIP = 0.0055;
 
+// 2024 USDA Income Limits — national baseline (verify county-specific at rd.usda.gov)
 const USDA_BASE_LIMITS = { 1: 110650, 2: 110650, 3: 110650, 4: 110650, 5: 146050, 6: 146050, 7: 146050, 8: 146050 };
 
 const STEPS = [
@@ -132,14 +133,33 @@ const Card = ({ children, className = "" }) => (
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function USDAIntelligence() {
-  const [searchParams] = useSearchParams();
-  const scenarioId = searchParams.get("scenarioId");
-
-  const { reportFindings, savedRecordId, setSavedRecordId } = useDecisionRecord("USDA_INTELLIGENCE", scenarioId);
-
   const [step, setStep] = useState(1);
-  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [sp] = useSearchParams();
+  const scenarioIdParam = sp.get("scenarioId");
+  const { reportFindings } = useDecisionRecord(scenarioIdParam);
+  const [savedRecordId, setSavedRecordId] = useState(null);
+  const [recordSaving, setRecordSaving] = useState(false);
+
+  const handleSaveToRecord = async () => {
+    setRecordSaving(true);
+    try {
+      const writtenId = await reportFindings("USDA_INTELLIGENCE", {
+        address, ruralStatus, verdict, gus,
+        adjustedHHIncome, effectiveLimit, incomeRatio,
+        frontDTI, backDTI, dtiStatus,
+        gfAmt, totalLoan, annualFeeMonthly, piti,
+        compFactors: Object.keys(compFactors).filter(k => compFactors[k]),
+        hardFlags: hardFlags.map(f => f.label),
+        warnFlags: warnFlags.map(f => f.label),
+        timestamp: new Date().toISOString(),
+      });
+      if (writtenId) setSavedRecordId(writtenId);
+    } catch (e) { console.error("Decision Record save failed:", e); }
+    finally { setRecordSaving(false); }
+  };
 
   // Step 1
   const [address, setAddress] = useState("");
@@ -185,37 +205,11 @@ export default function USDAIntelligence() {
   // Step 9
   const [loNotes, setLoNotes] = useState("");
 
-  // ─── Scenario Pre-load ────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!scenarioId) return;
-    const load = async () => {
-      try {
-        const snap = await getDoc(doc(db, "scenarios", scenarioId));
-        if (!snap.exists()) return;
-        const d = snap.data();
-        if (d.propertyAddress) setAddress(d.propertyAddress);
-        if (d.purchasePrice) setPurchasePrice(String(d.purchasePrice));
-        if (d.loanAmount) setBaseLoan(String(d.loanAmount));
-        if (d.interestRate) setInterestRate(String(d.interestRate));
-        if (d.grossMonthlyIncome) setBorrowerInc(String(d.grossMonthlyIncome));
-        if (d.coBorrowerIncome) setCoBorrowerInc(String(d.coBorrowerIncome));
-        if (d.monthlyDebts) setOtherDebts(String(d.monthlyDebts));
-        if (d.creditScore) setCreditScore(String(d.creditScore));
-        if (d.annualTaxes) setTaxesAnnual(String(d.annualTaxes));
-        if (d.annualInsurance) setInsuranceAnnual(String(d.annualInsurance));
-        if (d.hoaMonthly) setHoaMonthly(String(d.hoaMonthly));
-        if (d.householdSize) setHhSize(Number(d.householdSize));
-      } catch (err) {
-        console.error("Scenario load error:", err);
-      }
-    };
-    load();
-  }, [scenarioId]);
-
   // ─── Derived ──────────────────────────────────────────────────────────────
   const grossMonthly = n(borrowerInc) + n(coBorrowerInc);
   const grossAnnual = grossMonthly * 12;
 
+  // USDA Household Income deductions
   const depDeduction = numDependents * 480;
   const elderlyDed = elderlyMember ? 400 : 0;
   const childcareDed = n(childcareCosts);
@@ -226,11 +220,13 @@ export default function USDAIntelligence() {
   const totalDeductions = depDeduction + elderlyDed + childcareDed + medicalDed + studentExclusion;
   const adjustedHHIncome = Math.max(0, grossAnnual + nonBorrowerAnnual + assetImputed - totalDeductions);
 
+  // Income limit
   const effectiveLimit = useDefaultLimit
     ? (USDA_BASE_LIMITS[Math.min(hhSize, 8)] || 110650)
     : n(countyLimit);
   const incomeRatio = effectiveLimit > 0 ? adjustedHHIncome / effectiveLimit : 0;
 
+  // Loan math
   const baseLoanNum = n(baseLoan);
   const gfAmt = baseLoanNum * GUARANTEE_FEE_PCT / 100;
   const totalLoan = financeGF ? baseLoanNum + gfAmt : baseLoanNum;
@@ -242,15 +238,16 @@ export default function USDAIntelligence() {
   const hoaMo = n(hoaMonthly);
   const piti = pi + taxMo + insMo + hoaMo + annualFeeMonthly;
 
+  // DTI
   const frontDTI = grossMonthly > 0 ? piti / grossMonthly : 0;
   const backDTI = grossMonthly > 0 ? (piti + n(otherDebts)) / grossMonthly : 0;
   const cfCount = Object.values(compFactors).filter(Boolean).length;
   const hasCompFactors = cfCount >= 1;
-  const dtiBackLimit = hasCompFactors ? DTI_BACK_EXTENDED : DTI_BACK_LIMIT;
   const dtiStatus = frontDTI <= DTI_FRONT_LIMIT && backDTI <= DTI_BACK_LIMIT ? "PASS"
     : frontDTI <= DTI_FRONT_LIMIT && backDTI <= DTI_BACK_EXTENDED && hasCompFactors ? "BORDERLINE"
     : "FAIL";
 
+  // GUS simulation
   const cs = parseInt(creditScore) || 0;
   const gus = (() => {
     if (ruralStatus !== "eligible") return { verdict: "REFER", reason: "Property eligibility not confirmed" };
@@ -261,9 +258,11 @@ export default function USDAIntelligence() {
     return { verdict: "REFER WITH CAUTION", reason: "Multiple risk factors present — manual underwrite required" };
   })();
 
+  // Property issues
   const hardFlags = PROPERTY_FLAGS.filter(f => propFlags[f.id] && f.severity === "fail");
   const warnFlags = PROPERTY_FLAGS.filter(f => propFlags[f.id] && f.severity === "warn");
 
+  // Overall verdict
   const verdict = (() => {
     if (ruralStatus === "ineligible" || hardFlags.length > 0) return "NOT_ELIGIBLE";
     if (incomeRatio > 1.15) return "NOT_ELIGIBLE";
@@ -281,10 +280,11 @@ export default function USDAIntelligence() {
       decisionRecordFindings:  { USDA_INTEL: { ruralEligible: ruralStatus === 'eligible', eligible: verdict === 'ELIGIBLE', propertyPass: ruralStatus === 'eligible', incomePass: incomeRatio <= 1.0 } },
       scenarioData:            {},
       completedModules:        [],
-      scenarioId,
+      scenarioId:              scenarioIdParam,
       onWriteToDecisionRecord: null,
     });
 
+  // Comparison
   const pp = n(purchasePrice);
   const usdaMonthly = piti;
   const usdaCash = financeGF ? 0 : gfAmt;
@@ -308,68 +308,25 @@ export default function USDAIntelligence() {
   const convCash = convDown;
   const convTotal = convMonthly * 360;
 
-  // ─── Save Decision Record ─────────────────────────────────────────────────
-  const handleSave = async () => {
+  const saveDecisionRecord = async () => {
     setSaving(true);
     try {
-      const riskFlags = [];
-      if (hardFlags.length > 0) riskFlags.push(...hardFlags.map(f => ({ field: f.id, message: f.label, severity: "HIGH" })));
-      if (warnFlags.length > 0) riskFlags.push(...warnFlags.map(f => ({ field: f.id, message: f.label, severity: "MEDIUM" })));
-      if (incomeRatio > 1.0) riskFlags.push({ field: "incomeRatio", message: `Household income at ${(incomeRatio * 100).toFixed(1)}% of USDA limit`, severity: incomeRatio > 1.15 ? "HIGH" : "MEDIUM" });
-      if (dtiStatus === "FAIL") riskFlags.push({ field: "dti", message: `Back-end DTI ${fmtPct(backDTI)} exceeds USDA limit`, severity: "HIGH" });
-      if (dtiStatus === "BORDERLINE") riskFlags.push({ field: "dti", message: `Back-end DTI ${fmtPct(backDTI)} — borderline, requires comp factors`, severity: "MEDIUM" });
-      if (donutHole) riskFlags.push({ field: "ruralEligibility", message: "Potential ineligible donut hole — parcel-level verification required", severity: "MEDIUM" });
-      if (ruralStatus === "unknown") riskFlags.push({ field: "ruralEligibility", message: "Rural eligibility not yet verified", severity: "MEDIUM" });
-      if (manualUW) riskFlags.push({ field: "underwrite", message: "Manual underwrite pathway — compile compensating factor file", severity: "LOW" });
-
-      const writtenId = await reportFindings({
-        verdict,
-        summary: `USDA Intelligence — ${verdict}. GUS Simulation: ${gus.verdict}. DTI: Front ${fmtPct(frontDTI)} / Back ${fmtPct(backDTI)} (${dtiStatus}). Income ratio: ${(incomeRatio * 100).toFixed(1)}% of limit.`,
-        riskFlags,
-        findings: {
-          address,
-          ruralStatus,
-          verdict,
-          gusVerdict: gus.verdict,
-          gusReason: gus.reason,
-          adjustedHHIncome,
-          effectiveLimit,
-          incomeRatio,
-          totalDeductions,
-          frontDTI,
-          backDTI,
-          dtiStatus,
-          creditScore: cs,
-          gfAmt,
-          totalLoan,
-          annualFeeMonthly,
-          piti,
-          financeGF,
-          compFactors: Object.keys(compFactors).filter(k => compFactors[k]),
-          compFactorCount: cfCount,
-          manualUW,
-          hardFlags: hardFlags.map(f => f.label),
-          warnFlags: warnFlags.map(f => f.label),
-          donutHole,
-          comparison: {
-            usda: { monthly: usdaMonthly, cash: usdaCash, total: usdaTotal },
-            fha: { monthly: fhaMonthly, cash: fhaCash, total: fhaTotal },
-            conv: { monthly: convMonthly, cash: convCash, total: convTotal },
-          },
-          loNotes,
-        },
-        completeness: {
-          propertyAddress: !!address,
-          ruralStatusSet: !!ruralStatus,
-          incomeEntered: grossMonthly > 0,
-          loanSetup: baseLoanNum > 0 && rate > 0,
-          verdictReached: !!verdict,
-        },
+      await addDoc(collection(db, "decisionRecords"), {
+        module: "USDA Intelligence™",
+        timestamp: serverTimestamp(),
+        address, ruralStatus, verdict, gus,
+        adjustedHHIncome, effectiveLimit, incomeRatio,
+        frontDTI, backDTI, dtiStatus,
+        gfAmt, totalLoan, annualFeeMonthly, piti,
+        compFactors: Object.keys(compFactors).filter(k => compFactors[k]),
+        hardFlags: hardFlags.map(f => f.label),
+        warnFlags: warnFlags.map(f => f.label),
+        comparison: { usda: { monthly: usdaMonthly, cash: usdaCash, total: usdaTotal }, fha: { monthly: fhaMonthly, cash: fhaCash, total: fhaTotal }, conv: { monthly: convMonthly, cash: convCash, total: convTotal } },
+        loNotes,
       });
-      if (writtenId) setSavedRecordId(writtenId);
       setSaved(true);
     } catch (err) {
-      console.error("Decision Record save error:", err);
+      console.error(err);
       alert("Save failed — check Firestore connection.");
     } finally {
       setSaving(false);
@@ -395,9 +352,6 @@ export default function USDAIntelligence() {
           )}
         </div>
       </div>
-
-      {/* Decision Record Banner */}
-      <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="USDA_INTELLIGENCE" />
 
       {/* Step tabs */}
       <div className="bg-slate-800/60 border-b border-slate-700 print:hidden">
@@ -524,6 +478,7 @@ export default function USDAIntelligence() {
               </div>
             </Card>
 
+            {/* Income Summary */}
             <Card className="border-green-700/30">
               <h3 className="font-bold text-green-400 mb-4">Household Income Transformer™ — Summary</h3>
               <div className="space-y-2 text-sm">
@@ -937,7 +892,7 @@ export default function USDAIntelligence() {
           <div className="space-y-6">
             <div>
               <h2 className="text-xl font-bold">Step 9 — Results & USDA Decision Record™</h2>
-              <p className="text-sm text-slate-400 mt-1">Full eligibility summary, red flags, and Decision Record save.</p>
+              <p className="text-sm text-slate-400 mt-1">Full eligibility summary, red flags, and Firestore Decision Record save.</p>
             </div>
 
             {/* Verdict banner */}
@@ -956,6 +911,7 @@ export default function USDAIntelligence() {
             <Card className="space-y-6">
               <h3 className="font-bold text-slate-100">Decision Record™ — Full Summary</h3>
 
+              {/* Property */}
               <div>
                 <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Property</div>
                 <div className="flex flex-wrap gap-2">
@@ -967,6 +923,7 @@ export default function USDAIntelligence() {
                 </div>
               </div>
 
+              {/* Income */}
               <div>
                 <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Household Income</div>
                 <div className="grid grid-cols-4 gap-3 text-sm">
@@ -979,6 +936,7 @@ export default function USDAIntelligence() {
                 </div>
               </div>
 
+              {/* Loan */}
               <div>
                 <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Loan Structure</div>
                 <div className="grid grid-cols-4 gap-3 text-sm">
@@ -988,6 +946,7 @@ export default function USDAIntelligence() {
                 </div>
               </div>
 
+              {/* DTI */}
               <div>
                 <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">DTI & Qualifying</div>
                 <div className="grid grid-cols-4 gap-3 text-sm">
@@ -1002,6 +961,7 @@ export default function USDAIntelligence() {
                 </div>
               </div>
 
+              {/* Comparison */}
               {pp > 0 && rate > 0 && (
                 <div>
                   <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Program Comparison</div>
@@ -1044,19 +1004,26 @@ export default function USDAIntelligence() {
                   onFollow={logFollow}
                   onOverride={logOverride}
                   loanPurpose="purchase"
-                  scenarioId={scenarioId}
+                  scenarioId={scenarioIdParam}
                 />
               </div>
             )}
 
+            {/* Decision Record Banner */}
+            {scenarioIdParam && (
+              <DecisionRecordBanner
+                recordId={savedRecordId}
+                moduleName="USDA Intelligence™"
+                onSave={handleSaveToRecord}
+                saving={recordSaving}
+              />
+            )}
+
             {/* Actions */}
             <div className="flex gap-4 print:hidden">
-              <button
-                onClick={handleSave}
-                disabled={saving || saved}
-                className="flex-1 py-3 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white font-bold rounded-xl text-sm transition-all"
-              >
-                {saving ? "Saving..." : saved ? "✓ Saved to Decision Record™" : "💾 Save Decision Record™"}
+              <button onClick={saveDecisionRecord} disabled={saving || saved}
+                className="flex-1 py-3 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white font-bold rounded-xl text-sm transition-all">
+                {saving ? "Saving..." : saved ? "✓ Saved to Decision Record" : "💾 Save Decision Record™"}
               </button>
               <button onClick={() => window.print()}
                 className="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold rounded-xl text-sm">

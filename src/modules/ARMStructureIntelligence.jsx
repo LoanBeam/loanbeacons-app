@@ -1,8 +1,16 @@
+// src/modules/ARMStructureIntelligence.jsx
+// LoanBeacons™ — Module 17 | Stage 2: Lender Fit
+// ARM Structure Intelligence™ — Caps · Payment Scenarios · Qualifying · Disclosure
+
 import { useState, useEffect } from "react";
 import { db } from "../firebase/config";
-import { doc, getDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { useSearchParams } from "react-router-dom";
+import { doc, getDoc, collection, getDocs } from "firebase/firestore";
+import { useSearchParams, useNavigate } from "react-router-dom";
+import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import ScenarioHeader from '../components/ScenarioHeader';
 import ModuleNav from '../components/ModuleNav';
+
 // ─── Math helpers ────────────────────────────────────────────────────────────
 function calcPI(bal, annRate, termMo) {
   if (!bal || !annRate || !termMo) return 0;
@@ -44,18 +52,14 @@ const FIXED_PERIODS = [
 
 // Qualifying rate rules by program
 function getQualifyingRate(startRate, fullyIndexed, fixedYears, program) {
-  // Returns { rate, rule, source }
   const fi = fullyIndexed;
   switch(program) {
     case "conventional":
-      // Fannie Mae B3-5.1-01: ≥7yr fixed → qualify at note rate; <7yr → higher of note or fully-indexed
       if (fixedYears >= 7) return { rate: startRate, rule: "Note rate (initial fixed period ≥ 7 years)", source: "Fannie Mae SEL 2023-08 / B3-5.1-01" };
       return { rate: Math.max(startRate, fi), rule: "Higher of note rate or fully-indexed rate (initial fixed < 7 years)", source: "Fannie Mae B3-5.1-01" };
     case "fha":
-      // FHA: qualify at note rate (if fixed period ≥ 1yr), fully-indexed rate for monthly ARM
       return { rate: Math.max(startRate, fi), rule: "Higher of note rate or fully-indexed rate", source: "HUD Handbook 4000.1 §II.A.4.c" };
     case "va":
-      // VA: qualify at higher of note rate or fully-indexed rate (rounded up to next 0.125%)
       return { rate: Math.max(startRate, fi), rule: "Higher of note rate or fully-indexed rate", source: "VA Lender's Handbook Ch. 4" };
     case "usda":
       return { rate: Math.max(startRate, fi), rule: "Higher of note rate or fully-indexed rate", source: "USDA HB-1-3555 Ch. 11" };
@@ -64,11 +68,55 @@ function getQualifyingRate(startRate, fullyIndexed, fixedYears, program) {
   }
 }
 
-// ─── Components ──────────────────────────────────────────────────────────────
+// ─── Scenario engine ─────────────────────────────────────────────────────────
+function buildScenario(startRate, initCap, periodicCap, lifetimeCap, margin, indexPath, fixedYrs, loanBal, termMo, fixedPeriodMo) {
+  const ceiling = startRate + lifetimeCap;
+  const floor = margin;
+  const results = [];
+  results.push({ year: 0, label: "Now (Fixed)", rate: startRate, payment: calcPI(loanBal, startRate, termMo), adjNum: 0, isFixed: true });
+  let currentRate = startRate;
+  let adjNum = 0;
+  let remainingMo = termMo - fixedPeriodMo;
+  for (let yr = 1; yr <= Math.min(10, Math.floor(remainingMo / 12)); yr++) {
+    adjNum++;
+    const targetIndex = indexPath[yr - 1] ?? indexPath[indexPath.length - 1];
+    const targetFI = targetIndex + margin;
+    let newRate;
+    if (adjNum === 1) {
+      const maxUp = currentRate + initCap;
+      const maxDown = currentRate - initCap;
+      newRate = Math.min(maxUp, Math.max(maxDown, targetFI));
+    } else {
+      const maxUp = currentRate + periodicCap;
+      const maxDown = currentRate - periodicCap;
+      newRate = Math.min(maxUp, Math.max(maxDown, targetFI));
+    }
+    newRate = Math.min(ceiling, Math.max(floor, newRate));
+    newRate = roundToEighth(newRate);
+    const moRemaining = Math.max(1, remainingMo - ((adjNum - 1) * 12));
+    const payment = calcPI(loanBal, newRate, moRemaining);
+    const basePayment = calcPI(loanBal, startRate, termMo);
+    const delta = payment - basePayment;
+    const deltaPct = basePayment > 0 ? (delta / basePayment) * 100 : 0;
+    results.push({ year: yr, label: `Year ${yr + fixedYrs}`, rate: newRate, payment, delta, deltaPct, adjNum });
+    currentRate = newRate;
+  }
+  return results;
+}
+
+// ─── Risk color helper ────────────────────────────────────────────────────────
+function riskColor(pctIncrease) {
+  if (pctIncrease <= 0) return { bg:"bg-green-900/20", border:"border-green-700/40", text:"text-green-300", label:"Stable" };
+  if (pctIncrease < 10) return { bg:"bg-yellow-900/20", border:"border-yellow-700/40", text:"text-yellow-300", label:"Low Risk" };
+  if (pctIncrease < 20) return { bg:"bg-orange-900/20", border:"border-orange-700/40", text:"text-orange-300", label:"Moderate Risk" };
+  if (pctIncrease < 35) return { bg:"bg-red-900/20", border:"border-red-700/40", text:"text-red-300", label:"High Risk" };
+  return { bg:"bg-red-950/40", border:"border-red-600", text:"text-red-300", label:"⚠️ Severe Risk" };
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
 function ProgressBar({cur}) {
   return (
     <div className="mb-8">
-      <ModuleNav moduleNumber={17} />
       <div className="flex items-start justify-between mb-2">
         {STEPS.map((s,i)=>(
           <div key={i} className="flex flex-col items-center" style={{width:`${100/STEPS.length}%`}}>
@@ -160,70 +208,20 @@ function FInput({label,tip,value,onChange,placeholder,prefix,suffix,className=""
   );
 }
 
-// ─── Risk color helper ────────────────────────────────────────────────────────
-function riskColor(pctIncrease) {
-  if (pctIncrease <= 0) return { bg:"bg-green-900/20", border:"border-green-700/40", text:"text-green-300", label:"Stable" };
-  if (pctIncrease < 10) return { bg:"bg-yellow-900/20", border:"border-yellow-700/40", text:"text-yellow-300", label:"Low Risk" };
-  if (pctIncrease < 20) return { bg:"bg-orange-900/20", border:"border-orange-700/40", text:"text-orange-300", label:"Moderate Risk" };
-  if (pctIncrease < 35) return { bg:"bg-red-900/20", border:"border-red-700/40", text:"text-red-300", label:"High Risk" };
-  return { bg:"bg-red-950/40", border:"border-red-600", text:"text-red-300", label:"⚠️ Severe Risk" };
-}
-
-// ─── Scenario engine ─────────────────────────────────────────────────────────
-// Returns array of { year, adjNum, rate, payment, delta, deltaPct }
-function buildScenario(startRate, initCap, periodicCap, lifetimeCap, margin, indexPath, fixedYrs, loanBal, termMo, fixedPeriodMo) {
-  const ceiling = startRate + lifetimeCap;
-  const floor = margin; // most ARMs have floor at margin
-  const results = [];
-
-  // Fixed period payments (no change)
-  results.push({ year: 0, label: "Now (Fixed)", rate: startRate, payment: calcPI(loanBal, startRate, termMo), adjNum: 0, isFixed: true });
-
-  let currentRate = startRate;
-  let adjNum = 0;
-  let remainingMo = termMo - fixedPeriodMo;
-
-  for (let yr = 1; yr <= Math.min(10, Math.floor(remainingMo / 12)); yr++) {
-    adjNum++;
-    const targetIndex = indexPath[yr - 1] ?? indexPath[indexPath.length - 1];
-    const targetFI = targetIndex + margin;
-    let newRate;
-
-    if (adjNum === 1) {
-      // First adjustment — bounded by initialCap
-      const maxUp = currentRate + initCap;
-      const maxDown = currentRate - initCap;
-      newRate = Math.min(maxUp, Math.max(maxDown, targetFI));
-    } else {
-      // Subsequent adjustments — bounded by periodicCap
-      const maxUp = currentRate + periodicCap;
-      const maxDown = currentRate - periodicCap;
-      newRate = Math.min(maxUp, Math.max(maxDown, targetFI));
-    }
-
-    // Apply lifetime ceiling and floor
-    newRate = Math.min(ceiling, Math.max(floor, newRate));
-    newRate = roundToEighth(newRate);
-
-    const moRemaining = Math.max(1, remainingMo - ((adjNum - 1) * 12));
-    const payment = calcPI(loanBal, newRate, moRemaining);
-    const basePayment = calcPI(loanBal, startRate, termMo);
-    const delta = payment - basePayment;
-    const deltaPct = basePayment > 0 ? (delta / basePayment) * 100 : 0;
-
-    results.push({ year: yr, label: `Year ${yr + fixedYrs}`, rate: newRate, payment, delta, deltaPct, adjNum });
-    currentRate = newRate;
-  }
-  return results;
-}
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ARMStructureIntelligence() {
+  const navigate = useNavigate();
   const [sp] = useSearchParams();
   const scenarioId = sp.get("scenarioId");
+
+  // ── Scenario picker state (no scenarioId) ──────────────────────────────────
+  const [scenarios, setScenarios] = useState([]);
+  const [scenarioSearch, setScenarioSearch] = useState('');
+  const [showAll, setShowAll] = useState(false);
+  const [loadingList, setLoadingList] = useState(false);
+
   const [step, setStep] = useState(0);
   const [scenario, setScenario] = useState(null);
-  const [saved, setSaved] = useState(false);
   const [savedRecordId, setSavedRecordId] = useState(null);
 
   // Step 1 — ARM Profile
@@ -245,48 +243,87 @@ export default function ARMStructureIntelligence() {
   // Step 6 — ARM vs Fixed
   const [vsFixed, setVsFixed] = useState({ fixedRate: "" });
 
-  // Firestore load
+  // Decision Record
+  const { reportFindings } = useDecisionRecord(scenarioId);
+
+  // ── localStorage autosave ─────────────────────────────────────────────────
+  const lsKey = scenarioId ? `lb_arm_${scenarioId}` : null;
+
+  useEffect(() => {
+    if (!lsKey) return;
+    localStorage.setItem(lsKey, JSON.stringify({ profile, caps, position, qualify, vsFixed, step }));
+  }, [lsKey, profile, caps, position, qualify, vsFixed, step]);
+
+  // ── Scenario picker loader ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!scenarioId) {
+      setLoadingList(true);
+      getDocs(collection(db, 'scenarios'))
+        .then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+        .catch(console.error)
+        .finally(() => setLoadingList(false));
+    }
+  }, [scenarioId]);
+
+  // ── Firestore load + localStorage restore ─────────────────────────────────
   useEffect(() => {
     if (!scenarioId) return;
+    // Restore localStorage first
+    if (lsKey) {
+      try {
+        const saved = JSON.parse(localStorage.getItem(lsKey) || 'null');
+        if (saved) {
+          if (saved.profile)   setProfile(p => ({ ...p, ...saved.profile }));
+          if (saved.caps)      setCaps(saved.caps);
+          if (saved.position)  setPosition(saved.position);
+          if (saved.qualify)   setQualify(saved.qualify);
+          if (saved.vsFixed)   setVsFixed(saved.vsFixed);
+          if (saved.step !== undefined) setStep(saved.step);
+        }
+      } catch (_) {}
+    }
+    // Then hydrate from Firestore
     (async () => {
       try {
         const snap = await getDoc(doc(db, "scenarios", scenarioId));
         if (snap.exists()) {
           const d = snap.data();
           setScenario(d);
-          if (d.loanAmount) setProfile(p => ({ ...p, loanAmount: String(d.loanAmount) }));
-          if (d.interestRate) setProfile(p => ({ ...p, startRate: String(d.interestRate) }));
-          if (d.loanTerm) setProfile(p => ({ ...p, termYears: String(d.loanTerm) }));
+          setProfile(p => ({
+            ...p,
+            loanAmount:  p.loanAmount  || String(d.loanAmount  || ""),
+            startRate:   p.startRate   || String(d.interestRate || ""),
+            termYears:   p.termYears   || String(d.loanTerm    || "30"),
+          }));
         }
       } catch (e) { console.error(e); }
     })();
   }, [scenarioId]);
 
-  // ─── DERIVED CALCULATIONS ───────────────────────────────────────────────────
-  const loanBal    = parseFloat(position.remainingBalance) || parseFloat(profile.loanAmount) || 0;
-  const startRate  = parseFloat(profile.startRate) || 0;
-  const indexVal   = parseFloat(profile.currentIndex) || 0;
-  const margin     = parseFloat(profile.margin) || 0;
-  const termMo     = (parseInt(profile.termYears) || 30) * 12;
-  const fixedYrs   = parseInt(profile.fixedPeriod) || 5;
+  // ─── DERIVED CALCULATIONS ─────────────────────────────────────────────────
+  const loanBal     = parseFloat(position.remainingBalance) || parseFloat(profile.loanAmount) || 0;
+  const startRate   = parseFloat(profile.startRate) || 0;
+  const indexVal    = parseFloat(profile.currentIndex) || 0;
+  const margin      = parseFloat(profile.margin) || 0;
+  const termMo      = (parseInt(profile.termYears) || 30) * 12;
+  const fixedYrs    = parseInt(profile.fixedPeriod) || 5;
   const fixedPeriodMo = fixedYrs * 12;
 
-  const initCap    = parseFloat(caps.initial) || 0;
-  const periodicCap = parseFloat(caps.periodic) || 0;
-  const lifetimeCap = parseFloat(caps.lifetime) || 0;
+  const initCap      = parseFloat(caps.initial) || 0;
+  const periodicCap  = parseFloat(caps.periodic) || 0;
+  const lifetimeCap  = parseFloat(caps.lifetime) || 0;
 
-  const fullyIndexed  = roundToEighth(indexVal + margin);
-  const rateCeiling   = startRate + lifetimeCap;
-  const rateFloor     = margin; // typical ARM floor = margin
+  const fullyIndexed   = roundToEighth(indexVal + margin);
+  const rateCeiling    = startRate + lifetimeCap;
+  const rateFloor      = margin;
   const currentPayment = calcPI(loanBal, startRate, termMo);
-  const fiPayment     = calcPI(loanBal, fullyIndexed, termMo);
+  const fiPayment      = calcPI(loanBal, fullyIndexed, termMo);
   const ceilingPayment = calcPI(loanBal, rateCeiling, termMo);
 
   const paymentShock = fullyIndexed > startRate;
   const shockAmount  = fiPayment - currentPayment;
   const shockPct     = currentPayment > 0 ? (shockAmount / currentPayment) * 100 : 0;
 
-  // Days / months until first adjustment
   const firstAdjDate = position.firstAdjDate
     ? new Date(position.firstAdjDate + "T00:00:00")
     : (() => {
@@ -298,29 +335,19 @@ export default function ARMStructureIntelligence() {
   const moUntilAdj = firstAdjDate
     ? Math.max(0, Math.round((firstAdjDate - new Date()) / (1000 * 60 * 60 * 24 * 30.44)))
     : null;
-  const pastFirstAdj = moUntilAdj !== null && moUntilAdj === 0;
 
   // Build three scenarios
-  // Flat: index stays at current value
-  const flatIndex  = Array(10).fill(indexVal);
-  // Gradual: index rises 0.25%/yr
+  const flatIndex    = Array(10).fill(indexVal);
   const gradualIndex = Array(10).fill(0).map((_,i) => indexVal + (i+1)*0.25);
-  // Worst case: each adj hits cap to the upside
-  const worstIndex = Array(10).fill(999); // always triggers max cap move
+  const worstIndex   = Array(10).fill(999);
 
-  const scenFlat    = buildScenario(startRate, initCap, periodicCap, lifetimeCap, margin, flatIndex,   fixedYrs, loanBal, termMo, fixedPeriodMo);
+  const scenFlat    = buildScenario(startRate, initCap, periodicCap, lifetimeCap, margin, flatIndex,    fixedYrs, loanBal, termMo, fixedPeriodMo);
   const scenGradual = buildScenario(startRate, initCap, periodicCap, lifetimeCap, margin, gradualIndex, fixedYrs, loanBal, termMo, fixedPeriodMo);
   const scenWorst   = buildScenario(startRate, initCap, periodicCap, lifetimeCap, margin, worstIndex,   fixedYrs, loanBal, termMo, fixedPeriodMo);
 
   // Qualifying
-  const fixedYrsNum = fixedYrs;
-  const qualInfo = getQualifyingRate(startRate, fullyIndexed, fixedYrsNum, qualify.program);
-  const qualPayment  = calcPI(loanBal, qualInfo.rate, termMo);
-  const monthlyIncome = parseFloat(profile.loanAmount) > 0
-    ? (parseFloat(qualify.monthlyDebts) > 0
-        ? ((qualPayment / ((parseFloat(scenario?.monthlyIncome)||5000) - parseFloat(qualify.monthlyDebts||0))) * 100)
-        : 0)
-    : 0;
+  const qualInfo    = getQualifyingRate(startRate, fullyIndexed, fixedYrs, qualify.program);
+  const qualPayment = calcPI(loanBal, qualInfo.rate, termMo);
   const borrowerIncome = parseFloat(position.borrowerIncome) || 0;
   const monthlyDebts   = parseFloat(qualify.monthlyDebts) || 0;
   const qualDTI        = borrowerIncome > 0 ? ((qualPayment + monthlyDebts) / borrowerIncome) * 100 : null;
@@ -329,83 +356,142 @@ export default function ARMStructureIntelligence() {
   // ARM vs Fixed
   const fixedRateComp = parseFloat(vsFixed.fixedRate) || 0;
   const fixedPayment  = calcPI(loanBal, fixedRateComp, 360);
-  // Break-even: month where cumulative ARM savings < cumulative ARM vs Fixed savings
-  // Simplified: if ARM current payment < fixed payment, find when they equalize under gradual scenario
-  let breakEvenMonth = null;
-  if (fixedRateComp > 0 && loanBal > 0) {
-    let cumARMCost = 0, cumFixedCost = 0;
-    const fixedMoPmt = calcPI(loanBal, fixedRateComp, 360);
-    for (let mo = 1; mo <= 360; mo++) {
-      const yr = Math.ceil(mo / 12);
-      const gradRow = scenGradual.find(r => r.year === Math.min(yr - fixedYrs, 10) && !r.isFixed) || scenGradual[scenGradual.length-1];
-      const armRate = mo <= fixedPeriodMo ? startRate : (gradRow?.rate ?? startRate);
-      cumARMCost   += calcPI(loanBal, armRate, termMo - mo + 1) / 100; // just tracking relative
-      cumFixedCost += fixedMoPmt / 100;
-      if (cumARMCost > cumFixedCost && breakEvenMonth === null) breakEvenMonth = mo;
-    }
-  }
+  const fixedPeriodSavings = fixedRateComp > 0 ? (fixedPayment - currentPayment) * fixedPeriodMo : 0;
 
-  // Savings in fixed period vs fixed rate loan
-  const fixedPeriodSavings = fixedRateComp > 0
-    ? (fixedPayment - currentPayment) * fixedPeriodMo
-    : 0;
-
-  // Caps set check
-  const capsSet = initCap > 0 && periodicCap > 0 && lifetimeCap > 0;
+  const capsSet      = initCap > 0 && periodicCap > 0 && lifetimeCap > 0;
   const profileReady = loanBal > 0 && startRate > 0 && indexVal > 0 && margin > 0;
 
+  // ─── Decision Record save ─────────────────────────────────────────────────
   const save = async () => {
-    if (!scenarioId) return;
+    if (!scenarioId || scenarioId === 'standalone') return;
     try {
-      await addDoc(collection(db, "scenarios", scenarioId, "decision_log"), {
-        module: "ARM Structure Intelligence", timestamp: serverTimestamp(),
-        loanAmount: loanBal, startRate, indexType: profile.indexType,
-        currentIndex: indexVal, margin, fullyIndexed,
-        rateCeiling, rateFloor, initCap, periodicCap, lifetimeCap,
-        fixedYrs, paymentShock, shockAmount: parseFloat(shockAmount.toFixed(2)),
-        shockPct: parseFloat(shockPct.toFixed(1)),
-        qualProgram: qualify.program, qualRate: qualInfo.rate, qualDTI,
-        worstDTI, fixedRateComp,
-        source: "Fannie Mae B3-5.1-01 | HUD 4000.1 | VA Lender's Handbook",
-      });
-      setSaved(true);
+      const flags = [];
+      if (paymentShock) flags.push({ flagCode: 'PAYMENT_SHOCK', sourceModule: 'ARM_STRUCTURE', severity: 'HIGH', detail: `+${fp(shockPct,1)} payment increase at fully-indexed rate` });
+      if (moUntilAdj !== null && moUntilAdj <= 12 && moUntilAdj > 0) flags.push({ flagCode: 'ADJUSTMENT_IMMINENT', sourceModule: 'ARM_STRUCTURE', severity: 'MEDIUM', detail: `First adjustment in ${moUntilAdj} months` });
+      if (qualDTI !== null && qualDTI > 50) flags.push({ flagCode: 'QUAL_DTI_HIGH', sourceModule: 'ARM_STRUCTURE', severity: 'HIGH', detail: `Qualifying DTI ${fp(qualDTI,1)} exceeds 50%` });
+      if (worstDTI !== null && worstDTI > 60) flags.push({ flagCode: 'WORST_DTI_HIGH', sourceModule: 'ARM_STRUCTURE', severity: 'MEDIUM', detail: `Worst-case DTI ${fp(worstDTI,1)} at rate ceiling` });
+
+      const findings = {
+        verdict: flags.some(f => f.severity === 'HIGH') ? 'NEEDS_REVIEW' : 'ACCEPTABLE',
+        summary: `ARM Structure — ${FIXED_PERIODS.find(f=>f.value===profile.fixedPeriod)?.label||'ARM'} · Start: ${fp(startRate)} · FIR: ${fp(fullyIndexed)} · Ceiling: ${fp(rateCeiling)} · Caps: ${initCap}/${periodicCap}/${lifetimeCap}${paymentShock?' · ⚠️ Payment shock':''}`,
+        loanAmount: loanBal, startRate, indexType: profile.indexType, currentIndex: indexVal, margin,
+        fullyIndexed, rateCeiling, rateFloor, initCap, periodicCap, lifetimeCap, fixedYrs,
+        paymentShock, shockAmount: parseFloat(shockAmount.toFixed(2)), shockPct: parseFloat(shockPct.toFixed(1)),
+        qualProgram: qualify.program, qualRate: qualInfo.rate, qualDTI, worstDTI, fixedRateComp,
+        source: 'Fannie Mae B3-5.1-01 | HUD 4000.1 | VA Lenders Handbook',
+      };
+
+      const writtenId = await reportFindings('ARM_STRUCTURE', findings, [], flags, '1.0.0');
+      if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
   };
 
-  // ─── RENDER ─────────────────────────────────────────────────────────────────
+  // ─── SCENARIO PICKER (no scenarioId) ─────────────────────────────────────
+  if (!scenarioId) {
+    const q = scenarioSearch.toLowerCase().trim();
+    const sorted = [...scenarios].sort((a,b) => (b.updatedAt?.seconds||b.createdAt?.seconds||0) - (a.updatedAt?.seconds||a.createdAt?.seconds||0));
+    const filtered = q ? sorted.filter(s => (s.scenarioName||`${s.firstName||''} ${s.lastName||''}`.trim()).toLowerCase().includes(q)) : sorted;
+    const displayed = q ? filtered : showAll ? filtered : filtered.slice(0,5);
+    const hasMore = !q && !showAll && filtered.length > 5;
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <div className="bg-gradient-to-br from-slate-900 to-orange-950 px-6 py-10">
+          <div className="max-w-2xl mx-auto">
+            <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-orange-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-11 h-11 bg-orange-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-orange-900/40">17</div>
+              <div>
+                <span className="text-xs font-bold tracking-widest text-orange-400 uppercase">Stage 2 — Lender Fit</span>
+                <h1 className="text-2xl font-bold text-white mt-0.5">ARM Structure Intelligence™</h1>
+              </div>
+            </div>
+            <p className="text-orange-200 text-sm leading-relaxed mb-5">Analyze adjustable rate mortgages: caps structure, payment stress scenarios, qualifying rate by program, ARM vs. fixed comparison, and borrower ARM disclosure.</p>
+            <div className="flex flex-wrap gap-2">
+              {['Caps Analysis','Payment Shock','Qualifying Rate','ARM vs. Fixed','Stress Test','Borrower Disclosure'].map(tag => (
+                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-orange-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="max-w-2xl mx-auto px-6 py-8">
+          <h2 className="text-lg font-bold text-slate-800 mb-2">Select a Scenario</h2>
+          <p className="text-slate-500 text-sm mb-5">Choose a scenario to link ARM analysis, or run standalone without linking.</p>
+          <input
+            type="text" value={scenarioSearch} onChange={e=>setScenarioSearch(e.target.value)}
+            placeholder="Search by name or scenario…"
+            className="w-full border border-slate-200 rounded-2xl px-4 py-3 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-orange-400"
+          />
+          {loadingList ? (
+            <div className="text-center py-10 text-slate-400 text-sm">Loading scenarios…</div>
+          ) : displayed.length === 0 ? (
+            <div className="text-center py-10 text-slate-400 text-sm">No scenarios found.</div>
+          ) : (
+            <div className="space-y-3">
+              {displayed.map(s => (
+                <button key={s.id} onClick={() => navigate(`?scenarioId=${s.id}`)}
+                  className="w-full text-left bg-white border border-slate-200 hover:border-orange-400 rounded-2xl px-5 py-4 shadow-sm transition-all group">
+                  <div className="font-bold text-slate-800 group-hover:text-orange-700">{s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim() || 'Unnamed Scenario'}</div>
+                  <div className="text-xs text-slate-400 mt-0.5">{s.streetAddress || s.city || 'No address'} · {s.loanType || 'Loan type —'} · {s.loanAmount ? '$'+Number(s.loanAmount).toLocaleString() : '—'}</div>
+                </button>
+              ))}
+              {hasMore && <button onClick={() => setShowAll(true)} className="w-full text-center text-sm text-orange-600 hover:text-orange-700 py-2 font-semibold">Show all {filtered.length} scenarios ↓</button>}
+            </div>
+          )}
+          <div className="mt-6 pt-6 border-t border-slate-200">
+            <button onClick={() => navigate('?scenarioId=standalone')}
+              className="w-full py-3 rounded-2xl font-semibold text-sm bg-slate-100 hover:bg-slate-200 text-slate-600 transition-all">
+              Run Standalone (No Scenario Linked)
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-900 text-white" style={{ fontFamily: "'DM Sans', sans-serif" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;600;700&family=DM+Mono:wght@400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;600;700&family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&display=swap');
         input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;}
         .pill{cursor:pointer;padding:7px 16px;border-radius:9999px;border:1.5px solid;font-size:.82rem;font-weight:600;transition:all .2s;}
         @media print{body *{visibility:hidden!important;}#armprint,#armprint *{visibility:visible!important;}#armprint{position:fixed;top:0;left:0;width:100%;background:white!important;color:black!important;padding:36px;box-sizing:border-box;}.no-print{display:none!important;}}
       `}</style>
 
+      {/* DECISION RECORD BANNER */}
+      {scenarioId && scenarioId !== 'standalone' && (
+        <DecisionRecordBanner
+          recordId={savedRecordId}
+          moduleName="ARM Structure Intelligence™"
+          moduleKey="ARM_STRUCTURE"
+          onSave={save}
+        />
+      )}
+      <ModuleNav moduleNumber={17} />
+
       {/* HEADER */}
       <div className="no-print" style={{ background: "linear-gradient(135deg, #0f172a 0%, #1c1008 50%, #0f172a 100%)", borderBottom: "1px solid rgba(234,88,12,.25)" }}>
-        <div className="max-w-4xl mx-auto px-6 py-5 flex items-center justify-between flex-wrap gap-4">
-          <div>
-            <span className="text-xs font-bold text-orange-400 tracking-widest uppercase">LoanBeacons™</span>
-            <h1 className="text-2xl font-bold text-white mt-1">📐 ARM Structure Intelligence™</h1>
-            <p className="text-slate-400 text-sm mt-0.5">Adjustable Rate Mortgage Analysis · Caps · Payment Scenarios · Qualifying · Disclosure</p>
-          </div>
-          {scenario ? (
-            <div className="bg-orange-900/20 border border-orange-700/40 rounded-lg px-4 py-2 text-right">
-              <div className="text-xs text-orange-400 font-semibold mb-0.5">LINKED SCENARIO</div>
-              <div className="text-sm text-white font-bold">{scenario.borrowerName || scenario.lastName || "Unnamed"}</div>
-              <div className="text-xs text-slate-400">{scenario.streetAddress || "No address"}</div>
+        <div className="max-w-4xl mx-auto px-6 py-5">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <span className="text-xs font-bold text-orange-400 tracking-widest uppercase">LoanBeacons™</span>
+              <h1 className="text-2xl font-bold text-white mt-1">📐 ARM Structure Intelligence™</h1>
+              <p className="text-slate-400 text-sm mt-0.5">Adjustable Rate Mortgage Analysis · Caps · Payment Scenarios · Qualifying · Disclosure</p>
             </div>
-          ) : (
-            <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-lg px-4 py-2 text-xs text-yellow-400">No scenario linked — standalone mode</div>
-          )}
+            {scenario && scenarioId !== 'standalone' && (
+              <ScenarioHeader scenario={scenario} moduleNumber={17} />
+            )}
+            {(!scenario || scenarioId === 'standalone') && (
+              <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-lg px-4 py-2 text-xs text-yellow-400">No scenario linked — standalone mode</div>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="max-w-4xl mx-auto px-4 py-8 no-print">
         <ProgressBar cur={step} />
 
-        {/* ═══ STEP 1 — ARM PROFILE ══════════════════════════════════════════ */}
+        {/* ═══ STEP 1 — ARM PROFILE ═════════════════════════════════════════ */}
         {step === 0 && (
           <Card icon="📐" title="Step 1 — ARM Profile" subtitle="Enter the loan fundamentals and index details. This defines the ARM's identity and drives all downstream calculations.">
             <p className="text-sm font-bold text-slate-300 mb-4">Loan Details</p>
@@ -491,7 +577,7 @@ export default function ARMStructureIntelligence() {
           </Card>
         )}
 
-        {/* ═══ STEP 2 — CAPS STRUCTURE ══════════════════════════════════════ */}
+        {/* ═══ STEP 2 — CAPS STRUCTURE ═════════════════════════════════════ */}
         {step === 1 && (
           <Card icon="🔒" title="Step 2 — Caps Structure" subtitle="Caps are contractual limits on how far the rate can move. Three caps govern every ARM adjustment for the life of the loan.">
             <div className="bg-orange-900/20 border border-orange-700/40 rounded-xl p-5 mb-6 text-sm text-orange-200 space-y-2">
@@ -501,7 +587,6 @@ export default function ARMStructureIntelligence() {
               <p className="text-xs text-slate-400">Example: A 5/1 ARM at 6.50% with 2/2/5 caps → first adj max 8.50%, then max 2% per year, never above 11.50% (6.50% + 5.00%).</p>
             </div>
 
-            {/* Preset selection */}
             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Select a Common Cap Structure</p>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
               {CAP_PRESETS.map(preset => (
@@ -515,24 +600,23 @@ export default function ARMStructureIntelligence() {
               ))}
             </div>
 
-            {/* Cap inputs */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
               <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">Initial Adjustment Cap <Tip text="Maximum % the rate can change at the FIRST adjustment only. For a 5/1 ARM at 6.50% with a 2% initial cap, the rate at first adjustment can go no higher than 8.50%."/></label>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Initial Adjustment Cap <Tip text="Maximum % the rate can change at the FIRST adjustment only."/></label>
                 <div className="relative">
                   <input type="number" value={caps.initial} onChange={e=>setCaps(c=>({...c,initial:e.target.value,preset:"Custom"}))} placeholder="e.g. 2" className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-3 pr-8 py-2.5 text-white text-sm focus:outline-none focus:border-orange-500"/>
                   <span className="absolute right-3 top-2.5 text-slate-400 text-xs pointer-events-none">%</span>
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">Periodic Cap (each subsequent adj) <Tip text="Maximum % the rate can change at every adjustment AFTER the first. If periodic cap = 2%, the rate can move at most 2% up or down each year after the initial adjustment."/></label>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Periodic Cap (each subsequent adj) <Tip text="Maximum % the rate can change at every adjustment AFTER the first."/></label>
                 <div className="relative">
                   <input type="number" value={caps.periodic} onChange={e=>setCaps(c=>({...c,periodic:e.target.value,preset:"Custom"}))} placeholder="e.g. 2" className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-3 pr-8 py-2.5 text-white text-sm focus:outline-none focus:border-orange-500"/>
                   <span className="absolute right-3 top-2.5 text-slate-400 text-xs pointer-events-none">%</span>
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">Lifetime Cap (total from start rate) <Tip text="The rate can NEVER increase more than this % above the original start rate, no matter how high the index goes. A 5.00% lifetime cap means a 6.50% ARM can never exceed 11.50%."/></label>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Lifetime Cap (total from start rate) <Tip text="The rate can NEVER increase more than this % above the original start rate."/></label>
                 <div className="relative">
                   <input type="number" value={caps.lifetime} onChange={e=>setCaps(c=>({...c,lifetime:e.target.value,preset:"Custom"}))} placeholder="e.g. 5" className="w-full bg-slate-700 border border-slate-600 rounded-lg pl-3 pr-8 py-2.5 text-white text-sm focus:outline-none focus:border-orange-500"/>
                   <span className="absolute right-3 top-2.5 text-slate-400 text-xs pointer-events-none">%</span>
@@ -540,7 +624,6 @@ export default function ARMStructureIntelligence() {
               </div>
             </div>
 
-            {/* Visual caps summary */}
             {capsSet && startRate > 0 && (
               <div className="bg-slate-900/60 rounded-xl p-5 border border-slate-600">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Rate Boundary Map</p>
@@ -569,10 +652,9 @@ export default function ARMStructureIntelligence() {
           </Card>
         )}
 
-        {/* ═══ STEP 3 — CURRENT POSITION ════════════════════════════════════ */}
+        {/* ═══ STEP 3 — CURRENT POSITION ═══════════════════════════════════ */}
         {step === 2 && (
           <Card icon="📍" title="Step 3 — Current Position" subtitle="Where is this ARM today? Establishes timing, payment shock exposure, and sets the stage for the stress test.">
-
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-1">
@@ -587,10 +669,8 @@ export default function ARMStructureIntelligence() {
               <FInput label="Borrower Gross Monthly Income" tip="Used for DTI analysis in the Qualifying step. Optional — skip if not needed." prefix="$" value={position.borrowerIncome} onChange={v=>setPosition(p=>({...p,borrowerIncome:v}))} placeholder="e.g. 9500"/>
             </div>
 
-            {/* Position dashboard */}
             {startRate > 0 && indexVal > 0 && margin > 0 && (
               <div className="space-y-4">
-                {/* Timing */}
                 <div className="bg-slate-900/50 rounded-xl p-5 border border-slate-600">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Adjustment Timing</p>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
@@ -607,7 +687,6 @@ export default function ARMStructureIntelligence() {
                   )}
                 </div>
 
-                {/* Payment shock */}
                 <div className={`rounded-xl p-5 border ${paymentShock ? "bg-red-900/20 border-red-700/50" : "bg-green-900/20 border-green-700/50"}`}>
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Payment Shock Analysis</p>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center mb-3">
@@ -618,7 +697,7 @@ export default function ARMStructureIntelligence() {
                   </div>
                   {paymentShock ? (
                     <div className="bg-red-950/40 border border-red-800/50 rounded-lg p-3 text-sm text-red-200">
-                      <strong className="text-red-300">⚠️ Payment Shock Risk Identified.</strong> The fully-indexed rate ({fp(fullyIndexed)}) is {fp(fullyIndexed - startRate)} above the current rate. If the index stays flat, the borrower faces a <strong>{fp(shockPct,1)} increase</strong> ({f$(shockAmount)}/mo) at first adjustment. Review stress test in the next step.
+                      <strong className="text-red-300">⚠️ Payment Shock Risk Identified.</strong> The fully-indexed rate ({fp(fullyIndexed)}) is {fp(fullyIndexed - startRate)} above the current rate. If the index stays flat, the borrower faces a <strong>{fp(shockPct,1)} increase</strong> ({f$(shockAmount)}/mo) at first adjustment.
                     </div>
                   ) : (
                     <div className="bg-green-950/40 border border-green-800/50 rounded-lg p-3 text-sm text-green-200">
@@ -636,14 +715,12 @@ export default function ARMStructureIntelligence() {
         {/* ═══ STEP 4 — PAYMENT STRESS TEST ════════════════════════════════ */}
         {step === 3 && (
           <Card icon="📊" title="Step 4 — Payment Stress Test" subtitle="Three scenarios show how rate adjustments play out year by year. Worst Case assumes caps are hit at every adjustment in the upward direction.">
-
             <div className="bg-orange-900/20 border border-orange-700/40 rounded-xl p-4 mb-5 text-sm text-orange-200 space-y-1">
               <p><strong>📗 Best Case:</strong> Index stays exactly at today's value for the life of the loan.</p>
               <p><strong>📙 Base Case:</strong> Index rises +0.25% per year — a moderate, gradual increase.</p>
               <p><strong>📕 Worst Case:</strong> Each adjustment hits the maximum allowed by the caps — the most aggressive possible scenario.</p>
             </div>
 
-            {/* Lifetime ceiling callout */}
             {capsSet && startRate > 0 && loanBal > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
                 <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-600 text-center">
@@ -664,7 +741,6 @@ export default function ARMStructureIntelligence() {
               </div>
             )}
 
-            {/* Scenario table */}
             {capsSet && startRate > 0 && loanBal > 0 && (
               <div>
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Year-by-Year Comparison (Years shown are loan age)</p>
@@ -717,13 +793,11 @@ export default function ARMStructureIntelligence() {
         {/* ═══ STEP 5 — QUALIFYING ANALYSIS ════════════════════════════════ */}
         {step === 4 && (
           <Card icon="🎯" title="Step 5 — Qualifying Analysis" subtitle="Which rate must the borrower qualify at? Rules vary by loan program and fixed period length. Critically important for purchase and refi underwriting.">
-
             <div className="bg-orange-900/20 border border-orange-700/40 rounded-xl p-4 mb-6 text-sm text-orange-200">
               <p className="font-semibold text-orange-300 mb-1">Why this matters:</p>
               <p>The rate you use on the 1003 and in the AUS is not always the start rate. If the borrower can't qualify at the required rate, they may not be eligible for this ARM — regardless of what the payment is at origination.</p>
             </div>
 
-            {/* Program selector */}
             <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Loan Program</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
               {[["conventional","Conventional","Fannie/Freddie"],["fha","FHA","HUD/FHA"],["va","VA","VA Loan"],["usda","USDA","Rural Development"]].map(([v,l,s])=>(
@@ -736,11 +810,10 @@ export default function ARMStructureIntelligence() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
-              <FInput label="Borrower Gross Monthly Income (if not entered in Step 3)" tip="Used for DTI analysis. Enter if not already entered in Step 3." prefix="$" value={position.borrowerIncome} onChange={v=>setPosition(p=>({...p,borrowerIncome:v}))} placeholder="e.g. 9500"/>
-              <FInput label="Total Other Monthly Debt Payments" tip="All minimum monthly debt obligations: car loans, student loans, credit card minimums, other mortgages. Does NOT include utilities, insurance, or subscriptions." prefix="$" value={qualify.monthlyDebts} onChange={v=>setQualify(q=>({...q,monthlyDebts:v}))} placeholder="e.g. 850"/>
+              <FInput label="Borrower Gross Monthly Income (if not entered in Step 3)" tip="Used for DTI analysis." prefix="$" value={position.borrowerIncome} onChange={v=>setPosition(p=>({...p,borrowerIncome:v}))} placeholder="e.g. 9500"/>
+              <FInput label="Total Other Monthly Debt Payments" tip="All minimum monthly debt obligations: car loans, student loans, credit card minimums, other mortgages." prefix="$" value={qualify.monthlyDebts} onChange={v=>setQualify(q=>({...q,monthlyDebts:v}))} placeholder="e.g. 850"/>
             </div>
 
-            {/* Qualifying rate result */}
             {startRate > 0 && fullyIndexed > 0 && (
               <div className="bg-slate-900/50 rounded-xl p-5 border border-slate-600 mb-5">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Qualifying Rate Determination</p>
@@ -761,7 +834,6 @@ export default function ARMStructureIntelligence() {
               </div>
             )}
 
-            {/* DTI Analysis */}
             {borrowerIncome > 0 && qualPayment > 0 && (
               <div className="bg-slate-900/50 rounded-xl p-5 border border-slate-600">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">DTI Analysis</p>
@@ -771,10 +843,8 @@ export default function ARMStructureIntelligence() {
                   <Stat label="Qualifying DTI" value={qualDTI !== null ? fp(qualDTI, 1) : "—"} color={qualDTI !== null && qualDTI > 50 ? "red" : qualDTI !== null && qualDTI > 43 ? "yellow" : "green"} sub="back-end"/>
                   <Stat label="Worst-Case DTI" value={worstDTI !== null ? fp(worstDTI, 1) : "—"} sub="at rate ceiling" color={worstDTI !== null && worstDTI > 55 ? "red" : worstDTI !== null && worstDTI > 50 ? "yellow" : "orange"}/>
                 </div>
-
-                {/* DTI warnings */}
-                {qualDTI !== null && qualDTI > 50 && <div className="p-3 bg-red-900/30 border border-red-700/50 rounded-lg text-sm text-red-300 mb-2">❌ Qualifying DTI of {fp(qualDTI,1)} exceeds conventional/FHA/VA limits (typically 45–50%). Borrower may not be approved at this qualifying rate and debt load.</div>}
-                {worstDTI !== null && worstDTI > 60 && <div className="p-3 bg-red-900/20 border border-red-700/30 rounded-lg text-sm text-red-300">⚠️ Worst-case DTI of {fp(worstDTI,1)} at the rate ceiling indicates significant payment sustainability risk if rates rise sharply.</div>}
+                {qualDTI !== null && qualDTI > 50 && <div className="p-3 bg-red-900/30 border border-red-700/50 rounded-lg text-sm text-red-300 mb-2">❌ Qualifying DTI of {fp(qualDTI,1)} exceeds conventional/FHA/VA limits (typically 45–50%).</div>}
+                {worstDTI !== null && worstDTI > 60 && <div className="p-3 bg-red-900/20 border border-red-700/30 rounded-lg text-sm text-red-300">⚠️ Worst-case DTI of {fp(worstDTI,1)} at the rate ceiling indicates significant payment sustainability risk.</div>}
                 {qualDTI !== null && qualDTI <= 43 && <div className="p-3 bg-green-900/20 border border-green-700/30 rounded-lg text-sm text-green-200">✅ Qualifying DTI of {fp(qualDTI,1)} is within standard agency limits.</div>}
               </div>
             )}
@@ -783,16 +853,15 @@ export default function ARMStructureIntelligence() {
           </Card>
         )}
 
-        {/* ═══ STEP 6 — ARM vs. FIXED ════════════════════════════════════════ */}
+        {/* ═══ STEP 6 — ARM vs. FIXED ══════════════════════════════════════ */}
         {step === 5 && (
           <Card icon="⚖️" title="Step 6 — ARM vs. Fixed Comparison" subtitle="Should the borrower keep the ARM or refinance to a fixed rate today? Break-even analysis shows when the fixed rate wins.">
-
             <div className="bg-blue-900/20 border border-blue-700/40 rounded-xl p-4 mb-6 text-sm text-blue-200">
               <p>Enter a 30-year fixed rate to compare. The module shows how long the ARM stays cheaper than the fixed loan, and when the cumulative cost advantage flips.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              <FInput label="Hypothetical 30-Yr Fixed Rate" tip="The rate the borrower could get TODAY on a 30-year fixed refinance. Check current market rates or get a lender quote." suffix="%" value={vsFixed.fixedRate} onChange={v=>setVsFixed({fixedRate:v})} placeholder="e.g. 6.875"/>
+              <FInput label="Hypothetical 30-Yr Fixed Rate" tip="The rate the borrower could get TODAY on a 30-year fixed refinance." suffix="%" value={vsFixed.fixedRate} onChange={v=>setVsFixed({fixedRate:v})} placeholder="e.g. 6.875"/>
               <div className="bg-slate-900/50 rounded-xl p-4 border border-slate-600 flex flex-col justify-center">
                 <p className="text-xs text-slate-400 mb-1">30-Year Fixed Monthly P&I</p>
                 <p className="text-2xl font-bold font-mono text-blue-300">{fixedRateComp > 0 ? f$(fixedPayment) : "—"}</p>
@@ -802,7 +871,6 @@ export default function ARMStructureIntelligence() {
 
             {fixedRateComp > 0 && loanBal > 0 && (
               <div className="space-y-4">
-                {/* Comparison grid */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <Stat label="ARM Start Payment" value={f$(currentPayment)} sub="/month now" color="orange"/>
                   <Stat label="Fixed Payment" value={f$(fixedPayment)} sub="/month (all 30 yrs)" color="blue"/>
@@ -810,7 +878,6 @@ export default function ARMStructureIntelligence() {
                   <Stat label="Rate Spread" value={fp(Math.abs(fixedRateComp - startRate))} sub={fixedRateComp > startRate ? "ARM cheaper now" : "Fixed cheaper now"} color={fixedRateComp > startRate ? "green" : "red"}/>
                 </div>
 
-                {/* Decision guidance */}
                 <div className="bg-slate-900/50 rounded-xl p-5 border border-slate-600">
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Decision Framework</p>
                   <div className="space-y-3 text-sm">
@@ -823,19 +890,19 @@ export default function ARMStructureIntelligence() {
                     {fixedRateComp <= startRate && (
                       <div className="flex items-start gap-3 p-3 bg-blue-900/20 border border-blue-700/40 rounded-lg text-blue-200">
                         <span className="text-blue-400 text-lg flex-shrink-0">ℹ️</span>
-                        <p><strong>Fixed is currently cheaper</strong> by {f$(currentPayment - fixedPayment)}/mo. The borrower would save money immediately by refinancing to a fixed rate. ARM makes less sense here unless they plan to sell before the first adjustment.</p>
+                        <p><strong>Fixed is currently cheaper</strong> by {f$(currentPayment - fixedPayment)}/mo. The borrower would save money immediately by refinancing to a fixed rate.</p>
                       </div>
                     )}
                     {paymentShock && (
                       <div className="flex items-start gap-3 p-3 bg-red-900/20 border border-red-700/40 rounded-lg text-red-200">
                         <span className="text-red-400 text-lg flex-shrink-0">⚠️</span>
-                        <p><strong>Payment shock risk:</strong> At the fully-indexed rate ({fp(fullyIndexed)}), the ARM payment rises to {f$(fiPayment)}/mo — {fp(shockPct,1)} above today. If the fixed rate is lower than {fp(fullyIndexed)}, refinancing to fixed eliminates this risk.</p>
+                        <p><strong>Payment shock risk:</strong> At the fully-indexed rate ({fp(fullyIndexed)}), the ARM payment rises to {f$(fiPayment)}/mo — {fp(shockPct,1)} above today.</p>
                       </div>
                     )}
                     {moUntilAdj !== null && moUntilAdj <= 12 && (
                       <div className="flex items-start gap-3 p-3 bg-orange-900/20 border border-orange-700/40 rounded-lg text-orange-200">
                         <span className="text-orange-400 text-lg flex-shrink-0">⏰</span>
-                        <p><strong>Adjustment window closing:</strong> Only {moUntilAdj} months until first adjustment. If refinancing to fixed is the right move, time is critical.</p>
+                        <p><strong>Adjustment window closing:</strong> Only {moUntilAdj} months until first adjustment.</p>
                       </div>
                     )}
                     <div className="flex items-start gap-3 p-3 bg-slate-700/40 border border-slate-600/50 rounded-lg text-slate-300">
@@ -853,11 +920,9 @@ export default function ARMStructureIntelligence() {
           </Card>
         )}
 
-        {/* ═══ STEP 7 — RESULTS & DISCLOSURE ═══════════════════════════════ */}
+        {/* ═══ STEP 7 — RESULTS & DISCLOSURE ══════════════════════════════ */}
         {step === 6 && (
-          <Card icon="🏁" title="Step 7 — Results & ARM Disclosure" subtitle="Full summary. Save to decision log and print as borrower ARM disclosure.">
-
-            {/* Summary grid */}
+          <Card icon="🏁" title="Step 7 — Results & ARM Disclosure" subtitle="Full summary. Save to Decision Record and print as borrower ARM disclosure.">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
               {[
                 ["ARM Type", FIXED_PERIODS.find(f=>f.value===profile.fixedPeriod)?.label||"—", "slate"],
@@ -881,16 +946,16 @@ export default function ARMStructureIntelligence() {
             </div>
 
             <div className="flex gap-3 mb-4">
-              <button onClick={save} disabled={saved||!scenarioId}
-                className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all ${saved?"bg-green-800/50 border border-green-700/50 text-green-400":scenarioId?"bg-slate-700 hover:bg-slate-600 text-white border border-slate-600":"bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700"}`}>
-                {saved ? "✅ Saved to Decision Log" : scenarioId ? "💾 Save to Firestore" : "💾 No Scenario Linked"}
+              <button onClick={save} disabled={!!savedRecordId || !scenarioId || scenarioId === 'standalone'}
+                className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all ${savedRecordId?"bg-green-800/50 border border-green-700/50 text-green-400":(scenarioId && scenarioId !== 'standalone')?"bg-slate-700 hover:bg-slate-600 text-white border border-slate-600":"bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700"}`}>
+                {savedRecordId ? "✅ Saved to Decision Record" : (scenarioId && scenarioId !== 'standalone') ? "💾 Save to Decision Record™" : "💾 No Scenario Linked"}
               </button>
               <button onClick={()=>window.print()} className="flex-1 py-3 rounded-xl font-bold text-sm text-white shadow-lg" style={{background:"linear-gradient(135deg,#ea580c,#f97316)"}}>
                 🖨️ Print ARM Disclosure PDF
               </button>
             </div>
-            {!scenarioId && <p className="text-xs text-slate-500 text-center mb-4">Add ?scenarioId=xxx to the URL to enable Firestore saving.</p>}
-            <button onClick={()=>{setStep(0);setSaved(false);}} className="w-full py-2.5 rounded-xl font-semibold text-sm bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700">← Analyze New ARM</button>
+            {(!scenarioId || scenarioId === 'standalone') && <p className="text-xs text-slate-500 text-center mb-4">Link a scenario to enable Decision Record saving.</p>}
+            <button onClick={()=>{setStep(0);setSavedRecordId(null);}} className="w-full py-2.5 rounded-xl font-semibold text-sm bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700">← Analyze New ARM</button>
           </Card>
         )}
       </div>
@@ -912,7 +977,6 @@ export default function ARMStructureIntelligence() {
           </div>
         </div>
 
-        {/* ARM Specs */}
         <table style={{width:"100%",borderCollapse:"collapse",marginBottom:"16px"}}>
           <thead><tr style={{background:"#b45309",color:"#fff"}}><th style={{padding:"7px 10px",textAlign:"left",fontSize:"9.5pt"}} colSpan={2}>ARM Key Terms</th><th style={{padding:"7px 10px",textAlign:"left",fontSize:"9.5pt"}} colSpan={2}>Caps Structure</th></tr></thead>
           <tbody>
@@ -925,17 +989,13 @@ export default function ARMStructureIntelligence() {
             ].map((row,i)=>(
               <tr key={i} style={{background:i%2===0?"#fff8f2":"#fff"}}>
                 {row.map(([l,v],j)=>(
-                  <>
-                    <td key={l} style={{padding:"6px 10px",fontWeight:"600",fontSize:"9pt",width:"20%"}}>{l}</td>
-                    <td key={v} style={{padding:"6px 10px",fontSize:"9pt",width:"30%"}}>{v}</td>
-                  </>
+                  <><td key={l} style={{padding:"6px 10px",fontWeight:"600",fontSize:"9pt",width:"20%"}}>{l}</td><td key={v} style={{padding:"6px 10px",fontSize:"9pt",width:"30%"}}>{v}</td></>
                 ))}
               </tr>
             ))}
           </tbody>
         </table>
 
-        {/* Payment Scenarios */}
         <p style={{fontWeight:"bold",color:"#b45309",fontSize:"11pt",marginBottom:"6px"}}>Payment Scenarios</p>
         <table style={{width:"100%",borderCollapse:"collapse",marginBottom:"16px",fontSize:"9pt"}}>
           <thead>
@@ -964,7 +1024,6 @@ export default function ARMStructureIntelligence() {
           </tbody>
         </table>
 
-        {/* Qualifying */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"16px"}}>
           <div style={{border:"1.5px solid #b45309",borderRadius:"7px",padding:"12px"}}>
             <p style={{fontWeight:"bold",color:"#b45309",marginBottom:"7px"}}>Qualifying Rate — {qualify.program.toUpperCase()}</p>
@@ -980,11 +1039,10 @@ export default function ARMStructureIntelligence() {
             <p style={{margin:"3px 0",fontSize:"9pt"}}>Max Payment: <strong>{f$(ceilingPayment)}/mo</strong></p>
             <p style={{margin:"3px 0",fontSize:"9pt"}}>Max Increase: <strong>+{f$(ceilingPayment-currentPayment)}/mo</strong></p>
             {worstDTI&&<p style={{margin:"3px 0",fontSize:"9pt"}}>Worst-Case DTI: <strong>{fp(worstDTI,1)}</strong></p>}
-            <p style={{margin:"4px 0 0",fontSize:"9pt",color: paymentShock?"#dc2626":"#16a34a",fontWeight:"bold"}}>{paymentShock?"⚠️ Payment shock risk identified":"✓ No immediate payment shock"}</p>
+            <p style={{margin:"4px 0 0",fontSize:"9pt",color:paymentShock?"#dc2626":"#16a34a",fontWeight:"bold"}}>{paymentShock?"⚠️ Payment shock risk identified":"✓ No immediate payment shock"}</p>
           </div>
         </div>
 
-        {/* Borrower acknowledgment */}
         <div style={{border:"1.5px solid #ccc",borderRadius:"7px",padding:"12px",marginBottom:"16px"}}>
           <p style={{fontWeight:"bold",marginBottom:"6px"}}>Borrower Acknowledgment</p>
           <p style={{fontSize:"8.5pt",color:"#444",marginBottom:"14px"}}>I/We acknowledge that I/we have received and reviewed this ARM disclosure. I/we understand that the interest rate on this loan is subject to adjustment, that the payment may increase or decrease, and that the worst-case scenario payment shown above represents the maximum possible payment based on the caps structure in my/our Note.</p>
@@ -996,9 +1054,9 @@ export default function ARMStructureIntelligence() {
         </div>
 
         <div style={{fontSize:"7.5pt",color:"#777",borderTop:"1px solid #ccc",paddingTop:"8px"}}>
-          <p>Generated by LoanBeacons™ ARM Structure Intelligence™ for loan officer use — not a commitment to lend. All calculations are estimates based on the index values and caps entered. Actual rate adjustments will be determined by the index value published per the terms of the Note. Index source: {INDEXES.find(i=>i.id===profile.indexType)?.label||"—"}. Qualifying rate rules per {qualInfo.source}. Generated: {new Date().toLocaleString()} · {scenarioId?`Scenario: ${scenarioId}`:"Standalone mode"}</p>
+          <p>Generated by LoanBeacons™ ARM Structure Intelligence™ for loan officer use — not a commitment to lend. All calculations are estimates based on the index values and caps entered. Actual rate adjustments will be determined by the index value published per the terms of the Note. Index source: {INDEXES.find(i=>i.id===profile.indexType)?.label||"—"}. Qualifying rate rules per {qualInfo.source}. Generated: {new Date().toLocaleString()} · {scenarioId&&scenarioId!=='standalone'?`Scenario: ${scenarioId}`:"Standalone mode"}</p>
         </div>
       </div>
-</div>
+    </div>
   );
 }

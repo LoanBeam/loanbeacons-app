@@ -142,7 +142,6 @@ function LetterCard({ title, icon, body, color = 'violet' }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className={'rounded-3xl border-2 overflow-hidden ' + (color === 'violet' ? 'border-violet-200 bg-violet-50' : 'border-blue-200 bg-blue-50')}>
-      <ModuleNav moduleNumber={22} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
         <div className="flex gap-2">
@@ -376,19 +375,21 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
     if (!calc) return;
     setRecordSaving(true);
     try {
-      const writtenId = await reportFindings({
-        verdict: bestScenario === 'single_pmi' ? 'Single + PMI recommended' : bestScenario === 'piggyback_8010' ? '80/10/10 recommended' : '80/15/5 recommended',
-        summary: `Piggyback Optimizer — Purchase ${fmt0(calc.pp)} · ${downPct}% down · Best structure: ${bestScenario?.replace('_', ' ')} · 5yr cost: ${fmt0(bestScenario === 'piggyback_8010' ? calc.cost5yr_8010 : bestScenario === 'piggyback_8015' ? calc.cost5yr_8015 : calc.cost5yr_single)}`,
-        riskFlags: [],
-        findings: {
+      const writtenId = await reportFindings(
+        'PIGGYBACK_OPTIMIZER',
+        {
+          verdict: bestScenario === 'single_pmi' ? 'Single + PMI recommended' : bestScenario === 'piggyback_8010' ? '80/10/10 recommended' : '80/15/5 recommended',
+          summary: `Piggyback Optimizer — Purchase ${fmt0(calc.pp)} · ${downPct}% down · Best structure: ${bestScenario?.replace('_', ' ')} · 5yr cost: ${fmt0(bestScenario === 'piggyback_8010' ? calc.cost5yr_8010 : bestScenario === 'piggyback_8015' ? calc.cost5yr_8015 : calc.cost5yr_single)}`,
           purchasePrice: calc.pp, downPct: parseFloat(downPct), firstRate: parseFloat(firstRate),
           secondRate8010: parseFloat(secondRate8010) || null, secondRate8015: parseFloat(secondRate8015) || null,
           singleRate: parseFloat(singleRate) || null, termYears: parseInt(termYears), secondTerm: parseInt(secondTerm),
           bestScenario, cost5yr_8010: calc.cost5yr_8010, cost5yr_8015: calc.cost5yr_8015, cost5yr_single: calc.cost5yr_single,
           pmiMonthly: calc.pmiMonthly, pmiDropMonth: calc.pmiDropMonth, pmiTotalCost: calc.pmiTotalCost, loNotes,
         },
-        completeness: { ratesEntered: !!(firstRate), purchasePriceEntered: !!(purchasePrice), aiRun: !!(aiAnalysis) },
-      });
+        [],
+        [],
+        '1.0.0'
+      );
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
     setRecordSaving(false);
@@ -504,6 +505,14 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="Piggyback 2nd Optimizer™"
+        moduleKey="PIGGYBACK_OPTIMIZER"
+        onSave={handleSaveToRecord}
+      />
+      <ModuleNav moduleNumber={22} />
+
       {/* Hero */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #3b82f6 0%, transparent 50%), radial-gradient(circle at 80% 20%, #8b5cf6 0%, transparent 40%)' }} />
@@ -511,7 +520,7 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 19</div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 22</div>
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Piggyback 2nd Optimizer™</h1>
               <p className="text-slate-400 text-base max-w-xl">80/10/10 · 80/15/5 · Single Loan + PMI · Side-by-side payment & 5-year cost comparison</p>
             </div>
@@ -548,8 +557,7 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Piggyback 2nd Optimizer™" moduleNumber="19" scenarioId={scenarioId} />
-      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2"><DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="PIGGYBACK_OPTIMIZER" /></div>
+      <ScenarioHeader moduleTitle="Piggyback 2nd Optimizer™" moduleNumber="22" scenarioId={scenarioId} />
 
       {/* Tab Bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
@@ -905,12 +913,6 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                     <textarea value={loNotes} onChange={e => setLoNotes(e.target.value)} rows={4}
                       placeholder="Structure rationale, lender overlays, borrower cash preference, 2nd lien product source, compensating factors..."
                       className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-blue-400 resize-none" />
-                    <div className="mt-4 flex justify-end">
-                      <button onClick={handleSaveToRecord} disabled={recordSaving || !calc}
-                        className={'px-8 py-3 rounded-2xl text-sm font-bold transition-colors ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
-                        {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record™'}
-                      </button>
-                    </div>
                   </div>
                 </div>
 

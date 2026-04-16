@@ -170,6 +170,12 @@ export default function DecisionRecord() {
   const [expandedModule,  setExpandedModule]  = useState(null);
   const [searchFindings,  setSearchFindings]  = useState('');
 
+  // ── Case Brief state ─────────────────────────────────────────────
+  const [briefAI,         setBriefAI]         = useState(null);
+  const [briefLoading,    setBriefLoading]    = useState(false);
+  const [briefError,      setBriefError]      = useState('');
+  const [flagResponses,   setFlagResponses]   = useState({});
+
   // ── Load scenarios dropdown ──────────────────────────────────────
   useEffect(() => {
     // scenarios collection has no userId field — query without filter
@@ -256,7 +262,70 @@ export default function DecisionRecord() {
     { id: 'flags',    label: 'Risk Flags', count: riskFlags.length,  alert: criticalCount > 0 },
     { id: 'evidence', label: 'Evidence',   count: evidence.length               },
     { id: 'notes',    label: 'Notes & Lock'                                     },
+    { id: 'brief',    label: '📄 Case Brief'                                    },
   ];
+
+  // ── Generate AI Case Brief ───────────────────────────────────────
+  const generateBrief = async () => {
+    setBriefLoading(true);
+    setBriefError('');
+    try {
+      const h = record.header || {};
+      const moduleSummaries = Object.entries(systemFindings).map(([key, f]) => {
+        const meta = MODULE_META[key] || { label: key };
+        return `${meta.label}: ${f.verdict || f.summary || 'Logged'}`;
+      }).join('. ');
+      const flagSummary = riskFlags.length === 0
+        ? 'No risk flags identified.'
+        : riskFlags.map(f => `${f.severity?.toUpperCase()} — ${f.detail || f.flagCode}`).join('; ');
+
+      const prompt = `You are a senior mortgage compliance officer writing a formal Decision Record case brief for a loan file. Write a professional 3-paragraph narrative in plain English — no bullet points, no headers, just formal prose.
+
+FILE DATA:
+Borrower: ${h.borrowerName || 'Unknown'}
+Property: ${h.propertyAddress || 'Not provided'}
+Loan Type: ${h.loanType || 'Not specified'}
+Loan Purpose: ${h.loanPurpose || 'Not specified'}
+LO: ${h.loName || 'Not provided'}
+Modules Completed: ${reportedKeys.length} of ${liveKeys.length}
+Completeness Score: ${Math.round(score * 100)}%
+Record Status: ${status}
+Module Findings: ${moduleSummaries || 'None recorded yet.'}
+Risk Flags: ${flagSummary}
+LO Notes: ${record.lo_notes?.text || 'None.'}
+Attested: ${record.lo_attestation?.certified ? 'Yes — certified by ' + record.lo_attestation.certified_by : 'Not yet attested'}
+Record Created: ${fmtTs(record.header?.createdAt)}
+Last Updated: ${fmtTs(record.header?.updatedAt)}
+
+PARAGRAPH 1: Deal profile. Describe the borrower, property, loan type, purpose, and LO in formal language.
+PARAGRAPH 2: Analysis status. Describe which modules have been run and what they found — in plain professional English, not JSON. Note which critical modules have not yet been run.
+PARAGRAPH 3: Risk assessment and overall posture. Describe each risk flag in plain language and the overall file status. If no flags, note the clean posture. End with the attestation status.
+
+Write exactly 3 paragraphs. Be factual, formal, and concise. This document may be reviewed by regulators.`;
+
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 1200,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      });
+      if (!resp.ok) throw new Error('API error ' + resp.status);
+      const data = await resp.json();
+      const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      setBriefAI(text);
+    } catch (e) {
+      setBriefError('Could not generate narrative: ' + e.message);
+    }
+    setBriefLoading(false);
+  };
 
   // ── Scenario display name helper ─────────────────────────────────
   function scenarioLabel(s) {
@@ -822,6 +891,205 @@ export default function DecisionRecord() {
             </div>
           )}
 
+          {/* ══ TAB: CASE BRIEF ══════════════════════════════════ */}
+          {activeTab === 'brief' && (
+            <div className="dr-tab-pane">
+              {/* Print styles */}
+              <style>{`
+                @media print {
+                  .dr-root > *:not(#dr-case-brief) { display: none !important; }
+                  .dr-topbar, .dr-tabs, .dr-footer, .dr-brief-toolbar { display: none !important; }
+                  #dr-case-brief { display: block !important; }
+                  body { background: white !important; }
+                }
+              `}</style>
+
+              {/* Toolbar */}
+              <div className="dr-brief-toolbar" style={{ display:'flex', alignItems:'center', gap:12, marginBottom:20, flexWrap:'wrap' }}>
+                <button onClick={generateBrief} disabled={briefLoading}
+                  style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 20px', background: briefLoading?'#1e293b':'#4f46e5', color:'#fff', border:'none', borderRadius:10, fontSize:13, fontWeight:700, cursor: briefLoading?'not-allowed':'pointer', opacity: briefLoading?0.7:1 }}>
+                  {briefLoading ? '⏳ Generating narrative…' : briefAI ? '↺ Regenerate AI Narrative' : '✨ Generate AI Narrative'}
+                </button>
+                {briefAI && (
+                  <button onClick={() => window.print()}
+                    style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 20px', background:'#0f172a', color:'#94a3b8', border:'1px solid #1e293b', borderRadius:10, fontSize:13, fontWeight:600, cursor:'pointer' }}>
+                    🖨️ Print / Save as PDF
+                  </button>
+                )}
+                <span style={{ fontSize:11, color:'#475569', marginLeft:'auto' }}>This document is for licensed mortgage professional use only</span>
+              </div>
+
+              {briefError && (
+                <div style={{ background:'#1f0505', border:'1px solid #7f1d1d', color:'#fca5a5', borderRadius:10, padding:'12px 16px', fontSize:13, marginBottom:16 }}>{briefError}</div>
+              )}
+
+              {/* ── CASE BRIEF DOCUMENT ── */}
+              <div id="dr-case-brief" style={{ background:'#fff', color:'#1e293b', borderRadius:12, padding:'48px 56px', fontFamily:"'Georgia', serif", maxWidth:900, margin:'0 auto', boxShadow:'0 4px 32px rgba(0,0,0,0.18)' }}>
+
+                {/* Document header */}
+                <div style={{ borderBottom:'3px double #1e293b', paddingBottom:20, marginBottom:28 }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+                    <div>
+                      <div style={{ fontSize:10, letterSpacing:'0.18em', color:'#64748b', textTransform:'uppercase', marginBottom:4 }}>LoanBeacons™ — Mortgage Intelligence Platform</div>
+                      <div style={{ fontSize:22, fontWeight:700, color:'#0f172a', marginBottom:2 }}>Decision Record™ — Case Brief</div>
+                      <div style={{ fontSize:12, color:'#475569' }}>Canonical Sequence Audit Trail · Module 21</div>
+                    </div>
+                    <div style={{ textAlign:'right', fontSize:11, color:'#64748b' }}>
+                      <div>Record ID: <span style={{ fontFamily:'monospace', fontSize:10 }}>{(record.recordId || '').substring(0,16) || '—'}</span></div>
+                      <div>Version: v{record.record_version || 1}</div>
+                      <div>Generated: {new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+                      <div style={{ marginTop:6, padding:'3px 10px', background: riskFlags.length > 0 ? '#fef3c7' : '#ecfdf5', border:`1px solid ${riskFlags.length>0?'#d97706':'#16a34a'}`, borderRadius:4, color: riskFlags.length>0?'#92400e':'#065f46', fontWeight:700, fontSize:11 }}>
+                        {riskFlags.length > 0 ? `⚠ ${riskFlags.filter(f=>['HIGH','CRITICAL'].includes(f.severity)).length} HIGH FLAGS` : '✓ CLEAN RECORD'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Deal identity */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:24, marginBottom:28, padding:'20px 24px', background:'#f8fafc', borderRadius:8, border:'1px solid #e2e8f0' }}>
+                  {[
+                    ['Borrower',       record.header?.borrowerName || '—'],
+                    ['Property',       record.header?.propertyAddress || '—'],
+                    ['Loan Type',      record.header?.loanType || '—'],
+                    ['Loan Purpose',   record.header?.loanPurpose || '—'],
+                    ['Loan Officer',   record.header?.loName || '—'],
+                    ['Modules Run',    `${reportedKeys.length} of ${liveKeys.length}`],
+                    ['Record Status',  status?.toUpperCase() || 'DRAFT'],
+                    ['Completeness',   `${Math.round(score * 100)}%`],
+                  ].map(([label, value]) => (
+                    <div key={label} style={{ display:'flex', gap:8 }}>
+                      <span style={{ fontFamily:"'DM Sans', sans-serif", fontSize:11, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.1em', minWidth:110, paddingTop:1 }}>{label}</span>
+                      <span style={{ fontSize:13, fontWeight:600, color:'#0f172a' }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Section 1: AI Narrative */}
+                <div style={{ marginBottom:32 }}>
+                  <div style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.15em', color:'#64748b', borderBottom:'1px solid #e2e8f0', paddingBottom:8, marginBottom:16 }}>I. Case Narrative</div>
+                  {briefAI ? (
+                    <div style={{ fontSize:14, lineHeight:1.85, color:'#1e293b' }}>
+                      {briefAI.split('\n\n').map((para, i) => para.trim() && (
+                        <p key={i} style={{ margin:'0 0 16px', textIndent:'2em' }}>{para.trim()}</p>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize:13, color:'#94a3b8', fontStyle:'italic', padding:'16px 0' }}>
+                      Click "Generate AI Narrative" above to create a professional case summary from the module findings. The narrative will be written in formal prose suitable for regulatory review.
+                    </div>
+                  )}
+                </div>
+
+                {/* Section 2: Module Findings Summary */}
+                <div style={{ marginBottom:32 }}>
+                  <div style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.15em', color:'#64748b', borderBottom:'1px solid #e2e8f0', paddingBottom:8, marginBottom:16 }}>II. Module Findings Summary</div>
+                  {reportedKeys.length === 0 ? (
+                    <div style={{ fontSize:13, color:'#94a3b8', fontStyle:'italic' }}>No module findings recorded yet.</div>
+                  ) : (
+                    <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12, fontFamily:"'DM Sans', sans-serif" }}>
+                      <thead>
+                        <tr style={{ background:'#f1f5f9' }}>
+                          <th style={{ textAlign:'left', padding:'8px 12px', fontWeight:600, color:'#475569', width:'28%' }}>Module</th>
+                          <th style={{ textAlign:'left', padding:'8px 12px', fontWeight:600, color:'#475569', width:'12%' }}>Date</th>
+                          <th style={{ textAlign:'left', padding:'8px 12px', fontWeight:600, color:'#475569' }}>Verdict / Summary</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reportedKeys.map((key, i) => {
+                          const f = systemFindings[key];
+                          const meta = MODULE_META[key] || { label: key, icon: '⬜' };
+                          return (
+                            <tr key={key} style={{ borderBottom:'1px solid #f1f5f9', background: i%2===0?'#fff':'#fafafa' }}>
+                              <td style={{ padding:'8px 12px', fontWeight:600, color:'#1e293b' }}>{meta.icon} {meta.label}</td>
+                              <td style={{ padding:'8px 12px', color:'#64748b', whiteSpace:'nowrap' }}>{fmtTsShort(f.reported_at)}</td>
+                              <td style={{ padding:'8px 12px', color:'#334155', lineHeight:1.5 }}>{f.verdict || f.summary || '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {/* Section 3: Risk Flags with LO Response */}
+                <div style={{ marginBottom:32 }}>
+                  <div style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.15em', color:'#64748b', borderBottom:'1px solid #e2e8f0', paddingBottom:8, marginBottom:16 }}>III. Risk Flags & LO Response</div>
+                  {riskFlags.length === 0 ? (
+                    <div style={{ fontSize:13, color:'#15803d', background:'#f0fdf4', border:'1px solid #86efac', borderRadius:6, padding:'12px 16px' }}>
+                      ✅ No risk flags have been identified across all modules run to date. This record presents a clean risk profile.
+                    </div>
+                  ) : (
+                    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+                      {riskFlags.map((f, i) => {
+                        const isHigh = ['CRITICAL','HIGH'].includes(f.severity);
+                        const srcMeta = MODULE_META[f.source_module] || MODULE_META[f.sourceModule] || {};
+                        return (
+                          <div key={i} style={{ border:`1px solid ${isHigh?'#fca5a5':'#fed7aa'}`, borderRadius:8, overflow:'hidden' }}>
+                            <div style={{ background: isHigh?'#fff1f2':'#fff7ed', padding:'10px 16px', display:'flex', alignItems:'flex-start', gap:12 }}>
+                              <span style={{ fontSize:16, flexShrink:0 }}>{isHigh?'⛔':'⚠️'}</span>
+                              <div style={{ flex:1 }}>
+                                <div style={{ fontSize:11, fontWeight:700, color: isHigh?'#991b1b':'#92400e', textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:3 }}>
+                                  {f.severity} · {srcMeta.label || f.source_module || f.sourceModule || '—'}
+                                </div>
+                                <div style={{ fontSize:13, color:'#1e293b', lineHeight:1.5 }}>{f.detail || f.message || f.flagCode || '—'}</div>
+                              </div>
+                            </div>
+                            {/* LO Response field */}
+                            <div style={{ background:'#fff', padding:'10px 16px', borderTop:`1px dashed ${isHigh?'#fca5a5':'#fed7aa'}` }}>
+                              <div style={{ fontSize:10, fontWeight:700, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:6 }}>LO Response / Resolution Note</div>
+                              <textarea
+                                value={flagResponses[i] || ''}
+                                onChange={e => setFlagResponses(prev => ({...prev, [i]: e.target.value}))}
+                                placeholder="Describe how this flag was addressed, disclosed to borrower, or resolved…"
+                                rows={2}
+                                style={{ width:'100%', fontSize:12, padding:'8px 10px', border:'1px solid #e2e8f0', borderRadius:6, resize:'vertical', fontFamily:'inherit', color:'#1e293b', boxSizing:'border-box', outline:'none' }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Section 4: LO Attestation */}
+                <div style={{ marginBottom:32 }}>
+                  <div style={{ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.15em', color:'#64748b', borderBottom:'1px solid #e2e8f0', paddingBottom:8, marginBottom:16 }}>IV. LO Attestation & Certification</div>
+                  {record.lo_attestation?.certified ? (
+                    <div style={{ background:'#f0fdf4', border:'1px solid #86efac', borderRadius:8, padding:'16px 20px' }}>
+                      <div style={{ fontSize:13, fontWeight:700, color:'#15803d', marginBottom:8 }}>✅ Certified by {record.lo_attestation.certified_by}</div>
+                      <div style={{ fontSize:12, color:'#166534', fontStyle:'italic', marginBottom:6 }}>"{record.lo_attestation.certified_at && `Attested on ${fmtTs(record.lo_attestation.certified_at)}`}"</div>
+                      <div style={{ fontSize:12, color:'#334155' }}>"I certify this record reflects the information available at the time of this decision."</div>
+                    </div>
+                  ) : (
+                    <div style={{ background:'#fefce8', border:'1px solid #fde047', borderRadius:8, padding:'16px 20px' }}>
+                      <div style={{ fontSize:13, fontWeight:700, color:'#854d0e', marginBottom:4 }}>⏳ Attestation Pending</div>
+                      <div style={{ fontSize:12, color:'#713f12' }}>This record has not yet been attested by the loan officer. Attestation is required before the record is considered complete.</div>
+                      <div style={{ marginTop:20, display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:20 }}>
+                        {['Loan Officer Signature / Date', 'NMLS License Number', 'Company Name'].map(l => (
+                          <div key={l}><div style={{ fontSize:10, color:'#92400e', marginBottom:4 }}>{l}</div><div style={{ borderBottom:'1px solid #1e293b', height:24 }}/></div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Protective disclaimer */}
+                <div style={{ marginTop:40, padding:'16px 20px', background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:8, fontSize:10, color:'#64748b', lineHeight:1.7 }}>
+                  <div style={{ fontWeight:700, textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:6, color:'#475569' }}>Professional Use Disclaimer</div>
+                  <p style={{ margin:0 }}>
+                    PROFESSIONAL USE ONLY. This Decision Record is generated by LoanBeacons™ mortgage intelligence software exclusively for use by licensed mortgage professionals. All findings, analyses, calculations, and recommendations contained herein are based solely on information entered by the user and do not constitute legal, regulatory, compliance, or financial advice. LoanBeacons LLC makes no warranty, express or implied, regarding the accuracy, completeness, regulatory compliance, or fitness for purpose of any analysis or output. The loan officer named herein bears sole professional responsibility for all lending decisions, borrower disclosures, and regulatory compliance obligations under applicable federal and state law including but not limited to RESPA, TILA, ECOA, the Fair Housing Act, and state mortgage licensing statutes. This document is intended to support — not replace — the independent professional judgment of a licensed mortgage originator. LoanBeacons LLC shall not be liable for any lending decision, regulatory finding, or legal outcome arising from the use of this platform.
+                  </p>
+                  <div style={{ marginTop:10, display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:8 }}>
+                    <span>© {new Date().getFullYear()} LoanBeacons LLC · loanbeacons.com · U.S. Provisional Patent Application No. 63/739,290</span>
+                    <span>Generated {new Date().toLocaleString()}</span>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
           {/* ── Record footer ── */}
           <div className="dr-footer">
             <span>LoanBeacons Decision Record™ · Module 21</span>
@@ -832,6 +1100,8 @@ export default function DecisionRecord() {
               style={{ color: score >= 0.9 ? '#34d399' : score >= 0.5 ? '#f59e0b' : '#ef4444' }}>
               {Math.round(score * 100)}% complete
             </span>
+            <span>·</span>
+            <span style={{ color: '#334155', fontSize: 10 }}>For licensed mortgage professional use only · Not legal or regulatory advice · LoanBeacons LLC</span>
           </div>
 
         </div>

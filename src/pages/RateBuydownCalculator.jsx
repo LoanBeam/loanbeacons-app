@@ -434,9 +434,6 @@ export default function RateBuydownCalculator() {
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
-      {/* ── Module Navigation Bar ── */}
-      <ModuleNav moduleNumber={15} />
-
       {/* ── Hero Header ── */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #3b82f6 0%, transparent 50%), radial-gradient(circle at 80% 20%, #8b5cf6 0%, transparent 40%)' }} />
@@ -494,7 +491,7 @@ export default function RateBuydownCalculator() {
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Rate Buydown Calculator™" moduleNumber="09" scenarioId={scenarioId} />
+      <ScenarioHeader moduleTitle="Rate Buydown Calculator™" moduleNumber="15" scenarioId={scenarioId} />
 
       <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
         <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="RATE_BUYDOWN" />
@@ -697,6 +694,7 @@ export default function RateBuydownCalculator() {
                               onChange={(e) => updateRateOption(i, 'price', e.target.value)}
                               className={'w-full px-4 py-2.5 border-2 rounded-xl font-semibold focus:outline-none transition-all ' + (price < 0 ? 'border-violet-300 bg-violet-50 text-violet-700 focus:border-violet-500' : price > 0 ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-slate-200 bg-white text-slate-600')}
                               placeholder="1.500" />
+                            {/* FIX: div always renders (minHeight holds space), only text is conditional — prevents layout bounce on scenario load */}
                             <div className={'text-xs mt-1 font-semibold ' + (upfront < 0 ? 'text-violet-600' : 'text-orange-600')} style={{ minHeight: '16px' }}>
                               {upfront !== 0 && (upfront < 0 ? '🏷 Lender pays ' + fmtD(Math.abs(upfront)) : '💳 Borrower pays ' + fmtD(upfront))}
                             </div>
@@ -730,6 +728,7 @@ export default function RateBuydownCalculator() {
             {showResults && computedOptions.length > 0 && (
               <div id="results-section" className="space-y-6">
 
+                {/* Recommendation hero card */}
                 {best && (
                   <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 rounded-3xl p-8 border border-slate-700 shadow-xl relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full -translate-y-32 translate-x-32" />
@@ -774,6 +773,7 @@ export default function RateBuydownCalculator() {
                   </div>
                 )}
 
+                {/* All options table */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="px-8 py-5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
                     <div>
@@ -801,6 +801,7 @@ export default function RateBuydownCalculator() {
                         </tr>
                       </thead>
                       <tbody>
+                        {/* Baseline row */}
                         <tr className="border-b border-slate-100 bg-slate-50/50">
                           <td className="px-5 py-4 text-sm text-slate-400">—</td>
                           <td className="px-5 py-4 font-bold text-slate-500">{baselineRate}% <span className="text-xs font-normal text-slate-400">(baseline)</span></td>
@@ -848,6 +849,7 @@ export default function RateBuydownCalculator() {
                     </table>
                   </div>
 
+                  {/* Break-even bars */}
                   <div className="px-8 py-6 border-t border-slate-100 space-y-4">
                     <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Break-Even Timeline by Option</div>
                     {computedOptions.filter((o) => o.breakEvenMonths < 999).map((o) => (
@@ -861,6 +863,7 @@ export default function RateBuydownCalculator() {
                     ))}
                   </div>
 
+                  {/* Loan product notes */}
                   <div className="mx-6 mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-5">
                     <div className="font-bold text-amber-800 text-sm mb-3">⚠️ Important — Results Vary by Loan Product</div>
                     <div className="grid grid-cols-2 gap-x-8 gap-y-2">
@@ -881,6 +884,7 @@ export default function RateBuydownCalculator() {
                   </div>
                 </div>
 
+                {/* Letter generator */}
                 <BuydownLetter
                   borrowerName={borrowerName}
                   scenarioName={selectedScenario?.scenarioName}
@@ -894,6 +898,7 @@ export default function RateBuydownCalculator() {
           </>
         )}
       </div>
-    </div>
+
+       </div>
   );
 }

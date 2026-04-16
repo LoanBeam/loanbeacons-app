@@ -112,9 +112,56 @@ export function formatAmount(n) {
   return '$' + Math.round(Number(n) || 0).toLocaleString();
 }
 
+// loanType → display label + filter group mapping
+const LOAN_TYPE_MAP = {
+  // Conventional
+  CONVENTIONAL:          { label: 'Conventional',  group: 'Conventional' },
+  JUMBO:                 { label: 'Jumbo',          group: 'Conventional' },
+  HOMEREADY:             { label: 'HomeReady',      group: 'Conventional' },
+  HOME_POSSIBLE:         { label: 'Home Possible',  group: 'Conventional' },
+  HOMESTYLE:             { label: 'HomeStyle',      group: 'Conventional' },
+  CONVENTIONAL_INVESTMENT: { label: 'Conv Investment', group: 'Conventional' },
+  // Government
+  FHA:                   { label: 'FHA',            group: 'FHA'  },
+  FHA_203K:              { label: 'FHA 203k',       group: 'FHA'  },
+  VA:                    { label: 'VA',             group: 'VA'   },
+  USDA:                  { label: 'USDA',           group: 'USDA' },
+  // Non-QM
+  NON_QM_FULL_DOC:       { label: 'Full Doc Non-QM',        group: 'Non-QM' },
+  BANK_STMT_PERSONAL:    { label: 'Bank Stmt (Personal)',    group: 'Non-QM' },
+  BANK_STMT_BUSINESS:    { label: 'Bank Stmt (Business)',    group: 'Non-QM' },
+  DSCR:                  { label: 'DSCR',                    group: 'Non-QM' },
+  ASSET_DEPLETION:       { label: 'Asset Depletion',         group: 'Non-QM' },
+  NON_QM_1099:           { label: '1099 Only',               group: 'Non-QM' },
+  NON_QM_PNL:            { label: 'P&L Only',                group: 'Non-QM' },
+  FOREIGN_NATIONAL:      { label: 'Foreign National',        group: 'Non-QM' },
+  ITIN:                  { label: 'ITIN',                    group: 'Non-QM' },
+  COMMERCIAL_1_4:        { label: 'Commercial (1-4)',         group: 'Non-QM' },
+  // Hard Money / Private
+  HARD_MONEY:            { label: 'Hard Money',              group: 'Hard Money' },
+  HARD_MONEY_PURCHASE:   { label: 'Hard Money — Purchase',   group: 'Hard Money' },
+  HARD_MONEY_REHAB:      { label: 'Hard Money — Rehab',      group: 'Hard Money' },
+  PRIVATE_MONEY:         { label: 'Private Money',           group: 'Hard Money' },
+  PRIVATE_MONEY_CONSTRUCTION: { label: 'Private Money Construction', group: 'Hard Money' },
+  FIX_FLIP_CONV:         { label: 'Fix & Flip Conv',         group: 'Hard Money' },
+  BRIDGE_LOAN:           { label: 'Bridge Loan',             group: 'Hard Money' },
+  CONSTRUCTION_TO_PERM:  { label: 'Construction-to-Perm',    group: 'Hard Money' },
+  CONSTRUCTION_ONLY:     { label: 'Construction Only',       group: 'Hard Money' },
+};
+
 // loanType is the program field per ScenarioList
 export function getLoanProgram(scenario) {
-  return scenario.loanType || scenario.loanProgram || scenario.program || 'Conventional';
+  const raw = scenario.loanType || scenario.loanProgram || scenario.program || 'Conventional';
+  const mapped = LOAN_TYPE_MAP[raw];
+  // Return the display label if mapped, otherwise prettify the raw value
+  if (mapped) return mapped.label;
+  return raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Returns the filter group for a scenario (used by program filter chips)
+export function getLoanProgramGroup(scenario) {
+  const raw = scenario.loanType || scenario.loanProgram || scenario.program || 'Conventional';
+  return LOAN_TYPE_MAP[raw]?.group || 'Conventional';
 }
 
 // loanPurpose is the purpose field per ScenarioList

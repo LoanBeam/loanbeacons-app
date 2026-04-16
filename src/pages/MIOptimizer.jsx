@@ -561,6 +561,16 @@ function MIOptimizer() {
                         saving={recordSaving}
                       />
                     )}
+                    {savedRecordId && primarySuggestion && (
+                      <NextStepCard
+                        suggestion={primarySuggestion}
+                        secondarySuggestions={secondarySuggestions}
+                        onFollow={logFollow}
+                        onOverride={logOverride}
+                        loanPurpose={loanPurpose}
+                        scenarioId={scenarioId}
+                      />
+                    )}
                     <button
                       onClick={saveResults}
                       className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700"

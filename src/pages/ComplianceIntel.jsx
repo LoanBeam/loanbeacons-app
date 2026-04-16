@@ -113,7 +113,6 @@ function LetterCard({ title, icon, body }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="rounded-3xl border-2 border-purple-200 bg-purple-50 overflow-hidden">
-      <ModuleNav moduleNumber={24} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
         <div className="flex gap-2">
@@ -300,18 +299,24 @@ Return ONLY valid JSON (no markdown, no preamble):
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
-      const riskFlags = [];
-      failItems.forEach(item => riskFlags.push({ field: item.id, message: item.label + ' — Failed', severity: item.risk === 'critical' ? 'HIGH' : 'MEDIUM' }));
-      if (isHPML)     riskFlags.push({ field: 'hpml',        message: 'HPML loan — escrow and appraisal requirements triggered',                          severity: 'MEDIUM' });
-      if (isHOEPA_APR) riskFlags.push({ field: 'hoepa',      message: 'HOEPA APR test triggered — high-cost mortgage restrictions apply',                  severity: 'HIGH' });
-      if (pfOverCap)  riskFlags.push({ field: 'points_fees', message: 'Points & fees (' + pfPct.toFixed(2) + '%) exceed QM cap (' + pfCapPct + '%)',       severity: 'HIGH' });
-      const writtenId = await reportFindings({
-        verdict: complianceScore >= 80 ? 'Compliant' : complianceScore >= 50 ? 'In Progress' : 'Action Required',
-        summary: `Compliance Intelligence — ${loanType || 'Loan'} · Score: ${complianceScore}% · Pass: ${passCount} · Fail: ${failCount} · Review: ${reviewCount} · HPML: ${isHPML ? 'Yes' : 'No'} · HMDA: ${hmdaCollected}/${HMDA_FIELDS.length} collected`,
-        riskFlags,
-        findings: { loanApr, aporRate, aprSpread, isHPML, isHOEPA_APR, lienType, loanType, complianceScore, passCount, failCount, reviewCount, results, hmdaStatus: hmda, loNotes },
-        completeness: { aprEntered: !!loanApr, noFailedChecks: failCount === 0, hmdaComplete: hmdaMissing === 0, aiRun: !!aiAnalysis },
-      });
+      const flags = [];
+      failItems.forEach(item => flags.push({ flagCode: item.id.toUpperCase(), sourceModule: 'COMPLIANCE_INTEL', severity: item.risk === 'critical' ? 'HIGH' : 'MEDIUM', detail: item.label + ' — Failed' }));
+      if (isHPML)      flags.push({ flagCode: 'HPML_TRIGGERED',       sourceModule: 'COMPLIANCE_INTEL', severity: 'MEDIUM', detail: 'HPML loan — escrow and appraisal requirements triggered' });
+      if (isHOEPA_APR) flags.push({ flagCode: 'HOEPA_TRIGGERED',      sourceModule: 'COMPLIANCE_INTEL', severity: 'HIGH',   detail: 'HOEPA APR test triggered — high-cost mortgage restrictions apply' });
+      if (pfOverCap)   flags.push({ flagCode: 'POINTS_FEES_OVER_CAP', sourceModule: 'COMPLIANCE_INTEL', severity: 'HIGH',   detail: 'Points & fees (' + pfPct.toFixed(2) + '%) exceed QM cap (' + pfCapPct + '%)' });
+      const writtenId = await reportFindings(
+        'COMPLIANCE_INTEL',
+        {
+          verdict: complianceScore >= 80 ? 'Compliant' : complianceScore >= 50 ? 'In Progress' : 'Action Required',
+          summary: `Compliance Intelligence — ${loanType || 'Loan'} · Score: ${complianceScore}% · Pass: ${passCount} · Fail: ${failCount} · Review: ${reviewCount} · HPML: ${isHPML ? 'Yes' : 'No'} · HMDA: ${hmdaCollected}/${HMDA_FIELDS.length} collected`,
+          loanApr, aporRate, aprSpread, isHPML, isHOEPA_APR, lienType, loanType,
+          complianceScore, passCount, failCount, reviewCount, results,
+          hmdaStatus: hmda, loNotes,
+        },
+        [],
+        flags,
+        '1.0.0'
+      );
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
     setRecordSaving(false);
@@ -435,6 +440,14 @@ Return ONLY valid JSON (no markdown, no preamble):
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="Compliance Intelligence™"
+        moduleKey="COMPLIANCE_INTEL"
+        onSave={handleSaveToRecord}
+      />
+      <ModuleNav moduleNumber={25} />
+
       {/* Hero */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #7c3aed 0%, transparent 50%), radial-gradient(circle at 80% 20%, #a855f7 0%, transparent 40%)' }} />
@@ -442,7 +455,7 @@ Return ONLY valid JSON (no markdown, no preamble):
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 15</div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 25</div>
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Compliance Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl">QM · ATR · HPML · HOEPA · HMDA · Fair Lending · AI risk assessment</p>
             </div>
@@ -478,10 +491,7 @@ Return ONLY valid JSON (no markdown, no preamble):
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Compliance Intelligence™" moduleNumber="15" scenarioId={scenarioId} />
-      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
-        <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="COMPLIANCE_INTEL" />
-      </div>
+      <ScenarioHeader moduleTitle="Compliance Intelligence™" moduleNumber="25" scenarioId={scenarioId} />
 
       {/* Tab Bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
@@ -659,12 +669,6 @@ Return ONLY valid JSON (no markdown, no preamble):
                     </div>
                   </div>
                 ))}
-                <div className="flex justify-end">
-                  <button onClick={handleSaveToRecord} disabled={recordSaving}
-                    className={'px-8 py-3 rounded-2xl text-sm font-bold transition-colors ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
-                    {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record™'}
-                  </button>
-                </div>
               </div>
             )}
 
@@ -818,12 +822,6 @@ Return ONLY valid JSON (no markdown, no preamble):
                     <textarea value={loNotes} onChange={e => setLoNotes(e.target.value)} rows={4}
                       placeholder="QM exception documentation, HPML compliance steps taken, fair lending notes, state law overlays..."
                       className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-purple-400 resize-none" />
-                    <div className="mt-4 flex justify-end">
-                      <button onClick={handleSaveToRecord} disabled={recordSaving}
-                        className={'px-8 py-3 rounded-2xl text-sm font-bold transition-colors ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
-                        {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record™'}
-                      </button>
-                    </div>
                   </div>
                 </div>
 

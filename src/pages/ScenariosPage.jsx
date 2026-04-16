@@ -5,7 +5,7 @@ import OutcomeCaptureModal from '../components/scenarios/OutcomeCaptureModal';
 import {
   LB_STAGES, STAGE_MAP, STAGE_NAMES, PROGRAM_COLORS, DR_COLORS, ALL_PROGRAMS,
   getStaleness, getBorrowerName, getLoanAmount, getLoanProgram, getLoanPurpose,
-  getAvatarColors, formatAmount,
+  getLoanProgramGroup, getAvatarColors, formatAmount,
 } from '../utils/scenarioStages';
 import './ScenariosPage.css';
 
@@ -102,7 +102,7 @@ export default function ScenariosPage() {
               !s.lbStage?.toLowerCase().includes(q)) return false;
         }
         if (stageFilter !== 'All' && s.lbStage !== stageFilter) return false;
-        if (progFilter  !== 'All' && getLoanProgram(s) !== progFilter) return false;
+        if (progFilter  !== 'All' && getLoanProgramGroup(s) !== progFilter) return false;
         return true;
       })
       .sort((a, b) => {

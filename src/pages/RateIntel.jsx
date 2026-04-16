@@ -433,9 +433,9 @@ export default function RateIntel() {
     setRecordSaving(true);
     try {
       const riskFlags = [];
-      if (lockAdj > 0.25) riskFlags.push({ field: 'lockPeriod', message: 'Extended lock period adds ' + lockAdj + '% to rate', severity: 'MEDIUM' });
-      if (dti && dti > 43) riskFlags.push({ field: 'dti', message: 'P&I-only DTI at ' + dti.toFixed(1) + '% — total DTI will be higher', severity: 'HIGH' });
-      if (marketTrend === 'rising' && !rateLockDate) riskFlags.push({ field: 'lock', message: 'Rising market selected but no lock date recorded', severity: 'MEDIUM' });
+      if (lockAdj > 0.25) riskFlags.push({ flagCode: 'LOCK_PERIOD_EXTENDED', sourceModule: 'RATE_INTEL', severity: 'MEDIUM', detail: 'Extended lock period adds ' + lockAdj + '% to rate' });
+      if (dti && dti > 43) riskFlags.push({ flagCode: 'DTI_HIGH', sourceModule: 'RATE_INTEL', severity: 'HIGH', detail: 'P&I-only DTI at ' + dti.toFixed(1) + '% — total DTI will be higher' });
+      if (marketTrend === 'rising' && !rateLockDate) riskFlags.push({ flagCode: 'RISING_MARKET_UNLOCKED', sourceModule: 'RATE_INTEL', severity: 'MEDIUM', detail: 'Rising market selected but no lock date recorded' });
       const writtenId = await reportFindings(
         'RATE_INTEL',
         {
@@ -463,7 +463,6 @@ export default function RateIntel() {
 
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-      <ModuleNav moduleNumber={19} />
       <div className="text-center"><div className="text-5xl mb-4">🔒</div><div className="text-slate-500">Loading...</div></div>
     </div>
   );
@@ -561,6 +560,14 @@ export default function RateIntel() {
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="Rate Intelligence™"
+        moduleKey="RATE_INTEL"
+        onSave={handleSaveToRecord}
+      />
+      <ModuleNav moduleNumber={19} />
+
       {/* Hero */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #6366f1 0%, transparent 50%), radial-gradient(circle at 80% 20%, #0ea5e9 0%, transparent 40%)' }} />
@@ -608,11 +615,7 @@ export default function RateIntel() {
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Rate Intelligence™" moduleNumber="08" scenarioId={scenarioId} />
-
-      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
-        <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="RATE_INTEL" />
-      </div>
+      <ScenarioHeader moduleTitle="Rate Intelligence™" moduleNumber="19" scenarioId={scenarioId} />
 
       <div className="max-w-7xl mx-auto px-6 py-6 space-y-8">
 

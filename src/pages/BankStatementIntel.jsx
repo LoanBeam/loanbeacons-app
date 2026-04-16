@@ -169,7 +169,7 @@ function LetterCard({ title, icon, body, color = 'violet' }) {
   const btnMap   = { violet: 'bg-violet-700 hover:bg-violet-600', blue: 'bg-blue-700 hover:bg-blue-600', emerald: 'bg-emerald-700 hover:bg-emerald-600' };
   return (
     <div className={'rounded-3xl border-2 overflow-hidden ' + colorMap[color]}>
-      <ModuleNav moduleNumber={6} />
+      <ModuleNav moduleNumber={7} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
         <div className="flex gap-2">
@@ -687,9 +687,9 @@ Return ONLY valid JSON, no markdown: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|WEAK
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Bank Statement Intelligence™" moduleNumber="6" scenarioId={scenarioId} />
+      <ScenarioHeader moduleTitle="Bank Statement Intelligence™" moduleNumber="7" scenarioId={scenarioId} />
       <div className="max-w-7xl mx-auto px-6 pt-2">
-        <ModuleNav moduleNumber={6} />
+        <ModuleNav moduleNumber={7} />
       </div>
 
       <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">

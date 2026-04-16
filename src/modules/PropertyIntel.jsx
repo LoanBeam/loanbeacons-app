@@ -509,7 +509,7 @@ export default function CollateralIntel() {
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 21</div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 09</div>
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Collateral Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl leading-relaxed">Property analysis · AI appraisal review · Waiver eligibility · Rebuttal letter generation</p>
             </div>

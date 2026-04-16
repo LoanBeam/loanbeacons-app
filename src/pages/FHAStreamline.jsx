@@ -8,7 +8,9 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getFirestore, collection, query, orderBy, limit, getDocs, doc, getDoc } from 'firebase/firestore';
 import { app } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import NextStepCard from '../components/NextStepCard';
 import { MODULE_KEYS } from '../constants/decisionRecordConstants';
 import ModuleNav from '../components/ModuleNav';
 
@@ -429,6 +431,18 @@ export default function FHAStreamline() {
   const hardFails  = eligRules.filter(r => !r.pass && r.hard).length;
   const warns      = eligRules.filter(r => !r.pass && !r.hard).length;
   const eligStatus = hardFails > 0 ? 'INELIGIBLE' : warns > 0 ? 'NEEDS_INFO' : 'ELIGIBLE';
+
+  // ── Next Step Intelligence™ — FHA Streamline is always rate_term_refi
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:        'FHA_STREAMLINE',
+      loanPurpose:             'rate_term_refi',
+      decisionRecordFindings:  { FHA_STREAMLINE: { ntbSatisfied: ntbPass, seasoningPass, eligibilityStatus: eligStatus } },
+      scenarioData:            {},
+      completedModules:        [],
+      scenarioId:              selectedScenId,
+      onWriteToDecisionRecord: null,
+    });
 
   // ── Commission
   const loSplit     = parseFloat(compLOSplit) / 100 || 0.70;
@@ -1644,6 +1658,20 @@ export default function FHAStreamline() {
 
       {/* ── Tab Content ── */}
       {tabRenderers[activeTab]?.()}
+
+      {/* ── Next Step Intelligence™ ── */}
+      {drRecordId && primarySuggestion && (
+        <div style={{ marginBottom: 20 }}>
+          <NextStepCard
+            suggestion={primarySuggestion}
+            secondarySuggestions={secondarySuggestions}
+            onFollow={logFollow}
+            onOverride={logOverride}
+            loanPurpose="rate_term_refi"
+            scenarioId={selectedScenId}
+          />
+        </div>
+      )}
 
       {/* ── Decision Record Banner ── */}
       <DecisionRecordBanner

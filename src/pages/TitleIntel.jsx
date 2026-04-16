@@ -9,6 +9,7 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ModuleNav from '../components/ModuleNav';
+import ScenarioHeader from '../components/ScenarioHeader';
 
 const LS_KEY = (id) => `lb_titleintel_${id}`;
 
@@ -299,7 +300,7 @@ STOP: any critical issue making closing impossible today. HIGH_RISK: 2+ HIGH ite
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
-      const writtenId = await reportFindings('TITLE_INTEL', { vesting, vestingConfirmed, titleCompany: titleCompany === 'Other' ? titleCompanyOther : titleCompany, titleOrdered, titleReceived, closingDate: closingDate||null, flaggedIssues: flaggedIssues.map(i=>i.id), criticalIssueCount: criticalIssues.length, highIssueCount: highIssues.length, lienCount: liens.length, totalLienAmount: Math.round(totalLienAmount), unconfirmedPayoffs, lenderTitleInsurance: parseFloat(titleInsurance.lender)||null, ownerTitleInsurance: parseFloat(titleInsurance.owner)||null, aiRiskRating: aiAnalysis?.riskRating||null, aiClosingReadiness: aiAnalysis?.closingReadiness||null, extractionApplied, loNotes, timestamp: new Date().toISOString() });
+      const writtenId = await reportFindings('TITLE_INTEL', { vesting, vestingConfirmed, titleCompany: titleCompany === 'Other' ? titleCompanyOther : titleCompany, titleOrdered, titleReceived, closingDate: closingDate||null, flaggedIssues: flaggedIssues.map(i=>i.id), criticalIssueCount: criticalIssues.length, highIssueCount: highIssues.length, lienCount: liens.length, totalLienAmount: Math.round(totalLienAmount), unconfirmedPayoffs, lenderTitleInsurance: parseFloat(titleInsurance.lender)||null, ownerTitleInsurance: parseFloat(titleInsurance.owner)||null, aiRiskRating: aiAnalysis?.riskRating||null, aiClosingReadiness: aiAnalysis?.closingReadiness||null, extractionApplied, loNotes, timestamp: new Date().toISOString() }, [], [], '1.0.0');
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); } finally { setRecordSaving(false); }
   };
@@ -376,6 +377,12 @@ STOP: any critical issue making closing impossible today. HIGH_RISK: 2+ HIGH ite
 
   return (
     <div className="min-h-screen bg-slate-50 pb-16">
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="Title Intelligence™"
+        moduleKey="TITLE_INTEL"
+        onSave={handleSaveToRecord}
+      />
       <ModuleNav moduleNumber={23} />
       <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-6 mb-6">
         <div className="max-w-6xl mx-auto">
@@ -383,7 +390,7 @@ STOP: any critical issue making closing impossible today. HIGH_RISK: 2+ HIGH ite
             <div>
               <div className="flex items-center gap-3 mb-1">
                 <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase">Stage 2 — Lender Fit</span>
-                <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">Module 10</span>
+                <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">Module 23</span>
                 {loanType && <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full">{loanType}</span>}
               </div>
               <h1 className="text-2xl font-bold text-white" style={{ fontFamily: '"DM Serif Display", serif' }}>Title Intelligence™</h1>
@@ -428,6 +435,8 @@ STOP: any critical issue making closing impossible today. HIGH_RISK: 2+ HIGH ite
           </div>
         </div>
       </div>
+
+      <ScenarioHeader moduleTitle="Title Intelligence™" moduleNumber="23" scenarioId={scenarioId} />
 
       <div className="max-w-6xl mx-auto px-4">
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
@@ -744,7 +753,7 @@ STOP: any critical issue making closing impossible today. HIGH_RISK: 2+ HIGH ite
               </div>
             )}
 
-            {scenarioId && <DecisionRecordBanner recordId={savedRecordId} moduleName="Title Intelligence™" onSave={handleSaveToRecord} saving={recordSaving} />}
+            {scenarioId && null}
           </div>
 
           <div className="xl:col-span-1 space-y-4 xl:sticky xl:top-6 self-start">
