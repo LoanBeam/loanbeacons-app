@@ -3,6 +3,7 @@ import { db } from "../firebase/config";
 import { doc, getDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { useSearchParams } from "react-router-dom";
 import ModuleNav from '../components/ModuleNav';
+import ScenarioHeader from '../components/ScenarioHeader';
 import { useDecisionRecord } from "../hooks/useDecisionRecord";
 import { useNextStepIntelligence } from "../hooks/useNextStepIntelligence";
 import DecisionRecordBanner from "../components/DecisionRecordBanner";
@@ -383,7 +384,6 @@ Keep it under 300 words. Do not include placeholder brackets — write it as a c
   function CheckRow({ label, pass }) {
     return (
       <div className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
-      <ModuleNav moduleNumber={14} />
         <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${pass ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
           {pass ? "✓" : "✗"}
         </span>
@@ -655,25 +655,49 @@ Keep it under 300 words. Do not include placeholder brackets — write it as a c
   // ── Main Render ────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-50 pb-24" style={{ fontFamily: "'DM Sans', sans-serif" }}>
-      {/* Header */}
-      <div className="bg-slate-900 text-white px-6 py-8">
-        <div className="max-w-6xl mx-auto">
-          <div className="flex items-start justify-between flex-wrap gap-4">
-            <div>
-              <p className="text-slate-400 text-xs font-semibold uppercase tracking-widest mb-1">LoanBeacons™ · Conventional Refi</p>
-              <h1 className="text-2xl font-bold" style={{ fontFamily: "'DM Serif Display', serif" }}>
+
+      {/* ── 1. DecisionRecordBanner — FIRST ───────────────────────────── */}
+      <div className="max-w-6xl mx-auto px-6 pt-4">
+        <DecisionRecordBanner
+          recordId={savedRecordId}
+          moduleName="Conventional Refi Intelligence™"
+          moduleKey="CONVENTIONAL_REFI_INTEL"
+          onSave={handleSaveToRecord}
+          saving={recordSaving}
+        />
+      </div>
+
+      {/* ── 2. ModuleNav — SECOND ─────────────────────────────────────── */}
+      <ModuleNav moduleNumber={14} />
+
+      {/* ── 3. Hero — flexbox: left flex:1 | right flexShrink:0 ──────── */}
+      <div className="max-w-6xl mx-auto px-6 mb-2">
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl px-6 py-5">
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div style={{ flex: 1 }}>
+              <h1 className="text-2xl font-bold text-white" style={{ fontFamily: "'DM Serif Display', serif", margin: 0 }}>
                 Conventional Refi Intelligence™
               </h1>
-              <p className="text-slate-300 text-sm mt-1">RefiNow™ &amp; Refi Possible℠ Eligibility Advisor</p>
+              <p className="text-indigo-200 text-sm mt-1">RefiNow™ &amp; Refi Possible℠ Eligibility Advisor · Fannie Mae &amp; Freddie Mac</p>
             </div>
-            <div className="flex flex-col items-end gap-1">
-              {borrowerName && <p className="text-sm font-semibold text-white">{borrowerName}</p>}
-              {propertyAddress && <p className="text-xs text-slate-400">{propertyAddress}</p>}
+            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10, marginLeft: 24 }}>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <span className="text-xs font-bold tracking-widest uppercase bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-400/30 text-indigo-300">Stage 3 — Refi Intelligence</span>
+                <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">Module 14</span>
+                <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-400/30 font-semibold">● LIVE</span>
+              </div>
+              {borrowerName && (
+                <div className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right" style={{ minWidth: 190 }}>
+                  <p className="text-xs text-indigo-200">{borrowerName}</p>
+                  <p className="text-lg font-black text-white">Conventional</p>
+                  <p className="text-xs text-slate-400">{county || 'No county'}</p>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Tabs */}
-          <div className="flex gap-1 mt-6 flex-wrap">
+          {/* Tabs inside hero */}
+          <div className="flex gap-1 mt-4 flex-wrap">
             {TABS.map((tab) => {
               const locked =
                 (tab.id === "refinow" && ownershipResult && ownershipResult !== "fannie") ||
@@ -690,13 +714,17 @@ Keep it under 300 words. Do not include placeholder brackets — write it as a c
                       : "text-slate-300 hover:text-white hover:bg-slate-800"
                   }`}
                 >
-                  {tab.label}
-                  {locked && " 🔒"}
+                  {tab.label}{locked && " 🔒"}
                 </button>
               );
             })}
           </div>
         </div>
+      </div>
+
+      {/* ── 4. ScenarioHeader bar ─────────────────────────────────────── */}
+      <div className="max-w-6xl mx-auto px-6">
+        <ScenarioHeader scenario={scenario} moduleNumber={14} scenarioId={scenarioId !== "default" ? scenarioId : null} />
       </div>
 
       {/* Body */}
@@ -883,29 +911,6 @@ Keep it under 300 words. Do not include placeholder brackets — write it as a c
               </ul>
             </div>
 
-            {/* Next Step Intelligence™ */}
-            {savedRecordId && primarySuggestion && (
-              <div className="mb-5">
-                <NextStepCard
-                  suggestion={primarySuggestion}
-                  secondarySuggestions={secondarySuggestions}
-                  onFollow={logFollow}
-                  onOverride={logOverride}
-                  loanPurpose={loanPurpose}
-                  scenarioId={scenarioId !== "default" ? scenarioId : undefined}
-                />
-              </div>
-            )}
-
-            {/* Decision Record Banner */}
-            {scenarioId && scenarioId !== "default" && (
-              <DecisionRecordBanner
-                recordId={savedRecordId}
-                moduleName="Conventional Refi Intelligence™"
-                onSave={handleSaveToRecord}
-                saving={recordSaving}
-              />
-            )}
           </div>
         )}
       </div>

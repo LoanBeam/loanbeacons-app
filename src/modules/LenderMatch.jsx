@@ -29,6 +29,7 @@ import { AlternativeLenderCard } from "../components/lenderMatch/AlternativeLend
 import { DecisionRecordModal }   from "../components/lenderMatch/DecisionRecordModal";
 import { IneligibleLenderRow }   from "../components/lenderMatch/IneligibleLenderRow";
 import ModuleNav from '../components/ModuleNav';
+import ScenarioHeader from '../components/ScenarioHeader';
 
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -292,6 +293,7 @@ export default function LenderMatch() {
   const [webResults, setWebResults]             = useState(null);
   const [webSearchDone, setWebSearchDone]       = useState(false);
   const [completedModules, setCompletedModules] = useState([]);
+  const [scenarioData, setScenarioData]         = useState(null); // raw Firestore object for ScenarioHeader + AE Share
 
   const searchNonQMLendersOnline = useCallback(async () => {
     setWebSearchLoading(true);
@@ -311,7 +313,7 @@ export default function LenderMatch() {
           'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           max_tokens: 1200,
           tools: [{ type: 'web_search_20250305', name: 'web_search' }],
           system: 'You are a mortgage industry researcher. Search for Non-QM wholesale lenders that match this borrower profile. Return ONLY a JSON array — no markdown, no preamble — of up to 6 lenders. Each object must have: {"name":"Lender Name","nmls":"NMLS# if found","specialty":"their Non-QM niche","website":"url","minFICO":"minimum credit score","whyGood":"1 sentence why this lender fits this specific profile"}',
@@ -337,6 +339,21 @@ export default function LenderMatch() {
   const [searchParams] = useSearchParams();
   const scenarioIdParam = searchParams.get('scenarioId');
   const { reportFindings } = useDecisionRecord(scenarioIdParam);
+
+  // ── localStorage autosave ─────────────────────────────────────────────────
+  const LS_KEY = scenarioIdParam ? `lb_lendermatch_${scenarioIdParam}` : null;
+  useEffect(() => {
+    if (!LS_KEY) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+      if (saved?.form) setForm(f => ({ ...f, ...saved.form }));
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [LS_KEY]);
+  useEffect(() => {
+    if (!LS_KEY) return;
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ form })); } catch { /* ignore */ }
+  }, [LS_KEY, form]);
 
   // ── Fetch completed modules from Decision Records ─────────────────────────
   useEffect(() => {
@@ -374,6 +391,8 @@ export default function LenderMatch() {
         const name = [s.firstName, s.lastName].filter(Boolean).join(' ');
         const addr = [s.streetAddress, s.city, s.state, s.zipCode].filter(Boolean).join(', ');
         setBorrowerDisplay({ name, address: addr, firstTimeBuyer: s.firstTimeBuyer || false });
+        // Store full object so ScenarioHeader can render AE Share button + borrower context
+        setScenarioData({ id: snap.id, ...s });
       } catch (e) { console.error('Scenario load:', e); }
     })();
   }, [scenarioIdParam]);
@@ -452,7 +471,7 @@ export default function LenderMatch() {
         nonQMEligible:  results.nonQMSection?.eligible?.length  || 0,
         matchFound:     results.totalEligible > 0,
         timestamp:      new Date().toISOString(),
-      });
+      }, [], [], '1.0.0');
       if (id) setSavedRecordId(id);
     } catch (e) { console.error('DR save failed:', e); }
     finally { setRecordSaving(false); }
@@ -503,60 +522,80 @@ export default function LenderMatch() {
   // ─── Render ──────────────────────────────────────────────────────────────
   return (
     <div style={S.page}>
-      <ModuleNav moduleNumber={8} />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
 
-      <header style={S.header}>
-        <div style={S.headerInner}>
-          <div style={S.logoGroup}>
-            <div style={S.logoIcon}>🔦</div>
-            <div>
-              <div style={S.logoText}>Lender Match™</div>
-              <div style={S.logoSubtext}>Decision Intelligence Engine</div>
-            </div>
-          </div>
-          <div style={S.headerMeta}>
-            {savedLenderName && (
-              <span style={{ ...S.engineBadge, color: T.greenLight, borderColor: T.greenBorder }}>
-                ✓ {savedLenderName} linked to scenario
-              </span>
-            )}
-            {results && <span style={S.engineBadge}>{results.totalEligible} eligible · {results.timestamp?.slice(0,10)}</span>}
-            <span style={S.engineBadge}>ENGINE v{ENGINE_VERSION}</span>
-          </div>
-        </div>
-      </header>
+      {/* ── 1. DecisionRecordBanner — FIRST ───────────────────────────── */}
+      <div className="max-w-screen-xl mx-auto px-6 pt-4">
+        <DecisionRecordBanner
+          recordId={savedRecordId}
+          moduleName="Lender Match™"
+          moduleKey="LENDER_MATCH"
+          onSave={handleSaveToRecord}
+          saving={recordSaving}
+        />
+      </div>
 
-      {/* ── BORROWER INFO BANNER ── */}
-      {(borrowerDisplay.name || scenarioIdParam) && (
-        <div style={{ backgroundColor: "#1B3A6B", padding: "10px 24px" }}>
-          <div style={{ maxWidth: "1280px", margin: "0 auto" }}>
-            <p style={{ fontSize: "11px", fontWeight: 600, color: "#93c5fd", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "4px" }}>
-              Borrower Scenario — Lender Match™
-            </p>
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "24px" }}>
-              {borrowerDisplay.name && (
-                <span style={{ color: "#fff", fontWeight: 700, fontSize: "15px" }}>{borrowerDisplay.name}</span>
+      {/* ── 2. ModuleNav — SECOND ─────────────────────────────────────── */}
+      <ModuleNav moduleNumber={8} />
+
+      {/* ── 3. Hero — flexbox: left flex:1 | right flexShrink:0 ──────── */}
+      <div className="max-w-screen-xl mx-auto px-6 mb-4">
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl px-6 py-5">
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+
+            {/* Left — branding + subtitle */}
+            <div style={{ flex: 1 }}>
+              <div className="flex items-center gap-2 mb-1">
+                <div style={{ width: '28px', height: '28px', borderRadius: '6px', background: `linear-gradient(135deg, ${T.amber} 0%, ${T.amberLight} 100%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px' }}>🔦</div>
+                <h1 className="text-2xl font-bold text-white" style={{ fontFamily: 'DM Serif Display, serif' }}>
+                  Lender Match™
+                </h1>
+              </div>
+              <p className="text-slate-400 text-xs uppercase tracking-widest font-bold mt-0.5" style={{ fontFamily: T.fontMono }}>
+                Decision Intelligence Engine
+              </p>
+              {results && (
+                <p className="text-slate-400 text-sm mt-2">
+                  {results.totalEligible} eligible lender{results.totalEligible !== 1 ? 's' : ''} · {results.timestamp?.slice(0, 10)}
+                </p>
               )}
-              {borrowerDisplay.address && (
-                <span style={{ color: "#bfdbfe", fontSize: "13px" }}>{borrowerDisplay.address}</span>
-              )}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "16px", fontSize: "13px", color: "#dbeafe" }}>
-                {form.creditScore > 0   && <span>FICO <strong style={{ color: "#fff" }}>{form.creditScore}</strong></span>}
-                {form.loanType          && <span>Loan <strong style={{ color: "#fff" }}>{form.loanType === "All" ? "All Programs" : form.loanType}</strong></span>}
-                {form.propertyValue > 0 && <span>Price <strong style={{ color: "#fff" }}>${Number(form.propertyValue).toLocaleString()}</strong></span>}
-                {form.loanAmount > 0    && <span>Loan Amt <strong style={{ color: "#fff" }}>${Number(form.loanAmount).toLocaleString()}</strong></span>}
-                {computedLTV            && <span>LTV <strong style={{ color: "#fff" }}>{computedLTV}%</strong></span>}
-                {form.state             && <span>State <strong style={{ color: "#fff" }}>{form.state}</strong></span>}
-                <span style={{ color: borrowerDisplay.firstTimeBuyer ? "#6ee7b7" : "#bfdbfe", fontWeight: borrowerDisplay.firstTimeBuyer ? 600 : 400 }}>
-                  {borrowerDisplay.firstTimeBuyer ? "FTHB ✓" : "Not FTHB"}
+            </div>
+
+            {/* Right — pills stacked above scenario card */}
+            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', marginLeft: '24px' }}>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-400/30">
+                  Stage 2 — Lender Fit
+                </span>
+                <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">Module 8</span>
+                <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-400/30 font-semibold">● LIVE</span>
+                <span style={{ fontFamily: T.fontMono, fontSize: '10px', color: '#94a3b8', letterSpacing: '0.06em', padding: '3px 8px', border: '1px solid #334155', borderRadius: '4px' }}>
+                  ENGINE v{ENGINE_VERSION}
                 </span>
               </div>
+              {borrowerDisplay.name && (
+                <div className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right" style={{ minWidth: '190px' }}>
+                  <p className="text-xs text-slate-300 font-medium">{borrowerDisplay.name}</p>
+                  {form.loanAmount > 0 && (
+                    <p className="text-lg font-black text-white">${Number(form.loanAmount).toLocaleString()}</p>
+                  )}
+                  <p className="text-xs text-slate-400">
+                    {form.loanType !== 'All' ? form.loanType : 'All Programs'}
+                    {form.state ? ` · ${form.state}` : ''}
+                    {savedLenderName && <span className="text-emerald-400 font-bold"> · ✓ {savedLenderName}</span>}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
-      )}
+      </div>
+
+      {/* ── 4. ScenarioHeader bar ─────────────────────────────────────── */}
+      <div className="max-w-screen-xl mx-auto px-6">
+        <ScenarioHeader scenario={scenarioData} moduleNumber={8} scenarioId={scenarioIdParam} />
+      </div>
 
       <main style={S.body}>
 
@@ -873,8 +912,6 @@ export default function LenderMatch() {
           </div>
         )}
       </main>
-
-      {scenarioIdParam && <DecisionRecordBanner recordId={savedRecordId} moduleName="Lender Match™" onSave={handleSaveToRecord} saving={recordSaving} />}
 
       {decisionModal.open && (
         <DecisionRecordModal

@@ -13,6 +13,7 @@ import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import NextStepCard from '../components/NextStepCard';
 import { MODULE_KEYS } from '../constants/decisionRecordConstants';
 import ModuleNav from '../components/ModuleNav';
+import ScenarioHeader from '../components/ScenarioHeader';
 
 const functions = getFunctions(app);
 const db        = getFirestore(app);
@@ -162,7 +163,7 @@ const S = {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function FHAStreamline() {
-  const CURRENT_MODULE = 10;
+  const CURRENT_MODULE = 11;
   const prevMod = MODULES[CURRENT_MODULE - 2];
   const nextMod = MODULES[CURRENT_MODULE];
   const navigate = (path) => { window.location.href = path; };
@@ -1608,58 +1609,14 @@ export default function FHAStreamline() {
   // ─────────────────────────────────────────────────────────────────────────────
   return (
     <div style={S.container}>
-      <ModuleNav moduleNumber={11} />
 
-      {/* ── Header ── */}
-      <div style={S.header}>
-        <div style={S.headerTop}>
-          <div>
-            <div style={{ fontSize: 11, opacity: 0.65, marginBottom: 3, letterSpacing: '0.08em' }}>MODULE 10 OF 27</div>
-            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: '-0.01em' }}>FHA Streamline</h1>
-            <div style={{ fontSize: 13, opacity: 0.8, marginTop: 3 }}>FHA Streamline Refinance Intelligence</div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-            <span style={S.badge}>📋 FHA STREAMLINE</span>
-            {ntbPass          && <span style={{ ...S.badge, ...S.badgeGreen }}>✅ NTB SATISFIED</span>}
-            {eligStatus === 'INELIGIBLE' && <span style={{ ...S.badge, ...S.badgeRed }}>❌ INELIGIBLE</span>}
-            {eligStatus === 'NEEDS_INFO' && <span style={{ ...S.badge, ...S.badgeAmber }}>⚠️ NEEDS REVIEW</span>}
-            {monthsElapsed > 0 && monthsElapsed < 36 && <span style={{ ...S.badge, ...S.badgeAmber }}>🔄 {(ufmipRefundPct * 100).toFixed(0)}% UFMIP REFUND</span>}
-          </div>
-        </div>
-        <div style={S.scenarioRow}>
-          <span style={{ fontSize: 12, opacity: 0.75 }}>Load Scenario:</span>
-          <select style={S.headerSelect} value={selectedScenId} onChange={e => handleScenarioSelect(e.target.value)}>
-            <option value="">— Select a scenario —</option>
-            {scenarios.map(s => (
-              <option key={s.id} value={s.id}>
-                {s.borrowerName || s.borrower_name || ((s.firstName || '') + ' ' + (s.lastName || '')).trim() || 'Unnamed'} · {s.propertyAddress?.split(',')[0] || s.streetAddress || 'No address'}
-              </option>
-            ))}
-          </select>
-          {loadingScenarios && <span style={{ fontSize: 12, opacity: 0.65 }}>Loading...</span>}
-          {borrowerName && <span style={{ fontSize: 12, opacity: 0.85 }}>📋 {borrowerName}</span>}
-          <button
-            onClick={handleSave}
-            style={{ padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: saveFlash ? '#22c55e' : 'rgba(255,255,255,0.2)', color: saveFlash ? '#fff' : 'rgba(255,255,255,0.9)', transition: 'all 0.3s', display: 'flex', alignItems: 'center', gap: 5 }}>
-            {saveFlash ? '✅ Saved!' : '💾 Save'}
-          </button>
-          {savedAt && !saveFlash && (
-            <span style={{ fontSize: 11, opacity: 0.55 }}>Last saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-          )}
-        </div>
-      </div>
-
-      {/* ── Tab Bar ── */}
-      <div style={S.tabBar}>
-        {TABS.map(t => (
-          <button key={t.id} style={S.tab(activeTab === t.id)} onClick={() => { handleSave(); setActiveTab(t.id); }}>{t.label}</button>
-        ))}
-      </div>
-
-      {/* ── Tab Content ── */}
-      {tabRenderers[activeTab]?.()}
-
-      {/* ── Next Step Intelligence™ ── */}
+      {/* ── 1. DecisionRecordBanner — FIRST ───────────────────────────── */}
+      <DecisionRecordBanner
+        recordId={drRecordId}
+        moduleName="FHA Streamline Intelligence™"
+        moduleKey="FHA_STREAMLINE"
+        onSave={handleSave}
+      />
       {drRecordId && primarySuggestion && (
         <div style={{ marginBottom: 20 }}>
           <NextStepCard
@@ -1673,45 +1630,80 @@ export default function FHAStreamline() {
         </div>
       )}
 
-      {/* ── Decision Record Banner ── */}
-      <DecisionRecordBanner
-        recordId={drRecordId}
-        moduleName="FHA Streamline"
-        onSave={handleSave}
-      />
+      {/* ── 2. ModuleNav — SECOND ─────────────────────────────────────── */}
+      <ModuleNav moduleNumber={11} />
 
-      {/* ── Canonical Bar ── */}
-      <div style={S.canonicalBar}>
-        {canonicalExpanded && (
-          <div style={{ background: '#0a2d54', padding: '10px 16px', maxWidth: 1100, margin: '0 auto' }}>
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', textAlign: 'center', marginBottom: 8, letterSpacing: '0.1em' }}>CANONICAL SEQUENCE™ — 27 MODULES</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center' }}>
-              {MODULES.map(m => (
-                <button key={m.id} onClick={() => navigate(m.path)} title={m.label}
-                  style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', cursor: 'pointer', background: m.id === CURRENT_MODULE ? '#f9c846' : 'rgba(255,255,255,0.1)', color: m.id === CURRENT_MODULE ? '#000' : 'rgba(255,255,255,0.65)', fontWeight: m.id === CURRENT_MODULE ? 700 : 400 }}>
-                  {m.id}. {m.label.split(' ')[0]}
-                </button>
-              ))}
+      {/* ── 3. Hero — flexbox: left flex:1 | right flexShrink:0 ──────── */}
+      <div className="bg-gradient-to-br from-slate-900 to-blue-950 text-white rounded-3xl px-6 py-5 mb-5">
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+
+          {/* Left — title + subtitle + scenario selector row */}
+          <div style={{ flex: 1 }}>
+            <h1 className="text-2xl font-bold text-white" style={{ fontFamily: "'DM Serif Display', serif", margin: 0 }}>
+              FHA Streamline Intelligence™
+            </h1>
+            <p style={{ fontSize: 13, color: '#93c5fd', marginTop: 4 }}>FHA Streamline Refinance · NTB Test · UFMIP Calculator · Pricing & Comp</p>
+            <div style={S.scenarioRow}>
+              <span style={{ fontSize: 12, opacity: 0.75 }}>Load Scenario:</span>
+              <select style={S.headerSelect} value={selectedScenId} onChange={e => handleScenarioSelect(e.target.value)}>
+                <option value="">— Select a scenario —</option>
+                {scenarios.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.borrowerName || s.borrower_name || ((s.firstName || '') + ' ' + (s.lastName || '')).trim() || 'Unnamed'} · {s.propertyAddress?.split(',')[0] || s.streetAddress || 'No address'}
+                  </option>
+                ))}
+              </select>
+              {loadingScenarios && <span style={{ fontSize: 12, opacity: 0.65 }}>Loading...</span>}
+              {borrowerName && <span style={{ fontSize: 12, opacity: 0.85 }}>📋 {borrowerName}</span>}
+              <button
+                onClick={handleSave}
+                style={{ padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: saveFlash ? '#22c55e' : 'rgba(255,255,255,0.2)', color: saveFlash ? '#fff' : 'rgba(255,255,255,0.9)', transition: 'all 0.3s', display: 'flex', alignItems: 'center', gap: 5 }}>
+                {saveFlash ? '✅ Saved!' : '💾 Save'}
+              </button>
+              {savedAt && !saveFlash && (
+                <span style={{ fontSize: 11, opacity: 0.55 }}>Last saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              )}
             </div>
           </div>
-        )}
-        <div style={S.canonicalMain}>
-          <button style={{ ...S.btn, background: 'rgba(255,255,255,0.1)', color: '#fff', fontSize: 12, padding: '6px 12px', opacity: prevMod ? 1 : 0.4 }} onClick={() => prevMod && navigate(prevMod.path)} disabled={!prevMod}>
-            ← {prevMod?.label || ''}
-          </button>
-          <div style={{ display: 'flex', gap: 4, flex: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
-            {MODULES.map(m => <div key={m.id} title={m.label} style={S.dot(m.id === CURRENT_MODULE)} onClick={() => navigate(m.path)}>{m.id === CURRENT_MODULE ? m.id : ''}</div>)}
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button style={{ ...S.btn, background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.55)', padding: '4px 8px', fontSize: 11 }} onClick={() => setCanonicalExpanded(!canonicalExpanded)}>
-              {canonicalExpanded ? '▼' : '▲'} Map
-            </button>
-            <button style={{ ...S.btn, background: 'rgba(255,255,255,0.1)', color: '#fff', fontSize: 12, padding: '6px 12px', opacity: nextMod ? 1 : 0.4 }} onClick={() => nextMod && navigate(nextMod.path)} disabled={!nextMod}>
-              {nextMod?.label || ''} →
-            </button>
+
+          {/* Right — pills stacked above status badges + scenario card */}
+          <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10, marginLeft: 24 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <span className="text-xs font-bold tracking-widest uppercase bg-blue-500/20 px-3 py-1 rounded-full border border-blue-400/30 text-blue-300">
+                Stage 3 — Refi Intelligence
+              </span>
+              <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">Module 11</span>
+              {ntbPass          && <span style={{ ...S.badge, ...S.badgeGreen }}>✅ NTB SATISFIED</span>}
+              {eligStatus === 'INELIGIBLE' && <span style={{ ...S.badge, ...S.badgeRed }}>❌ INELIGIBLE</span>}
+              {eligStatus === 'NEEDS_INFO' && <span style={{ ...S.badge, ...S.badgeAmber }}>⚠️ NEEDS REVIEW</span>}
+              {monthsElapsed > 0 && monthsElapsed < 36 && <span style={{ ...S.badge, ...S.badgeAmber }}>🔄 {(ufmipRefundPct * 100).toFixed(0)}% UFMIP REFUND</span>}
+            </div>
+            {borrowerName && (
+              <div className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right" style={{ minWidth: 190 }}>
+                <p style={{ fontSize: 12, color: '#93c5fd', margin: 0 }}>{borrowerName}</p>
+                <p style={{ fontSize: 18, fontWeight: 900, color: '#fff', margin: '2px 0' }}>FHA Streamline</p>
+                <p style={{ fontSize: 12, color: '#94a3b8', margin: 0 }}>
+                  {existingUPB ? `UPB $${Number(existingUPB).toLocaleString()}` : 'No loan data yet'}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {/* ── 4. ScenarioHeader bar ─────────────────────────────────────── */}
+      <ScenarioHeader scenario={selectedScenId ? { firstName: borrowerName.split(' ')[0], lastName: borrowerName.split(' ').slice(1).join(' '), streetAddress: propertyAddress } : null} moduleNumber={11} scenarioId={selectedScenId} />
+
+      {/* ── Tab Bar ── */}
+      <div style={S.tabBar}>
+        {TABS.map(t => (
+          <button key={t.id} style={S.tab(activeTab === t.id)} onClick={() => { handleSave(); setActiveTab(t.id); }}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* ── Tab Content ── */}
+      {tabRenderers[activeTab]?.()}
+
     </div>
   );
 }

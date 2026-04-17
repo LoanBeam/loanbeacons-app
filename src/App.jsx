@@ -1,8 +1,12 @@
+import { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom'
-import { AuthProvider } from './context/AuthContext'
+import { AuthProvider, useAuth } from './context/AuthContext'
+import { doc, getDoc } from 'firebase/firestore'
+import { db } from './firebase/config'
 import ProtectedRoute from './components/ProtectedRoute'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
+import LoginAcknowledgment from './components/LoginAcknowledgment'
 import Dashboard from './components/Dashboard'
 import LoginPage from './pages/LoginPage'
 import SignUpPage from './pages/SignUpPage'
@@ -48,14 +52,57 @@ const STANDALONE_ROUTES = ['/ae-share', '/processor-share', '/login', '/signup']
 
 function AppShell() {
   const location = useLocation()
+  const { user } = useAuth()
   const isStandalone = STANDALONE_ROUTES.some(r => location.pathname.startsWith(r))
+
+  const [termsAcknowledged, setTermsAcknowledged] = useState(null) // null = checking
+
+  useEffect(() => {
+    if (!user) {
+      setTermsAcknowledged(null)
+      return
+    }
+    const check = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid))
+        if (snap.exists() && snap.data().acknowledgedTerms === true) {
+          setTermsAcknowledged(true)
+        } else {
+          setTermsAcknowledged(false)
+        }
+      } catch (err) {
+        console.error('Ack check failed:', err)
+        setTermsAcknowledged(false)
+      }
+    }
+    check()
+  }, [user])
+
+  // Show spinner while checking ack status for logged-in user
+  if (user && !isStandalone && termsAcknowledged === null) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  // Show acknowledgment gate if user is logged in but hasn't agreed yet
+  if (user && !isStandalone && termsAcknowledged === false) {
+    return (
+      <LoginAcknowledgment
+        user={user}
+        onAcknowledged={() => setTermsAcknowledged(true)}
+      />
+    )
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
       {!isStandalone && <Navbar />}
       <Routes>
 
-        {/* ── Public routes ── */}
+        {/* -- Public routes -- */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignUpPage />} />
         <Route path="/ae-share/:token" element={<AESharePage />} />
@@ -63,7 +110,7 @@ function AppShell() {
         <Route path="/lender-intake" element={<LenderIntakeForm />} />
         <Route path="/lender-intake/:token" element={<LenderIntakeForm />} />
 
-        {/* ── Protected routes ── */}
+        {/* -- Protected routes -- */}
         <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/scenario-creator" element={<ProtectedRoute><ScenarioCreator /></ProtectedRoute>} />
         <Route path="/scenario-creator/:id" element={<ProtectedRoute><ScenarioCreator /></ProtectedRoute>} />

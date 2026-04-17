@@ -17,8 +17,8 @@
 export const MODULE_KEYS = {
   // ── Stage 1: Pre-Structure (M01–M07) ──────────────────────
   SCENARIO_CREATOR:        'SCENARIO_CREATOR',        // M01
-  QUALIFYING_INTEL:        'QUALIFYING_INTEL',         // M02
-  INCOME_ANALYZER:         'INCOME_ANALYZER',          // M03
+  INCOME_ANALYZER:         'INCOME_ANALYZER',          // M02 ← swapped
+  QUALIFYING_INTEL:        'QUALIFYING_INTEL',         // M03 ← swapped
   ASSET_ANALYZER:          'ASSET_ANALYZER',           // M04
   CREDIT_INTEL:            'CREDIT_INTEL',             // M05
   DEBT_CONSOLIDATION:      'DEBT_CONSOLIDATION',       // M06
@@ -31,7 +31,7 @@ export const MODULE_KEYS = {
   FHA_STREAMLINE:          'FHA_STREAMLINE',           // M11
   VA_IRRRL:                'VA_IRRRL',                 // M12
   USDA_INTEL:              'USDA_INTEL',               // M13
-  CONVENTIONAL_REFI:       'CONVENTIONAL_REFI',        // M14 (coming soon)
+  CONVENTIONAL_REFI:       'CONVENTIONAL_REFI',        // M14
   RATE_BUYDOWN:            'RATE_BUYDOWN',             // M15
   MI_OPTIMIZER:            'MI_OPTIMIZER',             // M16
   ARM_STRUCTURE:           'ARM_STRUCTURE',            // M17
@@ -65,12 +65,12 @@ export const ALL_MODULE_KEYS = Object.values(MODULE_KEYS);
 
 // All currently live canonical modules — drives completeness scoring.
 // Keys MUST match exactly what each module passes to reportFindings().
-// CONVENTIONAL_REFI excluded (not yet built).
+// CONVENTIONAL_REFI excluded (coming soon).
 // CRA_INTEL excluded (background service, not user-facing).
 export const LIVE_MODULE_KEYS = [
   MODULE_KEYS.SCENARIO_CREATOR,
-  MODULE_KEYS.QUALIFYING_INTEL,
-  MODULE_KEYS.INCOME_ANALYZER,
+  MODULE_KEYS.INCOME_ANALYZER,      // M02
+  MODULE_KEYS.QUALIFYING_INTEL,     // M03
   MODULE_KEYS.ASSET_ANALYZER,
   MODULE_KEYS.CREDIT_INTEL,
   MODULE_KEYS.DEBT_CONSOLIDATION,
@@ -101,15 +101,13 @@ export const LIVE_MODULE_KEYS = [
 // RECORD STATUS
 // ─────────────────────────────────────────────────────────────
 export const RECORD_STATUS = {
-  DRAFT:   'draft',    // LO is still working — all writes allowed
-  LOCKING: 'locking',  // Cloud Function is computing hash — writes blocked
-  LOCKED:  'locked',   // Immutable. Hash is set. Audit-ready.
+  DRAFT:   'draft',
+  LOCKING: 'locking',
+  LOCKED:  'locked',
 };
 
 // ─────────────────────────────────────────────────────────────
 // RISK FLAG CODES
-// Standardized enum pushed by any module into risk_flags[].
-// severity: 'info' | 'warning' | 'critical'
 // ─────────────────────────────────────────────────────────────
 export const RISK_FLAG_CODES = {
   DATA_MISSING:               'data_missing',
@@ -126,7 +124,7 @@ export const RISK_FLAG_CODES = {
   LTV_THRESHOLD_BREACHED:     'ltv_threshold_breached',
   DTI_THRESHOLD_BREACHED:     'dti_threshold_breached',
   PROGRAM_SWITCH_OCCURRED:    'program_switch_occurred',
-  COMPLETENESS_LOW:           'completeness_low',        // < 50% modules reported
+  COMPLETENESS_LOW:           'completeness_low',
 };
 
 export const FLAG_SEVERITY = {
@@ -140,7 +138,6 @@ export const FLAG_SEVERITY = {
 
 // ─────────────────────────────────────────────────────────────
 // FINAL DISPOSITION OPTIONS
-// Drives the LO's closing selection in the Decision Record UI.
 // ─────────────────────────────────────────────────────────────
 export const DISPOSITION_OPTIONS = [
   'Proceed — Program Confirmed',
@@ -152,7 +149,7 @@ export const DISPOSITION_OPTIONS = [
 ];
 
 // ─────────────────────────────────────────────────────────────
-// CHANGE REASON OPTIONS (required when versioning a locked record)
+// CHANGE REASON OPTIONS
 // ─────────────────────────────────────────────────────────────
 export const CHANGE_REASONS = [
   'Borrower information corrected',
@@ -167,7 +164,6 @@ export const CHANGE_REASONS = [
 
 // ─────────────────────────────────────────────────────────────
 // EVIDENCE TYPES
-// Used in evidence[] locker attached to each record.
 // ─────────────────────────────────────────────────────────────
 export const EVIDENCE_TYPES = {
   AUS_FINDING:       'aus_finding',
@@ -182,7 +178,6 @@ export const EVIDENCE_TYPES = {
 
 // ─────────────────────────────────────────────────────────────
 // LO NOTE TAGS
-// Optional tags on lo_notes for quick categorization.
 // ─────────────────────────────────────────────────────────────
 export const LO_NOTE_TAGS = [
   'compensating_factor',
@@ -197,11 +192,10 @@ export const LO_NOTE_TAGS = [
 
 // ─────────────────────────────────────────────────────────────
 // COMPLETENESS THRESHOLDS
-// Used to auto-flag records with low module coverage.
 // ─────────────────────────────────────────────────────────────
 export const COMPLETENESS_THRESHOLDS = {
-  LOW:      0.50,   // < 50%  → CRITICAL flag
-  MODERATE: 0.75,   // < 75%  → WARNING flag
-  GOOD:     0.90,   // ≥ 90%  → clean
+  LOW:      0.50,
+  MODERATE: 0.75,
+  GOOD:     0.90,
 };
 export const SCORING_VERSION = 'path-score-v1.0';

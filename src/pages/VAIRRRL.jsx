@@ -14,6 +14,8 @@ import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import NextStepCard from '../components/NextStepCard';
 import { MODULE_KEYS } from '../constants/decisionRecordConstants';
+import ModuleNav from '../components/ModuleNav';
+import ScenarioHeader from '../components/ScenarioHeader';
 
 const functions = getFunctions(app);
 const auth = getAuth(app);
@@ -1909,44 +1911,81 @@ export default function VAIRRRL() {
 
   return (
     <div style={S.container}>
-      <div style={S.header}>
-        <div style={S.headerTop}>
-          <div>
-            <div style={{ fontSize: 11, opacity: 0.65, marginBottom: 3, letterSpacing: '0.08em' }}>MODULE 11 OF 27</div>
-            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: '-0.01em' }}>VA IRRRL</h1>
-            <div style={{ fontSize: 13, opacity: 0.8, marginTop: 3 }}>Interest Rate Reduction Refinance Loan</div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-            <span style={S.badge}>🎖️ VA STREAMLINE</span>
-            {benefitTestPass  && <span style={{ ...S.badge, ...S.badgeGreen }}>✅ NTB SATISFIED</span>}
-            {fundingFeeExempt && <span style={{ ...S.badge, ...S.badgeGold  }}>🎖️ FEE EXEMPT</span>}
-            {priorIRRRL       && <span style={{ ...S.badge, background: 'rgba(249,100,70,0.25)', color: '#fda09a' }}>🚩 IRRRL-to-IRRRL</span>}
-          </div>
+
+      {/* ── 1. DecisionRecordBanner — FIRST ───────────────────────────── */}
+      <DecisionRecordBanner
+        recordId={drRecordId}
+        moduleName="VA IRRRL Intelligence™"
+        moduleKey="VA_IRRRL"
+        onSave={handleSave}
+      />
+      {drRecordId && primarySuggestion && (
+        <div style={{ marginBottom: 20 }}>
+          <NextStepCard
+            suggestion={primarySuggestion}
+            secondarySuggestions={secondarySuggestions}
+            onFollow={logFollow}
+            onOverride={logOverride}
+            loanPurpose="rate_term_refi"
+            scenarioId={selectedScenId}
+          />
         </div>
-        <div style={S.scenarioRow}>
-          {veteranName && <span style={{ fontSize: 13, opacity: 0.9, fontWeight: 600 }}>🎖️ {veteranName}</span>}
-          {propertyAddress && <span style={{ fontSize: 12, opacity: 0.7 }}>{propertyAddress.split(',').slice(0, 2).join(',')}</span>}
-          <button onClick={() => rrNavigate('/va-irrrl')} style={{ fontSize: 12, opacity: 0.7, background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.75)', cursor: 'pointer', textDecoration: 'underline' }}>
-            Change scenario →
-          </button>
-          <button
-            onClick={handleSave}
-            style={{
-              padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
-              background: saveFlash ? '#22c55e' : 'rgba(255,255,255,0.2)',
-              color: saveFlash ? '#fff' : 'rgba(255,255,255,0.9)',
-              transition: 'all 0.3s', display: 'flex', alignItems: 'center', gap: 5,
-            }}
-          >
-            {saveFlash ? '✅ Saved!' : '💾 Save'}
-          </button>
-          {savedAt && !saveFlash && (
-            <span style={{ fontSize: 11, opacity: 0.55 }}>
-              Last saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
-          )}
+      )}
+
+      {/* ── 2. ModuleNav — SECOND ─────────────────────────────────────── */}
+      <ModuleNav moduleNumber={12} />
+
+      {/* ── 3. Hero — flexbox: left flex:1 | right flexShrink:0 ──────── */}
+      <div className="bg-gradient-to-br from-slate-900 to-blue-950 text-white rounded-3xl px-6 py-5 mb-5">
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+
+          {/* Left — title + subtitle + veteran info row */}
+          <div style={{ flex: 1 }}>
+            <h1 className="text-2xl font-bold text-white" style={{ fontFamily: "'DM Serif Display', serif", margin: 0 }}>
+              VA IRRRL Intelligence™
+            </h1>
+            <p style={{ fontSize: 13, color: '#93c5fd', marginTop: 4 }}>Interest Rate Reduction Refinance Loan · Benefit Test · Funding Fee · Net Commission</p>
+            <div style={S.scenarioRow}>
+              {veteranName && <span style={{ fontSize: 13, opacity: 0.9, fontWeight: 600 }}>🎖️ {veteranName}</span>}
+              {propertyAddress && <span style={{ fontSize: 12, opacity: 0.7 }}>{propertyAddress.split(',').slice(0, 2).join(',')}</span>}
+              <button onClick={() => rrNavigate('/va-irrrl')} style={{ fontSize: 12, opacity: 0.7, background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.75)', cursor: 'pointer', textDecoration: 'underline' }}>
+                Change scenario →
+              </button>
+              <button onClick={handleSave} style={{ padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: saveFlash ? '#22c55e' : 'rgba(255,255,255,0.2)', color: saveFlash ? '#fff' : 'rgba(255,255,255,0.9)', transition: 'all 0.3s', display: 'flex', alignItems: 'center', gap: 5 }}>
+                {saveFlash ? '✅ Saved!' : '💾 Save'}
+              </button>
+              {savedAt && !saveFlash && (
+                <span style={{ fontSize: 11, opacity: 0.55 }}>Last saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              )}
+            </div>
+          </div>
+
+          {/* Right — pills stacked above status badges + scenario card */}
+          <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10, marginLeft: 24 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <span className="text-xs font-bold tracking-widest uppercase bg-blue-500/20 px-3 py-1 rounded-full border border-blue-400/30 text-blue-300">
+                Stage 3 — Refi Intelligence
+              </span>
+              <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">Module 12</span>
+              {benefitTestPass  && <span style={{ ...S.badge, ...S.badgeGreen }}>✅ NTB SATISFIED</span>}
+              {fundingFeeExempt && <span style={{ ...S.badge, ...S.badgeGold  }}>🎖️ FEE EXEMPT</span>}
+              {priorIRRRL       && <span style={{ ...S.badge, background: 'rgba(249,100,70,0.25)', color: '#fda09a' }}>🚩 IRRRL-to-IRRRL</span>}
+            </div>
+            {veteranName && (
+              <div className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right" style={{ minWidth: 190 }}>
+                <p style={{ fontSize: 12, color: '#93c5fd', margin: 0 }}>{veteranName}</p>
+                <p style={{ fontSize: 18, fontWeight: 900, color: '#fff', margin: '2px 0' }}>VA IRRRL</p>
+                <p style={{ fontSize: 12, color: '#94a3b8', margin: 0 }}>
+                  {remainingBalance ? `Balance $${Number(remainingBalance).toLocaleString()}` : 'No loan data yet'}
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* ── 4. ScenarioHeader bar ─────────────────────────────────────── */}
+      <ScenarioHeader scenario={selectedScenId ? { firstName: veteranName.split(' ')[0], lastName: veteranName.split(' ').slice(1).join(' '), streetAddress: propertyAddress } : null} moduleNumber={12} scenarioId={selectedScenId} />
 
       <div style={S.tabBar}>
         {TABS.map(t => {
@@ -1972,50 +2011,6 @@ export default function VAIRRRL() {
 
       {tabRenderers[activeTab]?.()}
 
-      {/* ── Next Step Intelligence™ ── */}
-      {drRecordId && primarySuggestion && (
-        <div style={{ marginBottom: 20 }}>
-          <NextStepCard
-            suggestion={primarySuggestion}
-            secondarySuggestions={secondarySuggestions}
-            onFollow={logFollow}
-            onOverride={logOverride}
-            loanPurpose="rate_term_refi"
-            scenarioId={selectedScenId}
-          />
-        </div>
-      )}
-
-      <DecisionRecordBanner
-        recordId={drRecordId}
-        moduleName="VA IRRRL"
-        onSave={handleSave}
-      />
-
-      <div style={S.canonicalBar}>
-        {canonicalExpanded && (
-          <div style={{ background: '#0a2d54', padding: '10px 16px', maxWidth: 1100, margin: '0 auto' }}>
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', textAlign: 'center', marginBottom: 8, letterSpacing: '0.1em' }}>CANONICAL SEQUENCE™ — 27 MODULES</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center' }}>
-              {MODULES.map(m => (
-                <button key={m.id} onClick={() => navigate(m.path)} title={m.label} style={{ padding: '3px 8px', fontSize: 10, borderRadius: 4, border: 'none', cursor: 'pointer', background: m.id === CURRENT_MODULE ? '#f9c846' : 'rgba(255,255,255,0.1)', color: m.id === CURRENT_MODULE ? '#000' : 'rgba(255,255,255,0.65)', fontWeight: m.id === CURRENT_MODULE ? 700 : 400 }}>
-                  {m.id}. {m.label.split(' ')[0]}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <div style={S.canonicalMain}>
-          <button style={{ ...S.btn, background: 'rgba(255,255,255,0.1)', color: '#fff', fontSize: 12, padding: '6px 12px', opacity: prevMod ? 1 : 0.4 }} onClick={() => prevMod && navigate(prevMod.path)} disabled={!prevMod}>← {prevMod?.label || ''}</button>
-          <div style={{ display: 'flex', gap: 4, flex: 1, justifyContent: 'center', flexWrap: 'wrap' }}>
-            {MODULES.map(m => <div key={m.id} title={m.label} style={S.dot(m.id === CURRENT_MODULE)} onClick={() => navigate(m.path)}>{m.id === CURRENT_MODULE ? m.id : ''}</div>)}
-          </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button style={{ ...S.btn, background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.55)', padding: '4px 8px', fontSize: 11 }} onClick={() => setCanonicalExpanded(!canonicalExpanded)}>{canonicalExpanded ? '▼' : '▲'} Map</button>
-            <button style={{ ...S.btn, background: 'rgba(255,255,255,0.1)', color: '#fff', fontSize: 12, padding: '6px 12px', opacity: nextMod ? 1 : 0.4 }} onClick={() => nextMod && navigate(nextMod.path)} disabled={!nextMod}>{nextMod?.label || ''} →</button>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

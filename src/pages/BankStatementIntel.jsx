@@ -1,5 +1,5 @@
 // src/pages/BankStatementIntel.jsx
-// LoanBeacons™ — Module 6 | Stage 1: Pre-Structure
+// LoanBeacons™ — Module 7 | Stage 1: Pre-Structure
 // Bank Statement Intelligence™ — Non-QM income qualification for self-employed borrowers
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -169,7 +169,6 @@ function LetterCard({ title, icon, body, color = 'violet' }) {
   const btnMap   = { violet: 'bg-violet-700 hover:bg-violet-600', blue: 'bg-blue-700 hover:bg-blue-600', emerald: 'bg-emerald-700 hover:bg-emerald-600' };
   return (
     <div className={'rounded-3xl border-2 overflow-hidden ' + colorMap[color]}>
-      <ModuleNav moduleNumber={7} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
         <div className="flex gap-2">
@@ -543,24 +542,15 @@ Return ONLY valid JSON, no markdown: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|WEAK
       if (calc.trendPct < -15) riskFlags.push({ field: 'incomeTrend', message: 'Declining income trend: ' + fmtPct(calc.trendPct), severity: 'HIGH' });
       if (largeDepositsExplained === false) riskFlags.push({ field: 'largeDeposits', message: 'Large/irregular deposits not yet explained', severity: 'MEDIUM' });
       if (aiAnalysis?.verdict === 'WEAK' || aiAnalysis?.verdict === 'MARGINAL') riskFlags.push({ field: 'aiAssessment', message: 'AI assessment: ' + aiAnalysis.verdict, severity: aiAnalysis.verdict === 'WEAK' ? 'HIGH' : 'MEDIUM' });
-      const writtenId = await reportFindings({
-        verdict: aiAnalysis?.verdict || (calc.score >= 70 ? 'ACCEPTABLE' : 'MARGINAL'),
-        summary: `Bank Statement Income Analysis — ${analysisPeriod}-month ${accountType} account. Avg gross deposits: ${fmt0(calc.avgMonthlyDeposits)}/mo. Monthly qualifying income: ${fmt0(calc.qualifyingMonthly)}. Income trend: ${fmtPct(calc.trendPct)}. NSF events: ${nsfCount === 0 ? 'None' : nsfCount === 1 ? '1-2' : nsfCount === 2 ? '3-5' : '6+'}. ${aiAnalysis?.summary || ''}`,
-        riskFlags,
-        findings: {
-          analysisPeriod: parseInt(analysisPeriod), accountType, businessType,
-          expenseRatio: calc.expenseRatio, ownershipPct: parseFloat(ownershipPct),
-          avgMonthlyDeposits: calc.avgMonthlyDeposits, qualifyingMonthly: calc.qualifyingMonthly,
-          qualifyingAnnual: calc.qualifyingAnnual, trendPct: calc.trendPct, nsfCount,
-          totalAddbacks: calc.totalAddbacks, incomeScore: calc.score, loNotes,
-        },
-        completeness: {
-          depositsEntered: calc.avgMonthlyDeposits > 0,
-          nsfDocumented: nsfCount !== undefined,
-          aiAnalysisRun: !!aiAnalysis,
-          loNotesAdded: loNotes.trim().length > 0,
-        },
-      });
+      const writtenId = await reportFindings('BANK_STATEMENT_INTEL', {
+        analysisPeriod: parseInt(analysisPeriod), accountType, businessType,
+        expenseRatio: calc.expenseRatio, ownershipPct: parseFloat(ownershipPct),
+        avgMonthlyDeposits: calc.avgMonthlyDeposits, qualifyingMonthly: calc.qualifyingMonthly,
+        qualifyingAnnual: calc.qualifyingAnnual, trendPct: calc.trendPct, nsfCount,
+        totalAddbacks: calc.totalAddbacks, incomeScore: calc.score, loNotes,
+        aiVerdict: aiAnalysis?.verdict || (calc.score >= 70 ? 'ACCEPTABLE' : 'MARGINAL'),
+        timestamp: new Date().toISOString(),
+      }, [], riskFlags, '1.0.0');
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
     setRecordSaving(false);
@@ -610,7 +600,7 @@ Return ONLY valid JSON, no markdown: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|WEAK
       <div className="bg-slate-900 px-6 py-10">
         <div className="max-w-2xl mx-auto">
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
-          <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 6</div>
+          <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 7</div>
           <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Bank Statement Intelligence™</h1>
           <p className="text-slate-400">Non-QM income qualification · AI extraction · Expense ratio engine · Underwriter letters</p>
         </div>
@@ -642,59 +632,79 @@ Return ONLY valid JSON, no markdown: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|WEAK
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
-      {/* ── Hero ────────────────────────────────────────────────────────────── */}
-      <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
-        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #7c3aed 0%, transparent 50%), radial-gradient(circle at 80% 20%, #06b6d4 0%, transparent 40%)' }} />
-        <div className="relative max-w-7xl mx-auto px-6 py-8">
-          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
-          <div className="flex items-start justify-between flex-wrap gap-6">
-            <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 6</div>
-              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Bank Statement Intelligence™</h1>
-              <p className="text-slate-400 text-base max-w-xl leading-relaxed">Non-QM income qualification · AI extraction · Expense ratio engine · Underwriter letters</p>
+      {/* ── 1. DecisionRecordBanner — FIRST ───────────────────────────── */}
+      <div className="max-w-7xl mx-auto px-6 pt-4">
+        <DecisionRecordBanner
+          recordId={savedRecordId}
+          moduleName="Bank Statement Intelligence™"
+          moduleKey="BANK_STATEMENT_INTEL"
+          onSave={handleSaveToRecord}
+          saving={recordSaving}
+        />
+      </div>
+
+      {/* ── 2. ModuleNav — SECOND ─────────────────────────────────────── */}
+      <div className="max-w-7xl mx-auto px-6">
+        <ModuleNav moduleNumber={7} />
+      </div>
+
+      {/* ── 3. Hero — flexbox: left flex:1 | right flexShrink:0 ──────── */}
+      <div className="max-w-7xl mx-auto px-6 mb-4">
+        <div className="bg-gradient-to-br from-slate-900 to-violet-950 text-white rounded-3xl px-6 py-5">
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+
+            {/* Left — back link + title + subtitle */}
+            <div style={{ flex: 1 }}>
+              <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-xs mb-2 block">← Dashboard</button>
+              <h1
+                className="text-2xl font-bold text-white"
+                style={{ fontFamily: 'DM Serif Display, serif' }}
+              >
+                Bank Statement Intelligence™
+              </h1>
+              <p className="text-slate-400 text-sm mt-1">
+                Non-QM income qualification · AI extraction · Expense ratio engine · Underwriter letters
+              </p>
             </div>
-            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '260px' }}>
-              {scenario ? (
-                <>
-                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
-                  <div className="text-white font-bold">{borrowerName || scenario.scenarioName}</div>
-                  <div className="text-slate-400 text-sm mt-1">{loanAmount ? fmt0(parseFloat(loanAmount)) : ''} · {loanType || 'Non-QM'} · {scenario.state || ''}</div>
-                  {calc.qualifyingMonthly > 0 && (
-                    <div className="text-violet-300 text-sm font-bold mt-1">{fmt0(calc.qualifyingMonthly)}/mo qualifying</div>
-                  )}
-                  <button onClick={() => navigate('/bank-statement-intel')} className="text-xs text-blue-400 hover:text-blue-300 mt-2 block">Change scenario →</button>
-                </>
-              ) : (
-                <div className="text-slate-400 text-sm">No scenario loaded</div>
+
+            {/* Right — pills stacked above scenario card */}
+            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', marginLeft: '24px' }}>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <span className="text-xs font-bold tracking-widest text-violet-300 uppercase bg-violet-500/20 px-3 py-1 rounded-full border border-violet-400/30">
+                  Stage 1 — Pre-Structure
+                </span>
+                <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">Module 7</span>
+                <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-400/30 font-semibold">● LIVE</span>
+              </div>
+              {scenario && (
+                <div
+                  className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right"
+                  style={{ minWidth: '190px' }}
+                >
+                  <p className="text-xs text-slate-300 font-medium truncate" style={{ maxWidth: '200px' }}>
+                    {borrowerName || scenario.scenarioName || 'No Borrower'}
+                  </p>
+                  <p className="text-lg font-black text-white">
+                    {loanAmount ? fmt0(parseFloat(loanAmount)) : '—'}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {loanType || 'Non-QM'}{scenario.state ? ` · ${scenario.state}` : ''}
+                    {calc.qualifyingMonthly > 0 && <span className="text-violet-300 font-bold"> · {fmt0(calc.qualifyingMonthly)}/mo</span>}
+                  </p>
+                </div>
               )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* ── Borrower Bar ─────────────────────────────────────────────────────── */}
-      {scenarioId && borrowerName && (
-        <div className="bg-[#1B3A6B] px-6 py-3">
-          <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-1">
-            <span className="text-white font-bold text-sm">{borrowerName}</span>
-            {scenario?.streetAddress && <span className="text-blue-200 text-xs">{[scenario.streetAddress, scenario.city, scenario.state].filter(Boolean).join(', ')}</span>}
-            <div className="flex flex-wrap gap-x-4 text-xs text-blue-200">
-              {loanAmount && <span>Loan <strong className="text-white">{fmt0(parseFloat(loanAmount))}</strong></span>}
-              {loanType && <span>Type <strong className="text-white">{loanType}</strong></span>}
-              {analysisPeriod && <span>Period <strong className="text-white">{analysisPeriod} mo</strong></span>}
-            </div>
-          </div>
-        </div>
-      )}
-
-      <ScenarioHeader moduleTitle="Bank Statement Intelligence™" moduleNumber="7" scenarioId={scenarioId} />
-      <div className="max-w-7xl mx-auto px-6 pt-2">
-        <ModuleNav moduleNumber={7} />
+      {/* ── 4. ScenarioHeader bar ─────────────────────────────────────── */}
+      <div className="max-w-7xl mx-auto px-6">
+        <ScenarioHeader moduleTitle="Bank Statement Intelligence™" moduleNumber={7} scenarioId={scenarioId} />
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
-        <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="BANK_STATEMENT_INTEL" />
-        {savedRecordId && primarySuggestion && (
+      {savedRecordId && primarySuggestion && (
+        <div className="max-w-7xl mx-auto px-6">
           <NextStepCard
             suggestion={primarySuggestion}
             secondarySuggestions={secondarySuggestions}
@@ -703,8 +713,8 @@ Return ONLY valid JSON, no markdown: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|WEAK
             loanPurpose={loanPurpose}
             scenarioId={scenarioId}
           />
-        )}
-      </div>
+        </div>
+      )}
 
       {/* ── Tab Bar ──────────────────────────────────────────────────────────── */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">

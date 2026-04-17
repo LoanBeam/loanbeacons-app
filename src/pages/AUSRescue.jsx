@@ -16,6 +16,7 @@ import WhatIfSimulator from '../components/WhatIfSimulator';
 import { runSonnetReasoning, mergeReasoningResults } from '../services/ausRescueReasoning';
 import DealAdvisor from '../components/DealAdvisor';
 import ModuleNav from '../components/ModuleNav';
+import ScenarioHeader from '../components/ScenarioHeader';
 
 // ── DOWNLOAD COUNTER ──────────────────────────────────────────────────────────
 // AUSRescue.jsx download counter: 33
@@ -715,14 +716,14 @@ CRITICAL RULES:
 
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-50">
-      <ModuleNav moduleNumber={10} />
+    <div className="min-h-screen bg-slate-50">
 
-      {/* ── Decision Record + NSI — consistent with Bank Statement Intel ── */}
+      {/* ── 1. DecisionRecordBanner — FIRST ───────────────────────────── */}
       <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
         <DecisionRecordBanner
           recordId={savedRecordId}
           moduleName="AUS Rescue™"
+          moduleKey="AUS_RESCUE"
           onSave={handleSaveToRecord}
         />
         {currentFinding && deterministicSuggestion && deterministicSuggestion.moduleKey !== '__PLACEHOLDER__' && (
@@ -746,72 +747,85 @@ CRITICAL RULES:
         )}
       </div>
 
-      {/* ── PAGE HEADER ── */}
-      <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white px-6 py-5">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex items-center gap-3 mb-2">
-            <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase">Stage 2 — Lender Fit</span>
-            <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">Module 8</span>
-            <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">v3.0</span>
-          </div>
-          <h1 className="text-2xl font-bold" style={{ fontFamily: "'DM Serif Display', serif" }}>AUS Rescue™</h1>
-          <p className="text-indigo-200 text-sm mt-0.5">Upload your DU or LP findings — Deal Advisor™ takes it from there.</p>
-          <div className="mt-4 flex items-center gap-3 flex-wrap">
-            {/* Show matched scenario or prompt to upload */}
-            {matchedScenario && matchConfirmed ? (
-              <div className="flex items-center gap-3 bg-emerald-900/40 border border-emerald-600/40 rounded-xl px-4 py-2">
-                <span className="text-emerald-400 text-sm">✓</span>
-                <div>
-                  <p className="text-white text-sm font-semibold">{`${matchedScenario.firstName || ''} ${matchedScenario.lastName || ''}`.trim() || matchedScenario.scenarioName}</p>
-                  <p className="text-emerald-300 text-xs">{matchWriting ? 'Saving findings to scenario…' : matchWritten ? 'AUS findings saved to scenario' : 'Matched scenario'}</p>
-                </div>
-                <button onClick={() => setShowScenarioPicker(true)} className="text-slate-400 hover:text-slate-200 text-xs ml-2 underline">Change</button>
+      {/* ── 2. ModuleNav — SECOND ─────────────────────────────────────── */}
+      <ModuleNav moduleNumber={10} />
+
+      {/* ── 3. Hero — flexbox: left flex:1 | right flexShrink:0 ──────── */}
+      <div className="max-w-7xl mx-auto px-6 mb-4">
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl px-6 py-5">
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+
+            {/* Left — title + subtitle + scenario match status */}
+            <div style={{ flex: 1 }}>
+              <h1 className="text-2xl font-bold text-white" style={{ fontFamily: "'DM Serif Display', serif" }}>AUS Rescue™</h1>
+              <p className="text-indigo-200 text-sm mt-0.5">Upload DU or LP findings — identify the fastest path to Approve/Eligible or the best alternative when agency approval is out of reach.</p>
+              <div className="mt-3 flex items-center gap-3 flex-wrap">
+                {matchedScenario && matchConfirmed ? (
+                  <div className="flex items-center gap-3 bg-emerald-900/40 border border-emerald-600/40 rounded-xl px-4 py-2">
+                    <span className="text-emerald-400 text-sm">✓</span>
+                    <div>
+                      <p className="text-white text-sm font-semibold">{`${matchedScenario.firstName || ''} ${matchedScenario.lastName || ''}`.trim() || matchedScenario.scenarioName}</p>
+                      <p className="text-emerald-300 text-xs">{matchWriting ? 'Saving findings to scenario…' : matchWritten ? 'AUS findings saved to scenario' : 'Matched scenario'}</p>
+                    </div>
+                    <button onClick={() => setShowScenarioPicker(true)} className="text-slate-400 hover:text-slate-200 text-xs ml-2 underline">Change</button>
+                  </div>
+                ) : matchedScenario && !matchConfirmed ? (
+                  <div className="flex items-center gap-3 bg-amber-900/40 border border-amber-600/40 rounded-xl px-4 py-2 flex-wrap">
+                    <span className="text-amber-400 text-sm">🔍</span>
+                    <div>
+                      <p className="text-white text-sm font-semibold">Matched: {`${matchedScenario.firstName || ''} ${matchedScenario.lastName || ''}`.trim() || matchedScenario.scenarioName}</p>
+                      <p className="text-amber-300 text-xs">Is this the correct scenario?</p>
+                    </div>
+                    <div className="flex gap-2 ml-2">
+                      <button onClick={handleConfirmMatch} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">✓ Yes, save findings</button>
+                      <button onClick={handleRejectMatch} className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">✗ Wrong scenario</button>
+                    </div>
+                  </div>
+                ) : showScenarioPicker ? (
+                  <div className="flex items-center gap-2">
+                    <select onChange={e => handleManualScenarioSelect(e.target.value)} defaultValue="" className="bg-slate-800 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 min-w-[220px]">
+                      <option value="" disabled>— Select correct scenario —</option>
+                      {scenarios.map(s => <option key={s.id} value={s.id}>{`${s.firstName || ''} ${s.lastName || ''}`.trim() || s.scenarioName || s.id.slice(0, 8)}</option>)}
+                    </select>
+                    <button onClick={() => setShowScenarioPicker(false)} className="text-slate-400 hover:text-slate-200 text-xs">Cancel</button>
+                  </div>
+                ) : (
+                  <p className="text-slate-400 text-sm">Upload a DU or LP PDF above — borrower auto-matches to scenario</p>
+                )}
               </div>
-            ) : matchedScenario && !matchConfirmed ? (
-              <div className="flex items-center gap-3 bg-amber-900/40 border border-amber-600/40 rounded-xl px-4 py-2 flex-wrap">
-                <span className="text-amber-400 text-sm">🔍</span>
-                <div>
-                  <p className="text-white text-sm font-semibold">Matched: {`${matchedScenario.firstName || ''} ${matchedScenario.lastName || ''}`.trim() || matchedScenario.scenarioName}</p>
-                  <p className="text-amber-300 text-xs">Is this the correct scenario?</p>
-                </div>
-                <div className="flex gap-2 ml-2">
-                  <button onClick={handleConfirmMatch} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">✓ Yes, save findings</button>
-                  <button onClick={handleRejectMatch} className="bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">✗ Wrong scenario</button>
-                </div>
+            </div>
+
+            {/* Right — pills stacked above scenario card */}
+            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', marginLeft: '24px' }}>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-400/30">
+                  Stage 2 — Lender Fit
+                </span>
+                <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">Module 10</span>
+                <span className="bg-white/10 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-white/20">v3.0</span>
               </div>
-            ) : showScenarioPicker ? (
-              <div className="flex items-center gap-2">
-                <select onChange={e => handleManualScenarioSelect(e.target.value)} defaultValue="" className="bg-slate-800 border border-slate-600 text-white text-sm rounded-lg px-3 py-2 min-w-[220px]">
-                  <option value="" disabled>— Select correct scenario —</option>
-                  {scenarios.map(s => <option key={s.id} value={s.id}>{`${s.firstName || ''} ${s.lastName || ''}`.trim() || s.scenarioName || s.id.slice(0, 8)}</option>)}
-                </select>
-                <button onClick={() => setShowScenarioPicker(false)} className="text-slate-400 hover:text-slate-200 text-xs">Cancel</button>
-              </div>
-            ) : (
-              <p className="text-slate-400 text-sm">Upload a DU or LP PDF above — borrower auto-matches to scenario</p>
-            )}
+              {scenarioDoc && (
+                <div className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right" style={{ minWidth: '190px' }}>
+                  <p className="text-xs text-slate-300 font-medium truncate" style={{ maxWidth: '200px' }}>
+                    {bName || 'No Borrower'}
+                  </p>
+                  <p className="text-lg font-black text-white">
+                    {bLoan || 'N/A'}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {bFico ? `FICO ${bFico}` : ''}{bDTI ? ` · DTI ${bDTI}%` : ''}
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* ── BORROWER BANNER ── */}
-      {(bName || bAddr || bFico) && (
-        <div className="bg-[#1B3A6B] px-6 py-3">
-          <div className="max-w-7xl mx-auto">
-            <p className="text-[11px] font-semibold text-blue-300 uppercase tracking-widest mb-1">Borrower Scenario — AUS Rescue™</p>
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
-              {bName  && <span className="text-white font-bold text-base">{bName}</span>}
-              {bAddr  && <span className="text-blue-200 text-sm">{bAddr}</span>}
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-blue-100">
-                {bFico  && <span>FICO <strong className="text-white">{bFico}</strong></span>}
-                {bLoan  && <span>Loan <strong className="text-white">{bLoan}</strong></span>}
-                {bPrice && <span>Value <strong className="text-white">${Number(bPrice).toLocaleString()}</strong></span>}
-                {bDTI   && <span>DTI <strong className="text-white">{bDTI}%</strong></span>}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── 4. ScenarioHeader bar ─────────────────────────────────────── */}
+      <div className="max-w-7xl mx-auto px-6">
+        <ScenarioHeader scenario={scenarioDoc} moduleNumber={10} scenarioId={selectedScenarioId} />
+      </div>
 
       <div className="max-w-7xl mx-auto px-4 py-6 pb-24">
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">

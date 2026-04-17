@@ -1,4 +1,4 @@
-// ─── DPA Intelligence — Module 07 ────────────────────────────────────────────
+// ─── DPA Intelligence — Module 09 ────────────────────────────────────────────
 // LoanBeacons™ | Nationwide DPA Search Engine
 // Architecture: Georgia hardcoded seed + Anthropic web search for non-GA states
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6,39 +6,37 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { db, auth } from '../firebase/config';
-import { doc, getDoc, setDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import AEShareForm from '../components/AEShareForm';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
-import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
 import ModuleNav from '../components/ModuleNav';
-import CanonicalSequenceBar from '../components/CanonicalSequenceBar';
-import NextStepCard from '../components/NextStepCard';
+import ScenarioHeader from '../components/ScenarioHeader';
 
 const MODULE_ID = 'dpa-intelligence';
 
 // ─── COLORS ──────────────────────────────────────────────────────────────────
 const C = {
-  bg: '#0f1117',
-  surface: '#1a1f2e',
-  card: '#1e2433',
-  cardHover: '#232a3a',
-  border: '#2d3448',
-  borderLight: '#374155',
-  green: '#22c55e',
-  greenDark: '#166534',
-  greenMuted: '#14532d',
-  amber: '#f59e0b',
-  amberDark: '#78350f',
-  red: '#ef4444',
-  redDark: '#7f1d1d',
-  blue: '#3b82f6',
-  blueDark: '#1e3a5f',
-  purple: '#a855f7',
-  textPrimary: '#f1f5f9',
-  textSecondary: '#94a3b8',
-  textMuted: '#64748b',
+  bg: '#f8fafc',
+  surface: '#ffffff',
+  card: '#f8fafc',
+  cardHover: '#f1f5f9',
+  border: '#e2e8f0',
+  borderLight: '#cbd5e1',
+  green: '#16a34a',
+  greenDark: '#14532d',
+  greenMuted: '#dcfce7',
+  amber: '#d97706',
+  amberDark: '#451a03',
+  red: '#dc2626',
+  redDark: '#fef2f2',
+  blue: '#2563eb',
+  blueDark: '#dbeafe',
+  purple: '#7c3aed',
+  textPrimary: '#0f172a',
+  textSecondary: '#475569',
+  textMuted: '#94a3b8',
 };
 
 // ─── GEORGIA AMI LOOKUP ───────────────────────────────────────────────────────
@@ -570,7 +568,7 @@ function fmtAmt(program) {
 
 const TYPE_META = {
   grant:          { label: 'Grant',          icon: '🎁', color: C.green,  bg: C.greenMuted },
-  forgivable:     { label: 'Forgivable Loan', icon: '⏱', color: '#86efac', bg: '#14532d' },
+  forgivable:     { label: 'Forgivable Loan', icon: '⏱', color: '#15803d', bg: '#dcfce7' },
   deferred_loan:  { label: 'Deferred Loan',  icon: '⏸', color: C.blue,   bg: C.blueDark },
   second_mortgage:{ label: '2nd Mortgage',   icon: '🏠', color: C.amber,  bg: C.amberDark },
 };
@@ -579,7 +577,7 @@ const APPROVAL_STATES = ['unknown', 'requested', 'approved'];
 const APPROVAL_META = {
   approved:  { label: '✓ Lender Approved',   color: C.green,  bg: C.greenMuted,  border: C.green },
   requested: { label: '⏳ Approval Requested', color: C.amber,  bg: C.amberDark,   border: C.amber },
-  unknown:   { label: '? Approval Unknown',   color: C.textMuted, bg: '#1a1f2e', border: C.border },
+  unknown:   { label: '? Approval Unknown',   color: C.textMuted, bg: C.card, border: C.border },
 };
 
 // ─── LENDER APPROVAL BADGE ────────────────────────────────────────────────────
@@ -609,9 +607,9 @@ function LenderApprovalBadge({ programId, status = 'unknown', onChange }) {
 function EligibilityBadge({ status }) {
   const cfg = {
     eligible:   { label: '✓ Eligible',    bg: C.greenMuted,  color: C.green,  border: C.green },
-    ineligible: { label: '✗ Ineligible',  bg: C.redDark,     color: '#fca5a5', border: C.red },
-    unknown:    { label: '? Verify',      bg: '#1e2433',     color: C.textMuted, border: C.border },
-  }[status] || { label: '? Verify', bg: '#1e2433', color: C.textMuted, border: C.border };
+    ineligible: { label: '✗ Ineligible',  bg: '#fef2f2',     color: '#dc2626', border: C.red },
+    unknown:    { label: '? Verify',      bg: C.card,        color: C.textMuted, border: C.border },
+  }[status] || { label: '? Verify', bg: C.card, color: C.textMuted, border: C.border };
   return (
     <span style={{
       padding: '3px 9px', borderRadius: 4, fontSize: 11, fontWeight: 700,
@@ -652,7 +650,7 @@ function ProgramCard({ program, eligibility, lenderStatus, onLenderChange, stack
                 </span>
               )}
               {program.lender_sourced && (
-                <span style={{ fontSize: 10, color: '#34d399', background: '#064e3b', padding: '2px 6px', borderRadius: 3, fontWeight: 600 }}>
+                <span style={{ fontSize: 10, color: '#15803d', background: '#dcfce7', padding: '2px 6px', borderRadius: 3, fontWeight: 600 }}>
                   📋 Lender Program
                 </span>
               )}
@@ -743,7 +741,7 @@ function ProgramCard({ program, eligibility, lenderStatus, onLenderChange, stack
 
       {/* Expanded Notes */}
       {isExpanded && (
-        <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: '#161b27' }}>
+        <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: '#f8fafc' }}>
           <div style={{ fontSize: 12, color: C.textSecondary, lineHeight: 1.6 }}>{program.notes}</div>
           {program.deferred_until && (
             <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>📋 Repayment: {program.deferred_until}</div>
@@ -841,8 +839,8 @@ function StackingPanel({ analysis, onClear }) {
       {pairs.map((pair, i) => (
         <div key={i} style={{
           display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
-          background: pair.compatible ? '#0f2218' : '#1c0f0f',
-          border: `1px solid ${pair.compatible ? C.greenMuted : C.redDark}`,
+          background: pair.compatible ? '#f0fdf4' : '#fef2f2',
+          border: `1px solid ${pair.compatible ? '#bbf7d0' : '#fecaca'}`,
           borderRadius: 6, marginBottom: 8,
         }}>
           <span style={{ fontSize: 16, flexShrink: 0 }}>{pair.compatible ? '✓' : '✗'}</span>
@@ -858,7 +856,7 @@ function StackingPanel({ analysis, onClear }) {
       ))}
 
       {!allCompatible && (
-        <div style={{ fontSize: 12, color: C.textMuted, marginTop: 8, padding: '8px 12px', background: '#1a1014', borderRadius: 6, border: `1px solid ${C.redDark}` }}>
+        <div style={{ fontSize: 12, color: C.textMuted, marginTop: 8, padding: '8px 12px', background: C.redDark, borderRadius: 6, border: `1px solid #fecaca` }}>
           ⚠️ One or more program pairs are not stackable. Lender must approve any layering — always verify with your AE before promising stacked DPA.
         </div>
       )}
@@ -913,7 +911,9 @@ export default function DPAIntelligence() {
   useEffect(() => { const u = onAuthStateChanged(auth, setUser); return u; }, []);
 
   // Decision Record
-  const { reportFindings } = useDecisionRecord(MODULE_ID, scenarioId, user?.uid);
+  const { reportFindings } = useDecisionRecord(scenarioId);
+  const [savedRecordId, setSavedRecordId] = useState(null);
+  const [recordSaving, setRecordSaving]   = useState(false);
 
   // AE Share modal
   const [aeShareTarget, setAeShareTarget] = useState(null); // { program }
@@ -934,43 +934,13 @@ export default function DPAIntelligence() {
 
   // Active state (from scenario or manual override)
   const [activeState, setActiveState] = useState('GA');
+
   useEffect(() => {
     if (scenario?.loaded) {
       const st = (scenario.state || scenario.propertyState || 'GA').toUpperCase();
       setActiveState(st);
     }
   }, [scenario]);
-
-  // Completed modules for NSI
-  const [completedModules, setCompletedModules] = useState([]);
-  useEffect(() => {
-    if (!scenarioId) return;
-    (async () => {
-      try {
-        const q = query(collection(db, 'decisionRecords'), where('scenarioId', '==', scenarioId));
-        const snap = await getDocs(q);
-        const keys = snap.docs.map(d => d.data().moduleKey).filter(Boolean);
-        setCompletedModules([...new Set(keys)]);
-      } catch (e) { console.error('[DPA] completedModules fetch:', e); }
-    })();
-  }, [scenarioId]);
-
-  // NSI — loan purpose mapping
-  const rawPurpose = (scenario?.loanPurpose || '').toLowerCase();
-  const loanPurpose = rawPurpose.includes('cash') ? 'cash_out_refi'
-    : rawPurpose.includes('refi') || rawPurpose.includes('rate') ? 'rate_term_refi'
-    : 'purchase';
-
-  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
-    useNextStepIntelligence({
-      currentModuleKey:        'DPA_INTEL',
-      loanPurpose,
-      decisionRecordFindings:  {},
-      scenarioData:            scenario || {},
-      completedModules,
-      scenarioId,
-      onWriteToDecisionRecord: null,
-    });
 
   // Lender approvals (Firestore persisted)
   const [lenderApprovals, setLenderApprovals] = useState({});
@@ -1016,6 +986,23 @@ export default function DPAIntelligence() {
   const [filterType, setFilterType] = useState('all');
   const [filterBrokerOnly, setFilterBrokerOnly] = useState(false);
   const [filterEligibleOnly, setFilterEligibleOnly] = useState(false);
+
+  // ── localStorage autosave ─────────────────────────────────────────────────
+  const LS_KEY = scenarioId ? `lb_dpaintelligence_${scenarioId}` : null;
+  useEffect(() => {
+    if (!LS_KEY) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+      if (saved?.filterType)     setFilterType(saved.filterType);
+      if (saved?.filterBrokerOnly !== undefined) setFilterBrokerOnly(saved.filterBrokerOnly);
+      if (saved?.filterEligibleOnly !== undefined) setFilterEligibleOnly(saved.filterEligibleOnly);
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [LS_KEY]);
+  useEffect(() => {
+    if (!LS_KEY) return;
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ filterType, filterBrokerOnly, filterEligibleOnly })); } catch { /* ignore */ }
+  }, [LS_KEY, filterType, filterBrokerOnly, filterEligibleOnly]);
 
   // Stack selection
   const [stackSelection, setStackSelection] = useState([]);
@@ -1093,27 +1080,27 @@ export default function DPAIntelligence() {
     if (!scenarioId || basePrograms.length === 0) return;
     const eligiblePrograms = basePrograms.filter(p => eligibilityMap[p.id]?.eligible === 'eligible');
     const topProgram = eligiblePrograms[0];
-    reportFindings({
-      summary: `DPA Intelligence: ${eligibleCount} eligible program${eligibleCount !== 1 ? 's' : ''} found out of ${basePrograms.length} evaluated (${activeState})`,
-      findings: {
-        state: activeState,
-        totalPrograms: basePrograms.length,
-        eligibleCount,
-        ineligibleCount,
-        topProgram: topProgram ? { name: topProgram.name, provider: topProgram.provider, type: topProgram.type } : null,
-        eligiblePrograms: eligiblePrograms.map(p => ({
-          id: p.id,
-          name: p.name,
-          provider: p.provider,
-          type: p.type,
-          dpaAmount: eligibilityMap[p.id]?.dpaAmount,
-          cltv: eligibilityMap[p.id]?.cltv,
-          broker_eligible: p.broker_eligible,
-        })),
-        stackingAnalyzed: stackSelection.length >= 2,
-      },
-      risk_flags: eligibleCount === 0 ? [{ severity: 'WARNING', message: `No eligible DPA programs found for ${activeState}` }] : [],
-    });
+    reportFindings('DPA_INTELLIGENCE', {
+      state: activeState,
+      totalPrograms: basePrograms.length,
+      eligibleCount,
+      ineligibleCount,
+      topProgram: topProgram ? { name: topProgram.name, provider: topProgram.provider, type: topProgram.type } : null,
+      eligiblePrograms: eligiblePrograms.map(p => ({
+        id: p.id,
+        name: p.name,
+        provider: p.provider,
+        type: p.type,
+        dpaAmount: eligibilityMap[p.id]?.dpaAmount,
+        cltv: eligibilityMap[p.id]?.cltv,
+        broker_eligible: p.broker_eligible,
+      })),
+      stackingAnalyzed: stackSelection.length >= 2,
+      timestamp: new Date().toISOString(),
+    }, [],
+    eligibleCount === 0 ? [{ flagCode: 'NO_DPA', sourceModule: 'DPA_INTELLIGENCE', severity: 'WARNING', detail: `No eligible DPA programs found for ${activeState}` }] : [],
+    '1.0.0'
+    ).then(id => { if (id) setSavedRecordId(id); }).catch(() => {});
   }, [eligibilityMap, eligibleCount, ineligibleCount, basePrograms, activeState, scenarioId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Toggle stack
@@ -1144,6 +1131,7 @@ export default function DPAIntelligence() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
           'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
@@ -1194,82 +1182,74 @@ export default function DPAIntelligence() {
 
   // ─── RENDER ──────────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: '100vh', background: C.bg, color: C.textPrimary, fontFamily: "'Inter', -apple-system, sans-serif", paddingBottom: 100 }}>
-      <ModuleNav moduleNumber={9} />
-      {/* ── HERO BANNER ── */}
-      <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)', borderBottom: '1px solid #1e293b', padding: '24px 24px 20px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
-            <div>
-              {/* Module badge row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#6366f1', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)', borderRadius: 20, padding: '3px 10px' }}>
-                  M09
-                </span>
-                <span style={{ fontSize: 10, fontWeight: 600, color: '#94a3b8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                  Stage 2 — Lender Fit
-                </span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 20, padding: '3px 10px' }}>
-                  ● LIVE
-                </span>
-              </div>
-              {/* Title */}
-              <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: '#ffffff', letterSpacing: '-0.5px', fontFamily: "'DM Serif Display', serif" }}>
+    <div style={{ minHeight: '100vh', background: '#f8fafc', color: C.textPrimary, fontFamily: "'Inter', -apple-system, sans-serif", paddingBottom: 100 }}>
+
+      {/* ── 1. DecisionRecordBanner — FIRST ───────────────────────────── */}
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '16px 24px 0' }}>
+        <DecisionRecordBanner
+          recordId={savedRecordId}
+          moduleName="DPA Intelligence™"
+          moduleKey="DPA_INTELLIGENCE"
+          onSave={() => {}}
+          saving={recordSaving}
+        />
+      </div>
+
+      {/* ── 2. ModuleNav — SECOND ─────────────────────────────────────── */}
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px' }}>
+        <ModuleNav moduleNumber={9} />
+      </div>
+
+      {/* ── 3. Hero — flexbox: left flex:1 | right flexShrink:0 ──────── */}
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px 16px' }}>
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl px-6 py-5">
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div style={{ flex: 1 }}>
+              <h1 className="text-2xl font-bold text-white" style={{ fontFamily: 'DM Serif Display, serif', margin: 0 }}>
                 DPA Intelligence™
               </h1>
-              <p style={{ margin: '6px 0 12px', fontSize: 13, color: '#94a3b8', fontFamily: "'DM Sans', sans-serif" }}>
-                Nationwide down payment assistance engine — Georgia seed data + AI-powered out-of-state search
+              <p style={{ margin: '4px 0 0', fontSize: 13, color: '#94a3b8' }}>
+                Nationwide down payment assistance search engine · Georgia hardcoded + AI-powered out-of-state search
               </p>
-              {/* Capability chips */}
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {['State Programs', 'Lender Programs', 'AI Web Search', 'Stack Combos', 'DPA Score Ranking'].map(chip => (
-                  <span key={chip} style={{ fontSize: 11, color: '#cbd5e1', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 20, padding: '3px 10px', fontFamily: "'DM Sans', sans-serif" }}>
-                    {chip}
-                  </span>
-                ))}
-              </div>
             </div>
-            {/* Live stats */}
-            {activeState === 'GA' && (
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                {[
-                  { val: eligibleCount, label: 'Eligible', color: '#10b981', bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.3)' },
-                  { val: ineligibleCount, label: 'Ineligible', color: '#f87171', bg: 'rgba(248,113,113,0.12)', border: 'rgba(248,113,113,0.3)' },
-                  { val: basePrograms.length - eligibleCount - ineligibleCount, label: 'Verify', color: '#94a3b8', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.2)' },
-                  ...(lenderProgramsForState.length > 0 ? [{ val: lenderProgramsForState.length, label: 'Lender', color: '#34d399', bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.3)' }] : []),
-                ].map(({ val, label, color, bg, border }) => (
-                  <div key={label} style={{ textAlign: 'center', padding: '10px 16px', background: bg, border: `1px solid ${border}`, borderRadius: 10, minWidth: 64 }}>
-                    <div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1, fontFamily: "'DM Sans', sans-serif" }}>{val}</div>
-                    <div style={{ fontSize: 10, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 3, fontFamily: "'DM Sans', sans-serif" }}>{label}</div>
-                  </div>
-                ))}
+            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10, marginLeft: 24 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <span className="text-xs font-bold tracking-widest uppercase bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-400/30 text-indigo-300">
+                  Stage 2 — Lender Fit
+                </span>
+                <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">Module 9</span>
+                <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-400/30 font-semibold">● LIVE</span>
               </div>
-            )}
+              {scenario?.loaded && (
+                <div className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right" style={{ minWidth: 190 }}>
+                  <p style={{ fontSize: 12, color: '#94a3b8', margin: 0 }}>
+                    {[scenario.firstName, scenario.lastName].filter(Boolean).join(' ') || 'Borrower'}
+                  </p>
+                  <p style={{ fontSize: 18, fontWeight: 900, color: '#fff', margin: '2px 0' }}>
+                    {scenario.loanAmount ? `$${Number(scenario.loanAmount).toLocaleString()}` : '—'}
+                  </p>
+                  <p style={{ fontSize: 12, color: '#94a3b8', margin: 0 }}>
+                    {scenario.loanType || 'N/A'}{activeState ? ` · ${activeState}` : ''}
+                  </p>
+                </div>
+              )}
+              {activeState === 'GA' && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <StatBadge value={eligibleCount} label="Eligible" color={C.green} />
+                  <StatBadge value={ineligibleCount} label="Ineligible" color={C.red} />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '20px 24px' }}>
-        {/* Decision Record Banner */}
-        <DecisionRecordBanner moduleId={MODULE_ID} scenarioId={scenarioId} />
+      {/* ── 4. ScenarioHeader bar ─────────────────────────────────────── */}
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px' }}>
+        <ScenarioHeader scenario={scenario?.loaded ? scenario : null} moduleNumber={9} scenarioId={scenarioId} />
+      </div>
 
-        {/* ── NEXT STEP INTELLIGENCE™ ── */}
-        {scenarioId && primarySuggestion && (
-          <div style={{ background: '#ffffff', borderRadius: 16, border: '1px solid #e2e8f0', padding: '20px 24px', marginBottom: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-            <p style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12, fontFamily: "'DM Sans', sans-serif" }}>
-              Recommended Next Action
-            </p>
-            <NextStepCard
-              suggestion={primarySuggestion}
-              secondarySuggestions={secondarySuggestions}
-              onFollow={logFollow}
-              onOverride={logOverride}
-              loanPurpose={loanPurpose}
-              scenarioId={scenarioId}
-            />
-          </div>
-        )}
-
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px 20px' }}>
         {/* Scenario Context Bar */}
         <ScenarioContextBar scenario={scenario} activeState={activeState} />
 
@@ -1390,7 +1370,7 @@ export default function DPAIntelligence() {
         )}
 
         {activeState !== 'GA' && nonGAPrograms.length > 0 && (
-          <div style={{ background: '#1a1421', border: `1px solid #4c1d95`, borderRadius: 8, padding: '10px 16px', marginBottom: 16, fontSize: 12, color: '#c4b5fd' }}>
+          <div style={{ background: '#faf5ff', border: `1px solid #e9d5ff`, borderRadius: 8, padding: '10px 16px', marginBottom: 16, fontSize: 12, color: '#6d28d9' }}>
             🤖 AI-Researched Programs — These results were found via live web search and have not been manually verified. Always confirm program details with the state HFA or program administrator before promising DPA to a borrower.
           </div>
         )}

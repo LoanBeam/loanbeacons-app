@@ -1,15 +1,16 @@
 // src/pages/RateIntel.jsx
-// LoanBeacons™ — Module 08 | Stage 3: Final Structure Optimization
+// LoanBeacons™ — Module 19 | Stage 3: Optimization
 // Rate Intelligence™ — Rate locks, pricing, buydown analysis, float vs lock
+// v2.0 — ModulePageShell layout standard applied (Apr 2026)
 
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
-import DecisionRecordBanner from '../components/DecisionRecordBanner';
-import ScenarioHeader from '../components/ScenarioHeader';
 import ModuleNav from '../components/ModuleNav';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+
 const LOCK_PERIODS = [
   { days: 15, adj: -0.125, note: 'Best price. Tight closing timeline. Use only if ready to close within days.' },
   { days: 30, adj: 0,      note: 'Standard lock. Par pricing. Most common choice for purchase transactions.' },
@@ -55,8 +56,8 @@ function calcPI(principal, annualRate, termMonths) {
   if (r === 0) return principal / termMonths;
   return principal * (r * Math.pow(1 + r, termMonths)) / (Math.pow(1 + r, termMonths) - 1);
 }
-const fmtD  = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
-const fmt0  = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
+const fmtD   = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
+const fmt0   = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
 const fmtPct = (n) => isNaN(n) ? '--' : Number(n).toFixed(3) + '%';
 
 function addDays(dateStr, days) {
@@ -65,25 +66,18 @@ function addDays(dateStr, days) {
   d.setDate(d.getDate() + days);
   return d.toISOString().split('T')[0];
 }
-function todayStr() {
-  return new Date().toISOString().split('T')[0];
-}
+function todayStr() { return new Date().toISOString().split('T')[0]; }
 
 // ─── Letter Builder ───────────────────────────────────────────────────────────
 function buildRateLetter(type, borrowerName, scenarioName, loanAmount, noteRate, lockPeriod, lockAdj, adjustedRate, adjustedPI, marketTrend, trendRec, aiAnalysis, lenderCreditAmt, buydown, yr1PI, yr2PI, currentPI, buydownCostNum, totalSubsidy, buydownBreakeven, floatDownOption, rateLockDate, expirationDate) {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const trendObj = MARKET_TRENDS.find((t) => t.id === marketTrend);
   const lines = [];
-  lines.push(today);
-  lines.push('');
-
+  lines.push(today); lines.push('');
   if (type === 'borrower') {
-    lines.push('Dear ' + (borrowerName || 'Valued Client') + ',');
-    lines.push('');
-    lines.push('RE: Rate Lock Strategy and Pricing Analysis - ' + (scenarioName || 'Your Home Purchase'));
-    lines.push('');
-    lines.push('I have completed a comprehensive rate analysis for your loan. This letter summarizes my recommendations on rate lock timing, pricing strategy, and any buydown options we discussed.');
-    lines.push('');
+    lines.push('Dear ' + (borrowerName || 'Valued Client') + ','); lines.push('');
+    lines.push('RE: Rate Lock Strategy and Pricing Analysis - ' + (scenarioName || 'Your Home Purchase')); lines.push('');
+    lines.push('I have completed a comprehensive rate analysis for your loan. This letter summarizes my recommendations on rate lock timing, pricing strategy, and any buydown options we discussed.'); lines.push('');
     lines.push('YOUR LOAN DETAILS');
     lines.push('Loan Amount: ' + fmt0(loanAmount));
     lines.push('Note Rate: ' + fmtPct(noteRate));
@@ -96,28 +90,21 @@ function buildRateLetter(type, borrowerName, scenarioName, loanAmount, noteRate,
     if (trendObj) {
       lines.push('MARKET ANALYSIS AND LOCK RECOMMENDATION');
       lines.push('Current Market Condition: ' + trendObj.label);
-      lines.push('My Recommendation: ' + trendObj.rec);
-      lines.push('');
+      lines.push('My Recommendation: ' + trendObj.rec); lines.push('');
       lines.push('Rationale: ' + trendObj.advice);
-      if (aiAnalysis && aiAnalysis.summary) {
-        lines.push('');
-        lines.push('Current Market Data:');
-        lines.push(aiAnalysis.summary);
-      }
+      if (aiAnalysis && aiAnalysis.summary) { lines.push(''); lines.push('Current Market Data:'); lines.push(aiAnalysis.summary); }
       lines.push('');
     }
     if (lockAdj !== 0) {
       lines.push('LOCK PERIOD PRICING IMPACT');
       lines.push('A ' + lockPeriod + '-day lock carries a ' + (lockAdj > 0 ? '+' : '') + lockAdj + '% rate adjustment.');
       lines.push('This changes your rate from ' + fmtPct(noteRate) + ' to ' + fmtPct(adjustedRate) + ', adding ' + fmtD(adjustedPI - calcPI(loanAmount, noteRate, 360)) + '/month to your payment.');
-      lines.push('Compared to a standard 30-day lock, this extra time adds certainty to your closing timeline.');
-      lines.push('');
+      lines.push('Compared to a standard 30-day lock, this extra time adds certainty to your closing timeline.'); lines.push('');
     }
     if (lenderCreditAmt > 0) {
       lines.push('LENDER CREDIT');
       lines.push('By pricing your rate slightly above par, the lender will contribute ' + fmt0(lenderCreditAmt) + ' toward your closing costs.');
-      lines.push('This reduces your cash needed at closing. The tradeoff is a slightly higher monthly payment over the life of the loan.');
-      lines.push('');
+      lines.push('This reduces your cash needed at closing. The tradeoff is a slightly higher monthly payment over the life of the loan.'); lines.push('');
     }
     if (buydown && yr1PI > 0) {
       lines.push('RATE BUYDOWN ANALYSIS (' + buydown.label + ')');
@@ -125,61 +112,47 @@ function buildRateLetter(type, borrowerName, scenarioName, loanAmount, noteRate,
       if (yr2PI > 0) lines.push('Year 2 Payment: ' + fmtD(yr2PI) + '/month (saves ' + fmtD(currentPI - yr2PI) + '/month)');
       lines.push('Year 3+ Payment: ' + fmtD(currentPI) + '/month (full note rate)');
       lines.push('Total Subsidy Value: ' + fmt0(totalSubsidy));
-      if (buydownBreakeven) lines.push('Break-Even: ' + buydownBreakeven + ' months');
-      lines.push('');
+      if (buydownBreakeven) lines.push('Break-Even: ' + buydownBreakeven + ' months'); lines.push('');
     }
     if (floatDownOption) {
       lines.push('FLOAT-DOWN OPTION');
-      lines.push('You have requested a float-down option. This allows your rate to drop once if market rates fall below your locked rate before closing. There is typically a fee for this option and a one-time trigger window (usually 5-10 business days before closing). I will monitor rates and notify you if a float-down opportunity arises.');
-      lines.push('');
+      lines.push('You have requested a float-down option. This allows your rate to drop once if market rates fall below your locked rate before closing. There is typically a fee for this option and a one-time trigger window (usually 5-10 business days before closing). I will monitor rates and notify you if a float-down opportunity arises.'); lines.push('');
     }
     lines.push('IMPORTANT REMINDERS');
     lines.push('* Your rate lock expires on ' + (expirationDate || 'the date shown above') + '. Contact me immediately if your closing may be delayed.');
     lines.push('* These figures reflect principal and interest only. Your full payment includes taxes, insurance, and any mortgage insurance.');
-    lines.push('* Discount points paid may be tax-deductible. Please consult your tax advisor.');
-    lines.push('');
-    lines.push('I am here to monitor the market and keep you informed. Please reach out with any questions.');
-    lines.push('');
+    lines.push('* Discount points paid may be tax-deductible. Please consult your tax advisor.'); lines.push('');
+    lines.push('I am here to monitor the market and keep you informed. Please reach out with any questions.'); lines.push('');
     lines.push('Warm regards,');
   } else {
-    lines.push('Dear Realtor Partner,');
-    lines.push('');
-    lines.push('RE: Rate Lock Strategy for ' + (borrowerName || 'Your Buyer') + ' - ' + (scenarioName || 'Active Transaction'));
-    lines.push('');
-    lines.push('I wanted to share the rate lock analysis for your buyer so we can coordinate the closing timeline and use the pricing data strategically in any remaining negotiations.');
-    lines.push('');
+    lines.push('Dear Realtor Partner,'); lines.push('');
+    lines.push('RE: Rate Lock Strategy for ' + (borrowerName || 'Your Buyer') + ' - ' + (scenarioName || 'Active Transaction')); lines.push('');
+    lines.push('I wanted to share the rate lock analysis for your buyer so we can coordinate the closing timeline and use the pricing data strategically in any remaining negotiations.'); lines.push('');
     lines.push('CURRENT RATE LOCK STATUS');
     lines.push('Note Rate: ' + fmtPct(noteRate));
     lines.push('Lock Period: ' + lockPeriod + ' days');
     if (rateLockDate) lines.push('Locked: ' + rateLockDate);
-    if (expirationDate) lines.push('Expires: ' + expirationDate + ' -- closing MUST occur before this date');
-    lines.push('');
+    if (expirationDate) lines.push('Expires: ' + expirationDate + ' -- closing MUST occur before this date'); lines.push('');
     if (trendObj) {
       lines.push('MARKET ASSESSMENT');
       lines.push('Current Market: ' + trendObj.label + ' -- ' + trendObj.rec);
-      if (aiAnalysis && aiAnalysis.summary) {
-        lines.push('');
-        lines.push(aiAnalysis.summary);
-      }
+      if (aiAnalysis && aiAnalysis.summary) { lines.push(''); lines.push(aiAnalysis.summary); }
       lines.push('');
     }
     lines.push('WHY THE LOCK EXPIRATION DATE MATTERS');
     lines.push('If closing is delayed past ' + (expirationDate || 'the lock expiration date') + ', I will need to extend or re-lock the rate. In a ' + (trendObj ? trendObj.label.toLowerCase() : 'current') + ' market, a re-lock could mean a higher rate for your buyer.');
     lines.push('* A 15-day extension typically costs +0.125% to the rate or a fee.');
     lines.push('* Please confirm the closing date with the title company as soon as possible.');
-    lines.push('* Let me know immediately of any delays -- I need at least 48 hours notice to explore options.');
-    lines.push('');
+    lines.push('* Let me know immediately of any delays -- I need at least 48 hours notice to explore options.'); lines.push('');
     if (buydown && yr1PI > 0) {
       lines.push('SELLER CONCESSION OPPORTUNITY -- RATE BUYDOWN');
       lines.push('If the seller has any remaining concession capacity, a ' + buydown.label + ' would deliver significant value to your buyer:');
       lines.push('Year 1 savings: ' + fmtD(currentPI - yr1PI) + '/month (' + fmt0((currentPI - yr1PI) * 12) + '/year)');
       if (yr2PI > 0) lines.push('Year 2 savings: ' + fmtD(currentPI - yr2PI) + '/month');
       lines.push('Total subsidy value: ' + fmt0(totalSubsidy));
-      lines.push('This is often more impactful than an equivalent price reduction, as it directly reduces the monthly payment the borrower qualifies on.');
-      lines.push('');
+      lines.push('This is often more impactful than an equivalent price reduction, as it directly reduces the monthly payment the borrower qualifies on.'); lines.push('');
     }
-    lines.push("Let's coordinate to make sure we close on time and in the best possible position for your buyer.");
-    lines.push('');
+    lines.push("Let's coordinate to make sure we close on time and in the best possible position for your buyer."); lines.push('');
     lines.push('Best regards,');
   }
   lines.push('George Jules Chevalier IV, NMLS #1175947');
@@ -198,7 +171,7 @@ function GlossaryCard({ term, icon, definition, example, highlight }) {
         <span className="text-xl">{icon}</span>
         <span className={'text-sm font-bold ' + (highlight ? 'text-amber-800' : 'text-slate-700')}>{term}</span>
         {highlight && <span className="ml-1 text-xs font-bold bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full">Key Term</span>}
-        <span className={'text-slate-400 text-xs ml-auto'}>{open ? '▲' : '▼'}</span>
+        <span className="text-slate-400 text-xs ml-auto">{open ? '▲' : '▼'}</span>
       </div>
       {open && (
         <div className="px-4 pb-4 space-y-2 border-t border-slate-100 pt-3">
@@ -248,11 +221,7 @@ function RateLetter({ borrowerName, scenarioName, loanAmount, noteRate, lockPeri
   const [copied, setCopied] = useState(false);
   const trendObj = MARKET_TRENDS.find((t) => t.id === marketTrend);
   const letterText = buildRateLetter(letterType, borrowerName, scenarioName, loanAmount, noteRate, lockPeriod, lockAdj, adjustedRate, adjustedPI, marketTrend, trendObj ? trendObj.rec : '', aiAnalysis, lenderCreditAmt, buydown, yr1PI, yr2PI, currentPI, buydownCostNum, totalSubsidy, buydownBreakeven, floatDownOption, rateLockDate, expirationDate);
-  const handleCopy = () => {
-    navigator.clipboard.writeText(letterText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
-  };
+  const handleCopy = () => { navigator.clipboard.writeText(letterText); setCopied(true); setTimeout(() => setCopied(false), 2500); };
   return (
     <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
       <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5 flex items-center justify-between">
@@ -261,7 +230,7 @@ function RateLetter({ borrowerName, scenarioName, loanAmount, noteRate, lockPeri
           <h3 className="text-xl font-bold text-white">Borrower & Realtor Letters</h3>
           <p className="text-slate-400 text-sm mt-0.5">Auto-generated from your analysis. Review before sending.</p>
         </div>
-        <span className="text-3xl">&#x2709;&#xFE0F;</span>
+        <span className="text-3xl">✉️</span>
       </div>
       <div className="p-8 space-y-5">
         <div className="flex gap-2">
@@ -280,11 +249,81 @@ function RateLetter({ borrowerName, scenarioName, loanAmount, noteRate, lockPeri
             className={'flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold ' + (copied ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white')}>
             {copied ? 'Copied!' : 'Copy Letter'}
           </button>
-          <button onClick={() => window.print()} className="flex items-center gap-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-xl">
-            Print
-          </button>
+          <button onClick={() => window.print()} className="flex items-center gap-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-xl">Print</button>
         </div>
         <p className="text-xs text-slate-400">Review and personalize before sending. Rate figures reflect current analysis inputs.</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Decision Record Banner (inline — green state + NSI pill) ─────────────────
+function DRBanner({ savedRecordId, saving, onSave, nsiSuggestion, onNsiNavigate }) {
+  const isSaved = Boolean(savedRecordId);
+  return (
+    <div style={{
+      background:   isSaved ? '#f0fdf4' : '#ffffff',
+      borderBottom: isSaved ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
+      padding:      '10px 32px',
+      display:      'flex',
+      alignItems:   'center',
+      gap:          12,
+      flexWrap:     'wrap',
+      transition:   'background 0.3s, border-color 0.3s',
+    }}>
+      <div style={{
+        width: 30, height: 30, borderRadius: 7, flexShrink: 0,
+        background: isSaved ? '#dcfce7' : '#f1f5f9',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'background 0.3s',
+      }}>
+        {isSaved
+          ? <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7.5l3 3 6-6" stroke="#16a34a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          : <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="#475569" strokeWidth="1.4"/><path d="M5 8h6M5 5.5h6M5 10.5h3.5" stroke="#475569" strokeWidth="1.2" strokeLinecap="round"/></svg>
+        }
+      </div>
+      <div>
+        <p style={{ fontSize: 12, fontWeight: 600, color: isSaved ? '#14532d' : '#1e293b', margin: 0 }}>
+          {isSaved ? 'Decision Record — Saved ✓' : 'Decision Record'}
+        </p>
+        <p style={{ fontSize: 11, color: isSaved ? '#16a34a' : '#94a3b8', margin: 0 }}>
+          {isSaved ? 'RATE INTEL findings logged to audit trail' : 'Save RATE INTEL findings to your audit trail'}
+        </p>
+      </div>
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {isSaved && nsiSuggestion?.path && (
+          <button onClick={() => onNsiNavigate(nsiSuggestion.path)}
+            style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '5px 13px', cursor: 'pointer', fontFamily: 'inherit' }}>
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+              <path d="M7 1v8M4 6l3 3 3-3" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M2 11h10" stroke="#3b82f6" strokeWidth="1.4" strokeLinecap="round"/>
+            </svg>
+            <div>
+              <p style={{ fontSize: 9, fontWeight: 700, color: '#1d4ed8', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>Next Suggested Action</p>
+              <p style={{ fontSize: 11, color: '#1e40af', fontWeight: 500, margin: 0 }}>{nsiSuggestion.moduleLabel || nsiSuggestion.moduleName}</p>
+            </div>
+            <span style={{ fontSize: 12, color: '#3b82f6' }}>→</span>
+          </button>
+        )}
+        <button
+          onClick={!isSaved && !saving ? onSave : undefined}
+          disabled={isSaved || saving}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            background: isSaved ? '#16a34a' : '#0f172a',
+            color: '#f8fafc', border: 'none', borderRadius: 6,
+            padding: '7px 15px', fontSize: 11, fontWeight: 600,
+            cursor: isSaved ? 'default' : 'pointer',
+            fontFamily: 'inherit', whiteSpace: 'nowrap',
+            opacity: saving ? 0.7 : 1, transition: 'background 0.3s',
+          }}
+        >
+          {isSaved
+            ? <><svg width="11" height="11" viewBox="0 0 14 14" fill="none"><path d="M2.5 7.5l3 3 6-6" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg> Saved</>
+            : saving ? 'Saving…'
+            : <><svg width="11" height="11" viewBox="0 0 14 14" fill="none"><rect x="2" y="2" width="10" height="10" rx="1.5" stroke="#f8fafc" strokeWidth="1.3"/><path d="M4.5 7l2 2 3.5-3.5" stroke="#f8fafc" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg> Save to Decision Record</>
+          }
+        </button>
       </div>
     </div>
   );
@@ -298,35 +337,35 @@ export default function RateIntel() {
 
   const { reportFindings } = useDecisionRecord(scenarioId);
   const [savedRecordId, setSavedRecordId] = useState(null);
-  const [recordSaving, setRecordSaving] = useState(false);
+  const [recordSaving,  setRecordSaving]  = useState(false);
+  const [findingsReported, setFindingsReported] = useState(false);
 
-  const [scenario, setScenario] = useState(null);
+  const [scenario,     setScenario]    = useState(null);
   const [borrowerName, setBorrowerName] = useState('');
-  const [loading, setLoading] = useState(!!scenarioId);
-  const [scenarios, setScenarios] = useState([]);
-  const [search,   setSearch]   = useState('');
-  const [showAll,  setShowAll]  = useState(false);
-  const [showGuide, setShowGuide] = useState(true);
+  const [loading,      setLoading]     = useState(!!scenarioId);
+  const [scenarios,    setScenarios]   = useState([]);
+  const [search,       setSearch]      = useState('');
+  const [showAll,      setShowAll]     = useState(false);
+  const [showGuide,    setShowGuide]   = useState(true);
 
-  const [loanAmount, setLoanAmount] = useState('');
-  const [noteRate, setNoteRate] = useState('');
-  const [termMonths, setTermMonths] = useState('360');
+  const [loanAmount,    setLoanAmount]    = useState('');
+  const [noteRate,      setNoteRate]      = useState('');
+  const [termMonths,    setTermMonths]    = useState('360');
   const [monthlyIncome, setMonthlyIncome] = useState('');
-  const [lockPeriod, setLockPeriod] = useState(30);
-  const [marketTrend, setMarketTrend] = useState('');
-  const [parRate, setParRate] = useState('');
+  const [lockPeriod,    setLockPeriod]    = useState(30);
+  const [marketTrend,   setMarketTrend]   = useState('');
+  const [parRate,       setParRate]       = useState('');
   const [creditPerBump, setCreditPerBump] = useState('');
   const [selectedBuydown, setSelectedBuydown] = useState('');
-  const [buydownCost, setBuydownCost] = useState('');
+  const [buydownCost,   setBuydownCost]   = useState('');
   const [floatDownOption, setFloatDownOption] = useState(false);
-  const [rateLockDate, setRateLockDate] = useState('');
-  const [expirationDate, setExpirationDate] = useState('');
-  const [notes, setNotes] = useState('');
+  const [rateLockDate,  setRateLockDate]  = useState('');
+  const [expirationDate,setExpirationDate]= useState('');
+  const [notes,         setNotes]         = useState('');
 
-  // AI Market Analysis state
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState(null);
-  const [aiError, setAiError] = useState('');
+  const [aiAnalysis,  setAiAnalysis]  = useState(null);
+  const [aiError,     setAiError]     = useState('');
 
   useEffect(() => {
     if (!scenarioId) {
@@ -339,11 +378,10 @@ export default function RateIntel() {
         setScenario(d);
         const name = [d.firstName, d.lastName].filter(Boolean).join(' ');
         if (name) setBorrowerName(name.trim());
-        if (d.loanAmount) setLoanAmount(String(d.loanAmount));
-        if (d.interestRate) setNoteRate(String(d.interestRate));
-        if (d.term) setTermMonths(String(d.term));
+        if (d.loanAmount)    setLoanAmount(String(d.loanAmount));
+        if (d.interestRate)  setNoteRate(String(d.interestRate));
+        if (d.term)          setTermMonths(String(d.term));
         if (d.monthlyIncome) setMonthlyIncome(String(d.monthlyIncome));
-        // Auto-set lock date to today, expiration to today + 30
         const today = todayStr();
         setRateLockDate(today);
         setExpirationDate(addDays(today, 30));
@@ -351,62 +389,66 @@ export default function RateIntel() {
     }).catch(console.error).finally(() => setLoading(false));
   }, [scenarioId]);
 
-  // Auto-update expiration when lock date or lock period changes
   useEffect(() => {
     if (rateLockDate) setExpirationDate(addDays(rateLockDate, lockPeriod));
   }, [rateLockDate, lockPeriod]);
 
   // Derived calculations
-  const loan = parseFloat(loanAmount) || 0;
-  const rate = parseFloat(noteRate) || 0;
-  const term = parseInt(termMonths) || 360;
-  const income = parseFloat(monthlyIncome) || 0;
-  const currentPI = calcPI(loan, rate, term);
-  const lockObj = LOCK_PERIODS.find((l) => l.days === lockPeriod) || LOCK_PERIODS[1];
-  const lockAdj = lockObj.adj;
+  const loan        = parseFloat(loanAmount) || 0;
+  const rate        = parseFloat(noteRate)   || 0;
+  const term        = parseInt(termMonths)   || 360;
+  const income      = parseFloat(monthlyIncome) || 0;
+  const currentPI   = calcPI(loan, rate, term);
+  const lockObj     = LOCK_PERIODS.find((l) => l.days === lockPeriod) || LOCK_PERIODS[1];
+  const lockAdj     = lockObj.adj;
   const adjustedRate = rate + lockAdj;
-  const adjustedPI = calcPI(loan, adjustedRate, term);
-  const dti = income > 0 && currentPI > 0 ? ((currentPI / income) * 100) : null;
+  const adjustedPI  = calcPI(loan, adjustedRate, term);
+  const dti         = income > 0 && currentPI > 0 ? ((currentPI / income) * 100) : null;
 
-  const parRateNum = parseFloat(parRate) || 0;
+  const parRateNum      = parseFloat(parRate)      || 0;
   const creditPerBumpNum = parseFloat(creditPerBump) || 0;
-  const bumpsAbovePar = parRateNum > 0 && rate > parRateNum ? (rate - parRateNum) / 0.125 : 0;
+  const bumpsAbovePar   = parRateNum > 0 && rate > parRateNum ? (rate - parRateNum) / 0.125 : 0;
   const lenderCreditPct = bumpsAbovePar * creditPerBumpNum;
   const lenderCreditAmt = loan > 0 ? (lenderCreditPct / 100) * loan : 0;
 
-  const buydown = BUYDOWN_OPTIONS.find((b) => b.id === selectedBuydown);
+  const buydown       = BUYDOWN_OPTIONS.find((b) => b.id === selectedBuydown);
   const buydownCostNum = parseFloat(buydownCost) || 0;
-  const yr1PI = buydown && buydown.yr1 !== null && rate > 0 ? calcPI(loan, rate - buydown.yr1, term) : 0;
-  const yr2PI = buydown && buydown.yr2 > 0 && rate > 0 ? calcPI(loan, rate - buydown.yr2, term) : 0;
+  const yr1PI         = buydown && buydown.yr1 !== null && rate > 0 ? calcPI(loan, rate - buydown.yr1, term) : 0;
+  const yr2PI         = buydown && buydown.yr2 > 0  && rate > 0 ? calcPI(loan, rate - buydown.yr2, term) : 0;
   const yr1AnnualSavings = yr1PI > 0 ? (currentPI - yr1PI) * 12 : 0;
   const yr2AnnualSavings = yr2PI > 0 ? (currentPI - yr2PI) * 12 : 0;
-  const totalSubsidy = yr1AnnualSavings + yr2AnnualSavings;
+  const totalSubsidy  = yr1AnnualSavings + yr2AnnualSavings;
   const buydownBreakeven = buydownCostNum > 0 && totalSubsidy > 0 ? Math.ceil(buydownCostNum / (totalSubsidy / 24)) : null;
+  const trendObj      = MARKET_TRENDS.find((t) => t.id === marketTrend);
 
-  const trendObj = MARKET_TRENDS.find((t) => t.id === marketTrend);
+  // ─── NSI ────────────────────────────────────────────────────────────────────
+  const rawPurpose  = (scenario?.loanPurpose || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('cash') ? 'cash_out_refi'
+    : rawPurpose.includes('rate') || rawPurpose.includes('refi') ? 'rate_term_refi'
+    : 'purchase';
 
-  // ─── AI Market Analysis ─────────────────────────────────────────────────────
+  const { primarySuggestion, logFollow } = useNextStepIntelligence({
+    currentModuleKey:       'RATE_INTEL',
+    loanPurpose,
+    decisionRecordFindings: { RATE_INTEL: { noteRate: rate, lockPeriod, marketTrend } },
+    scenarioData:           scenario || {},
+    completedModules:       [],
+    scenarioId,
+    onWriteToDecisionRecord: null,
+  });
+
+  // ─── AI Market Analysis ──────────────────────────────────────────────────────
   const runMarketAnalysis = async () => {
-    setAiAnalyzing(true);
-    setAiError('');
-    setAiAnalysis(null);
+    setAiAnalyzing(true); setAiError(''); setAiAnalysis(null);
     try {
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
+        headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-haiku-4-5-20251001',
           max_tokens: 1024,
           tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-          messages: [{
-            role: 'user',
-            content: 'Search for the current 30-year fixed mortgage rate trend as of today. Look for: (1) current average 30-year fixed rate, (2) direction of rates this week (rising, falling, sideways, or volatile), (3) any Federal Reserve commentary or economic data driving rates, (4) MBS market conditions if available. Then provide a JSON response with this exact structure (no markdown, no backticks): {"trend":"rising|falling|sideways|volatile","currentRate":"X.XX%","weeklyChange":"+X.XXX% or -X.XXX%","verdict":"Lock Now|Consider Float|Lock at Milestone|Lock ASAP","confidence":"HIGH|MEDIUM|LOW","summary":"2-3 sentence plain English summary of current market conditions for a mortgage loan officer","dataPoints":["point 1","point 2","point 3"],"sourceDate":"today date","recommendation":"1 sentence specific recommendation for a borrower locking today"}'
-          }],
+          messages: [{ role: 'user', content: 'Search for the current 30-year fixed mortgage rate trend as of today. Look for: (1) current average 30-year fixed rate, (2) direction of rates this week (rising, falling, sideways, or volatile), (3) any Federal Reserve commentary or economic data driving rates, (4) MBS market conditions if available. Then provide a JSON response with this exact structure (no markdown, no backticks): {"trend":"rising|falling|sideways|volatile","currentRate":"X.XX%","weeklyChange":"+X.XXX% or -X.XXX%","verdict":"Lock Now|Consider Float|Lock at Milestone|Lock ASAP","confidence":"HIGH|MEDIUM|LOW","summary":"2-3 sentence plain English summary of current market conditions for a mortgage loan officer","dataPoints":["point 1","point 2","point 3"],"sourceDate":"today date","recommendation":"1 sentence specific recommendation for a borrower locking today"}' }],
         }),
       });
       if (!resp.ok) throw new Error('API error ' + resp.status);
@@ -416,19 +458,16 @@ export default function RateIntel() {
       if (!jsonMatch) throw new Error('No JSON in response');
       const parsed = JSON.parse(jsonMatch[0]);
       setAiAnalysis(parsed);
-      // Auto-select the market trend
       if (parsed.trend) setMarketTrend(parsed.trend);
-      // Pre-populate notes with AI summary
       if (parsed.summary) {
         const notePrefix = 'AI Market Analysis (' + new Date().toLocaleDateString() + '): ' + parsed.summary + ' Recommendation: ' + (parsed.recommendation || parsed.verdict) + '\n\n';
         setNotes((prev) => notePrefix + (prev || ''));
       }
-    } catch (err) {
-      setAiError('Analysis failed: ' + err.message + '. Check API key or try again.');
-    }
+    } catch (err) { setAiError('Analysis failed: ' + err.message + '. Check API key or try again.'); }
     setAiAnalyzing(false);
   };
 
+  // ─── Save to Decision Record ─────────────────────────────────────────────────
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
@@ -453,57 +492,70 @@ export default function RateIntel() {
           loNotes: notes,
           completeness: { rateEntered: rate > 0, lockPeriodSet: true, marketTrendSet: !!marketTrend, aiAnalysisRun: !!aiAnalysis, lockDatesSet: !!(rateLockDate && expirationDate) },
         },
-        [],
-        riskFlags,
+        [], riskFlags,
       );
       if (writtenId) setSavedRecordId(writtenId);
+      setFindingsReported(true);
     } catch (e) { console.error(e); }
     setRecordSaving(false);
   };
 
+  // ─── Loading ──────────────────────────────────────────────────────────────────
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
       <div className="text-center"><div className="text-5xl mb-4">🔒</div><div className="text-slate-500">Loading...</div></div>
     </div>
   );
 
+  // ─── STATE A: No scenario — Landing / Selector ────────────────────────────────
   if (!scenarioId) {
     const q = search.toLowerCase().trim();
     const sorted = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
     const filtered = q ? sorted.filter(s => (s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim()).toLowerCase().includes(q)) : sorted;
     const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
     const hasMore = !q && !showAll && filtered.length > 5;
+
     return (
       <div className="min-h-screen bg-slate-50">
-        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-10">
-          <div className="max-w-2xl mx-auto">
-            <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">08</div>
-              <div>
-                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 3 — Final Structure</span>
-                <h1 className="text-2xl font-bold text-white mt-0.5">Rate Intelligence™</h1>
-              </div>
-            </div>
-            <p className="text-indigo-300 text-sm leading-relaxed mb-5">Analyze rate options, buydown strategies, and ARM vs fixed trade-offs. Find the optimal pricing structure for each borrower's timeline and risk tolerance.</p>
-            <div className="flex flex-wrap gap-2">
-              {['Rate Comparison', 'Buydown Analysis', 'ARM vs Fixed', 'Break-Even Calculator', 'Pricing Sensitivity', 'Float vs Lock'].map(tag => (
-                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-indigo-200 px-3 py-1 rounded-full font-medium">{tag}</span>
-              ))}
-            </div>
+
+        {/* ── Hero (landing) ── */}
+        <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', padding: '28px 32px 24px' }}>
+          <button onClick={() => navigate('/')}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#818cf8', fontSize: 12, fontWeight: 600, marginBottom: 20, background: 'none', border: 'none', cursor: 'pointer' }}>
+            ← Back to Dashboard
+          </button>
+          <p style={{ fontSize: 10, fontWeight: 600, color: '#64748b', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+            Stage 3 — Optimization
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, background: '#6366f1', borderRadius: 8, fontSize: 11, fontWeight: 700, color: '#fff' }}>
+              M19
+            </span>
+            <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: '#f8fafc', lineHeight: 1.15 }}>
+              Rate Intelligence™
+            </h1>
+          </div>
+          <p style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.65, maxWidth: 520, marginBottom: 14 }}>
+            Lock strategy · Pricing optimization · Buydown analysis · Float vs lock decisions. Find the optimal pricing structure for each borrower's timeline and risk tolerance.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {['Rate Comparison', 'Buydown Analysis', 'ARM vs Fixed', 'Break-Even Calculator', 'Pricing Sensitivity', 'Float vs Lock'].map(tag => (
+              <span key={tag} style={{ padding: '3px 11px', borderRadius: 20, border: '1px solid #334155', fontSize: 11, fontWeight: 500, color: '#cbd5e1' }}>{tag}</span>
+            ))}
           </div>
         </div>
-        <div className="max-w-2xl mx-auto px-6 py-8">
-          <div className="mb-5">
-            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">Select a Scenario</h2>
-            <p className="text-xs text-slate-400">Search by name or pick from your most recent files.</p>
-          </div>
-          <div className="relative mb-4">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+
+        {/* ── Scenario Selector ── */}
+        <div style={{ maxWidth: 640, margin: '0 auto', padding: '28px 24px' }}>
+          <h2 style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 4 }}>Select a Scenario</h2>
+          <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 14 }}>Search by name or pick from your most recent files.</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1.5px solid #e2e8f0', borderRadius: 10, padding: '9px 14px', marginBottom: 14 }}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="5" stroke="#94a3b8" strokeWidth="1.6"/><path d="M10.5 10.5L14 14" stroke="#94a3b8" strokeWidth="1.6" strokeLinecap="round"/></svg>
             <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
-              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition-all" />
-            {search && <button onClick={() => setSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>}
+              style={{ border: 'none', outline: 'none', fontSize: 13, color: '#475569', width: '100%', background: 'transparent', fontFamily: 'inherit' }} />
+            {search && <button onClick={() => setSearch('')} style={{ color: '#94a3b8', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>✕</button>}
           </div>
+
           {scenarios.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
               <p className="text-3xl mb-3">📂</p>
@@ -515,13 +567,13 @@ export default function RateIntel() {
             <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
               <p className="text-2xl mb-2">🔍</p>
               <p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p>
-              <button onClick={() => setSearch('')} className="mt-2 text-xs indigo-500 hover:underline">Clear search</button>
+              <button onClick={() => setSearch('')} className="mt-2 text-xs text-indigo-500 hover:underline">Clear search</button>
             </div>
           ) : (
             <div className="space-y-2.5">
-              {!q && !showAll && <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-1">Recently Updated</p>}
+              {!q && !showAll && <p style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 7 }}>Recently Updated</p>}
               {displayed.map(s => {
-                const sName = s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim() || 'Unnamed Scenario';
+                const sName  = s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim() || 'Unnamed Scenario';
                 const amount = parseFloat(s.loanAmount || 0);
                 return (
                   <button key={s.id} onClick={() => navigate('/rate-intel?scenarioId=' + s.id)}
@@ -531,9 +583,9 @@ export default function RateIntel() {
                         <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-indigo-700 transition-colors">{sName}</div>
                         <div className="flex flex-wrap items-center gap-2 mt-1.5">
                           {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
-                          {s.loanType && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
-                          {s.creditScore && <span className="text-xs bg-indigo-50 text-indigo-600 border-indigo-100 border px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
-                          {s.stage && <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full font-medium">{s.stage}</span>}
+                          {s.loanType    && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
+                          {s.creditScore && <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
+                          {s.stage       && <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full font-medium">{s.stage}</span>}
                         </div>
                       </div>
                       <span className="text-slate-300 group-hover:text-indigo-400 text-lg transition-colors shrink-0">→</span>
@@ -542,7 +594,7 @@ export default function RateIntel() {
                 );
               })}
               {hasMore && (
-                <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-indigo-500 hover:text-indigo-700 border-indigo-200 hover:bg-indigo-50 py-3 border border-dashed rounded-2xl transition-all">
+                <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-indigo-500 hover:text-indigo-700 py-3 border border-dashed border-indigo-200 rounded-2xl hover:bg-indigo-50 transition-all">
                   View all {filtered.length} scenarios
                 </button>
               )}
@@ -556,67 +608,84 @@ export default function RateIntel() {
     );
   }
 
+  // ─── STATE B: Scenario loaded — Active Module ─────────────────────────────────
+  const propertyAddress = scenario ? [scenario.streetAddress, scenario.city, scenario.state, scenario.zipCode].filter(Boolean).join(', ') : '';
+  const coBorrowerNames = scenario?.coBorrowers?.filter(cb => cb.firstName || cb.lastName).map(cb => `${cb.firstName||''} ${cb.lastName||''}`.trim()) || [];
+
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
-      <DecisionRecordBanner
-        recordId={savedRecordId}
-        moduleName="Rate Intelligence™"
-        moduleKey="RATE_INTEL"
-        onSave={handleSaveToRecord}
-      />
-      <ModuleNav moduleNumber={19} />
+      {/* ════════════════════════════════════════════════════════
+          1. HERO
+      ════════════════════════════════════════════════════════ */}
+      <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', padding: '26px 32px 22px', position: 'relative' }}>
+        <p style={{ fontSize: 10, fontWeight: 600, color: '#64748b', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6 }}>
+          LoanBeacons™ — Module 19
+        </p>
+        <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif", fontSize: 26, color: '#f8fafc', lineHeight: 1.15, marginBottom: 8 }}>
+          Rate Intelligence™
+        </h1>
+        <p style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.6, maxWidth: 500, marginBottom: 12 }}>
+          Lock strategy · Pricing optimization · Buydown analysis · Float vs lock decisions
+        </p>
 
-      {/* Hero */}
-      <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
-        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #6366f1 0%, transparent 50%), radial-gradient(circle at 80% 20%, #0ea5e9 0%, transparent 40%)' }} />
-        <div className="relative max-w-7xl mx-auto px-6 py-8">
-          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
-          <div className="flex items-start justify-between flex-wrap gap-6">
-            <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 08</div>
-              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Rate Intelligence™</h1>
-              <p className="text-slate-400 text-base max-w-xl leading-relaxed">Lock strategy · Pricing optimization · Buydown analysis · Float vs lock decisions</p>
-            </div>
-            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4 backdrop-blur-sm" style={{ minWidth: '220px' }}>
-              {scenario ? (
-                <>
-                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
-                  <div className="text-white font-bold">{borrowerName || scenario.scenarioName}</div>
-                  <div className="text-slate-400 text-sm mt-1">{fmt0(loan)} · {rate > 0 ? fmtPct(rate) : '--'} · {term === 360 ? '30yr' : '15yr'}</div>
-                  {currentPI > 0 && <div className="text-indigo-300 text-sm font-bold mt-1">{fmtD(currentPI)}/mo P&amp;I</div>}
-                  <button onClick={() => navigate('/rate-intel')} className="text-xs text-blue-400 hover:text-blue-300 mt-2 block">Change scenario →</button>
-                </>
-              ) : (
-                <>
-                  <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">No Scenario</div>
-                  <div className="text-slate-400 text-sm">Select a scenario below</div>
-                </>
-              )}
-            </div>
-          </div>
+        {/* Status pills */}
+        <div style={{ position: 'absolute', top: 22, right: 32, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+          <span style={{ background: 'rgba(34,197,94,0.15)', color: '#86efac', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid rgba(134,239,172,0.3)' }}>● LIVE</span>
+          {trendObj && (
+            <span style={{ background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid rgba(165,180,252,0.3)' }}>
+              {trendObj.rec}
+            </span>
+          )}
         </div>
+
+        {/* Active scenario card */}
+        {scenario && (
+          <div style={{ position: 'absolute', bottom: 20, right: 32, background: 'rgba(255,255,255,0.06)', border: '1px solid #334155', borderRadius: 10, padding: '10px 14px', minWidth: 176, backdropFilter: 'blur(4px)' }}>
+            <p style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>Active Scenario</p>
+            <p style={{ fontSize: 13, fontWeight: 600, color: '#f1f5f9' }}>{borrowerName || scenario.scenarioName || 'Unknown'}</p>
+            <p style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>
+              {loan > 0 ? fmt0(loan) : ''}{rate > 0 ? ` · ${fmtPct(rate)}` : ''}{currentPI > 0 ? ` · ${fmtD(currentPI)}/mo` : ''}
+            </p>
+            <span onClick={() => navigate('/rate-intel')} style={{ fontSize: 10, color: '#818cf8', marginTop: 6, cursor: 'pointer', display: 'inline-block' }}>Change scenario →</span>
+          </div>
+        )}
       </div>
 
-      {/* Borrower bar */}
-      {scenarioId && borrowerName && (
-        <div className="bg-[#1B3A6B] px-6 py-3">
-          <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-1">
-            <span className="text-white font-bold text-sm">{borrowerName}</span>
-            {scenario?.streetAddress && <span className="text-blue-200 text-xs">{[scenario.streetAddress, scenario.city, scenario.state].filter(Boolean).join(', ')}</span>}
-            <div className="flex flex-wrap gap-x-4 text-xs text-blue-200">
-              {loan > 0 && <span>Loan <strong className="text-white">{fmt0(loan)}</strong></span>}
-              {rate > 0 && <span>Rate <strong className="text-white">{fmtPct(rate)}</strong></span>}
-              {currentPI > 0 && <span>P&amp;I <strong className="text-white">{fmtD(currentPI)}/mo</strong></span>}
-              {dti && <span>P&amp;I DTI <strong className={'text-white ' + (dti > 43 ? 'text-red-300' : '')}>{dti.toFixed(1)}%</strong></span>}
-            </div>
-          </div>
+      {/* ════════════════════════════════════════════════════════
+          2. SCENARIO HEADER BAR
+      ════════════════════════════════════════════════════════ */}
+      {scenario && (
+        <div style={{ background: '#1a2744', padding: '8px 32px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', borderBottom: '1px solid #0f172a' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{borrowerName || 'Unknown Borrower'}</span>
+          {coBorrowerNames.map((n, i) => <span key={i} style={{ fontSize: 11, color: '#64748b' }}>+ {n}</span>)}
+          {propertyAddress && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>{propertyAddress}</span></>}
+          {loan > 0  && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>Loan <span style={{ color: '#cbd5e1', fontWeight: 500 }}>{fmt0(loan)}</span></span></>}
+          {rate > 0  && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>Rate <span style={{ color: '#cbd5e1', fontWeight: 500 }}>{fmtPct(rate)}</span></span></>}
+          {scenario.loanType && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>Type <span style={{ color: '#cbd5e1', fontWeight: 500 }}>{scenario.loanType}</span></span></>}
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Rate Intelligence™" moduleNumber="19" scenarioId={scenarioId} />
+      {/* ════════════════════════════════════════════════════════
+          3. MODULE NAV BAR
+      ════════════════════════════════════════════════════════ */}
+      <ModuleNav moduleNumber={19} />
 
+      {/* ════════════════════════════════════════════════════════
+          4. DECISION RECORD BANNER — green on save + NSI pill
+      ════════════════════════════════════════════════════════ */}
+      <DRBanner
+        savedRecordId={savedRecordId}
+        saving={recordSaving}
+        onSave={handleSaveToRecord}
+        nsiSuggestion={findingsReported ? primarySuggestion : null}
+        onNsiNavigate={(path) => { logFollow(); navigate(`${path}?scenarioId=${scenarioId}`); }}
+      />
+
+      {/* ════════════════════════════════════════════════════════
+          5. CONTENT
+      ════════════════════════════════════════════════════════ */}
       <div className="max-w-7xl mx-auto px-6 py-6 space-y-8">
 
         {/* LO Confidence Guide */}
@@ -638,7 +707,7 @@ export default function RateIntel() {
                 <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">When Should You Use This Module?</div>
                 <div className="grid grid-cols-2 gap-4">
                   {WHEN_TO_USE.map((w) => {
-                    const bg = { blue: 'bg-blue-50 border-blue-200 text-blue-700', emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700', violet: 'bg-violet-50 border-violet-200 text-violet-700', amber: 'bg-amber-50 border-amber-200 text-amber-700' }[w.color];
+                    const bg  = { blue: 'bg-blue-50 border-blue-200 text-blue-700', emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700', violet: 'bg-violet-50 border-violet-200 text-violet-700', amber: 'bg-amber-50 border-amber-200 text-amber-700' }[w.color];
                     const tip = { blue: 'bg-blue-100 text-blue-800', emerald: 'bg-emerald-100 text-emerald-800', violet: 'bg-violet-100 text-violet-800', amber: 'bg-amber-100 text-amber-800' }[w.color];
                     return (
                       <div key={w.scenario} className={'rounded-2xl border p-4 ' + bg}>
@@ -667,7 +736,7 @@ export default function RateIntel() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
           <div className="xl:col-span-2 space-y-8">
 
-            {/* Step 1 Loan Details */}
+            {/* Step 1 — Loan Details */}
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
                 <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Step 1</div>
@@ -677,10 +746,10 @@ export default function RateIntel() {
               <div className="p-8 space-y-6">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {[
-                    { label: 'Loan Amount ($)', val: loanAmount, set: setLoanAmount, ph: '310500' },
-                    { label: 'Note Rate (%)', val: noteRate, set: setNoteRate, ph: '7.125' },
-                    { label: 'Term (months)', val: termMonths, set: setTermMonths, ph: '360' },
-                    { label: 'Monthly Income ($)', val: monthlyIncome, set: setMonthlyIncome, ph: '8500' },
+                    { label: 'Loan Amount ($)',   val: loanAmount,    set: setLoanAmount,    ph: '310500' },
+                    { label: 'Note Rate (%)',      val: noteRate,      set: setNoteRate,      ph: '7.125'  },
+                    { label: 'Term (months)',      val: termMonths,    set: setTermMonths,    ph: '360'    },
+                    { label: 'Monthly Income ($)', val: monthlyIncome, set: setMonthlyIncome, ph: '8500'   },
                   ].map((f) => (
                     <div key={f.label}>
                       <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">{f.label}</label>
@@ -699,7 +768,7 @@ export default function RateIntel() {
               </div>
             </div>
 
-            {/* Step 2 Market Trend + AI */}
+            {/* Step 2 — Market Trend + AI */}
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
                 <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Step 2</div>
@@ -707,8 +776,6 @@ export default function RateIntel() {
                 <p className="text-slate-400 text-sm mt-1">Run a live AI market analysis or select manually. Your choice is logged in the Decision Record.</p>
               </div>
               <div className="p-8 space-y-6">
-
-                {/* AI Market Analysis Card */}
                 <div className="bg-gradient-to-br from-indigo-950 to-slate-900 rounded-2xl p-6 border border-indigo-800/40">
                   <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                     <div>
@@ -718,24 +785,15 @@ export default function RateIntel() {
                     </div>
                     <button onClick={runMarketAnalysis} disabled={aiAnalyzing}
                       className={'flex items-center gap-2 px-6 py-3 rounded-2xl text-sm font-bold transition-all ' + (aiAnalyzing ? 'bg-indigo-800 text-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-500 text-white')}>
-                      {aiAnalyzing ? (
-                        <><span className="w-4 h-4 border-2 border-indigo-300 border-t-transparent rounded-full animate-spin inline-block" /> Analyzing Market...</>
-                      ) : (
-                        <>🔍 Run Live Market Analysis</>
-                      )}
+                      {aiAnalyzing ? <><span className="w-4 h-4 border-2 border-indigo-300 border-t-transparent rounded-full animate-spin inline-block" /> Analyzing Market...</> : <>🔍 Run Live Market Analysis</>}
                     </button>
                   </div>
-
-                  {aiError && (
-                    <div className="bg-red-900/30 border border-red-700/50 rounded-xl px-4 py-3 text-xs text-red-300">{aiError}</div>
-                  )}
-
+                  {aiError && <div className="bg-red-900/30 border border-red-700/50 rounded-xl px-4 py-3 text-xs text-red-300">{aiError}</div>}
                   {!aiAnalysis && !aiAnalyzing && !aiError && (
                     <div className="bg-slate-800/40 rounded-xl px-4 py-3 text-xs text-slate-400">
                       Click "Run Live Market Analysis" to search current mortgage rate data, MBS market conditions, and Fed commentary. The AI will auto-select the market trend below and pre-fill your LO Notes with the analysis.
                     </div>
                   )}
-
                   {aiAnalysis && (
                     <div className="space-y-4">
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -771,25 +829,23 @@ export default function RateIntel() {
                     </div>
                   )}
                 </div>
-
-                {/* Manual Trend Selection */}
                 <div>
-                  <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Market Trend Selection {aiAnalysis ? '(auto-selected from AI analysis — adjust if needed)' : '(select manually or run AI analysis above)'}</div>
+                  <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Market Trend Selection {aiAnalysis ? '(auto-selected from AI — adjust if needed)' : '(select manually or run AI above)'}</div>
                   <div className="grid grid-cols-2 gap-4">
                     {MARKET_TRENDS.map((t) => {
                       const sel = marketTrend === t.id;
-                      const colors = { red: 'border-red-400 bg-red-50', emerald: 'border-emerald-400 bg-emerald-50', blue: 'border-blue-400 bg-blue-50', amber: 'border-amber-400 bg-amber-50' };
-                      const recColors = { red: 'bg-red-200 text-red-800', emerald: 'bg-emerald-200 text-emerald-800', blue: 'bg-blue-200 text-blue-800', amber: 'bg-amber-200 text-amber-800' };
-                      const icons = { up: '📈', down: '📉', flat: '↔️', bolt: '⚡' };
+                      const colors    = { red: 'border-red-400 bg-red-50', emerald: 'border-emerald-400 bg-emerald-50', blue: 'border-blue-400 bg-blue-50', amber: 'border-amber-400 bg-amber-50' }[t.color];
+                      const recColors = { red: 'bg-red-200 text-red-800', emerald: 'bg-emerald-200 text-emerald-800', blue: 'bg-blue-200 text-blue-800', amber: 'bg-amber-200 text-amber-800' }[t.color];
+                      const icons     = { up: '📈', down: '📉', flat: '↔️', bolt: '⚡' };
                       return (
                         <button key={t.id} onClick={() => setMarketTrend(sel ? '' : t.id)}
-                          className={'rounded-2xl border-2 p-5 text-left transition-all ' + (sel ? colors[t.color] : 'border-slate-200 bg-slate-50 hover:border-slate-300')}>
+                          className={'rounded-2xl border-2 p-5 text-left transition-all ' + (sel ? colors : 'border-slate-200 bg-slate-50 hover:border-slate-300')}>
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-2">
                               <span className="text-xl">{icons[t.icon]}</span>
                               <span className="font-bold text-slate-800">{t.label}</span>
                             </div>
-                            {sel && <span className={'text-xs font-black px-2 py-1 rounded-lg ' + recColors[t.color]}>{t.rec}</span>}
+                            {sel && <span className={'text-xs font-black px-2 py-1 rounded-lg ' + recColors}>{t.rec}</span>}
                           </div>
                           {sel ? <p className="text-xs text-slate-600 leading-relaxed mt-2">{t.advice}</p> : <p className="text-xs text-slate-400">{t.rec}</p>}
                         </button>
@@ -800,7 +856,7 @@ export default function RateIntel() {
               </div>
             </div>
 
-            {/* Step 3 Lock Period */}
+            {/* Step 3 — Lock Period */}
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
                 <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Step 3</div>
@@ -822,7 +878,6 @@ export default function RateIntel() {
                     );
                   })}
                 </div>
-
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4">
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">{lockPeriod}-Day Lock Details</div>
                   <p className="text-sm text-slate-600 mb-3">{lockObj.note}</p>
@@ -848,7 +903,6 @@ export default function RateIntel() {
                     </div>
                   )}
                 </div>
-
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Lock Date</label>
@@ -861,9 +915,7 @@ export default function RateIntel() {
                       className="w-full border-2 border-indigo-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-400 bg-indigo-50 text-indigo-700 font-semibold" />
                   </div>
                 </div>
-
                 <LockTimeline lockDate={rateLockDate} expirationDate={expirationDate} days={lockPeriod} />
-
                 <label className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-2xl cursor-pointer">
                   <input type="checkbox" checked={floatDownOption} onChange={(e) => setFloatDownOption(e.target.checked)} className="w-4 h-4 accent-indigo-600" />
                   <div>
@@ -874,7 +926,7 @@ export default function RateIntel() {
               </div>
             </div>
 
-            {/* Step 4 Lender Credit */}
+            {/* Step 4 — Lender Credit */}
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
                 <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Step 4 — Optional</div>
@@ -917,7 +969,7 @@ export default function RateIntel() {
               </div>
             </div>
 
-            {/* Step 5 Buydown */}
+            {/* Step 5 — Buydown */}
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
                 <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Step 5 — Optional</div>
@@ -956,15 +1008,16 @@ export default function RateIntel() {
                             <div className="text-xs text-emerald-400 mt-1">Save {fmtD(currentPI - yr1PI)}/mo</div>
                             <div className="text-xs text-emerald-400">{fmt0(yr1AnnualSavings)}/yr</div>
                           </div>
-                          {buydown.yr2 > 0 ? (
-                            <div className="bg-slate-800/60 rounded-2xl p-4 text-center">
-                              <div className="text-xs text-slate-400 mb-1">Year 2</div>
-                              <div className="text-xs text-indigo-300 mb-2">{fmtPct(rate - buydown.yr2)} rate</div>
-                              <div className="text-2xl font-black text-white">{fmtD(yr2PI)}</div>
-                              <div className="text-xs text-emerald-400 mt-1">Save {fmtD(currentPI - yr2PI)}/mo</div>
-                              <div className="text-xs text-emerald-400">{fmt0(yr2AnnualSavings)}/yr</div>
-                            </div>
-                          ) : <div className="bg-slate-700/30 rounded-2xl p-4 text-center flex items-center justify-center"><span className="text-slate-500 text-xs">No Year 2 reduction</span></div>}
+                          {buydown.yr2 > 0
+                            ? <div className="bg-slate-800/60 rounded-2xl p-4 text-center">
+                                <div className="text-xs text-slate-400 mb-1">Year 2</div>
+                                <div className="text-xs text-indigo-300 mb-2">{fmtPct(rate - buydown.yr2)} rate</div>
+                                <div className="text-2xl font-black text-white">{fmtD(yr2PI)}</div>
+                                <div className="text-xs text-emerald-400 mt-1">Save {fmtD(currentPI - yr2PI)}/mo</div>
+                                <div className="text-xs text-emerald-400">{fmt0(yr2AnnualSavings)}/yr</div>
+                              </div>
+                            : <div className="bg-slate-700/30 rounded-2xl p-4 text-center flex items-center justify-center"><span className="text-slate-500 text-xs">No Year 2 reduction</span></div>
+                          }
                           <div className="bg-slate-800/60 rounded-2xl p-4 text-center">
                             <div className="text-xs text-slate-400 mb-1">Year 3+</div>
                             <div className="text-xs text-slate-400 mb-2">{fmtPct(rate)} note rate</div>
@@ -984,7 +1037,7 @@ export default function RateIntel() {
               </div>
             </div>
 
-            {/* LO Notes + Save */}
+            {/* LO Notes — save button removed (DRBanner handles it) */}
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
                 <h2 className="text-xl font-bold text-white">LO Notes</h2>
@@ -994,38 +1047,18 @@ export default function RateIntel() {
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={5}
                   placeholder="Rate lock strategy, pricing decisions, market commentary, buydown justification, borrower instructions..."
                   className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-400 resize-none" />
-                <div className="mt-4 flex justify-end">
-                  <button onClick={handleSaveToRecord} disabled={recordSaving}
-                    className={'px-8 py-3 rounded-2xl text-sm font-bold transition-colors ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
-                    {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record™'}
-                  </button>
-                </div>
               </div>
             </div>
 
             {/* Letters */}
             <RateLetter
-              borrowerName={borrowerName}
-              scenarioName={scenario?.scenarioName}
-              loanAmount={loan}
-              noteRate={rate}
-              lockPeriod={lockPeriod}
-              lockAdj={lockAdj}
-              adjustedRate={adjustedRate}
-              adjustedPI={adjustedPI}
-              marketTrend={marketTrend}
-              aiAnalysis={aiAnalysis}
-              lenderCreditAmt={lenderCreditAmt}
-              buydown={buydown}
-              yr1PI={yr1PI}
-              yr2PI={yr2PI}
-              currentPI={currentPI}
-              buydownCostNum={buydownCostNum}
-              totalSubsidy={totalSubsidy}
-              buydownBreakeven={buydownBreakeven}
-              floatDownOption={floatDownOption}
-              rateLockDate={rateLockDate}
-              expirationDate={expirationDate}
+              borrowerName={borrowerName} scenarioName={scenario?.scenarioName}
+              loanAmount={loan} noteRate={rate} lockPeriod={lockPeriod} lockAdj={lockAdj}
+              adjustedRate={adjustedRate} adjustedPI={adjustedPI} marketTrend={marketTrend}
+              aiAnalysis={aiAnalysis} lenderCreditAmt={lenderCreditAmt} buydown={buydown}
+              yr1PI={yr1PI} yr2PI={yr2PI} currentPI={currentPI} buydownCostNum={buydownCostNum}
+              totalSubsidy={totalSubsidy} buydownBreakeven={buydownBreakeven}
+              floatDownOption={floatDownOption} rateLockDate={rateLockDate} expirationDate={expirationDate}
             />
           </div>
 
@@ -1035,11 +1068,11 @@ export default function RateIntel() {
               <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5">Rate Summary</div>
               <div className="space-y-3">
                 {[
-                  ['Note Rate', rate > 0 ? fmtPct(rate) : '--', 'text-white text-lg'],
-                  ['Lock Period', lockPeriod + ' days', 'text-white'],
-                  ['Lock Adj', lockAdj !== 0 ? (lockAdj > 0 ? '+' : '') + lockAdj + '%' : 'Par', lockAdj > 0 ? 'text-amber-400' : lockAdj < 0 ? 'text-emerald-400' : 'text-slate-400'],
-                  ['Adjusted Rate', rate > 0 ? fmtPct(adjustedRate) : '--', 'text-blue-300 font-bold'],
-                  ['Monthly P&I', currentPI > 0 ? fmtD(currentPI) : '--', 'text-white'],
+                  ['Note Rate',      rate > 0 ? fmtPct(rate) : '--',                     'text-white text-lg'],
+                  ['Lock Period',    lockPeriod + ' days',                                'text-white'],
+                  ['Lock Adj',       lockAdj !== 0 ? (lockAdj > 0 ? '+' : '') + lockAdj + '%' : 'Par', lockAdj > 0 ? 'text-amber-400' : lockAdj < 0 ? 'text-emerald-400' : 'text-slate-400'],
+                  ['Adjusted Rate',  rate > 0 ? fmtPct(adjustedRate) : '--',             'text-blue-300 font-bold'],
+                  ['Monthly P&I',    currentPI > 0 ? fmtD(currentPI) : '--',             'text-white'],
                   ['Adj. Monthly P&I', adjustedPI > 0 && lockAdj !== 0 ? fmtD(adjustedPI) : '--', 'text-slate-300'],
                 ].map(([l, v, c]) => (
                   <div key={l} className="flex justify-between items-center py-2 border-b border-slate-800">
@@ -1075,10 +1108,19 @@ export default function RateIntel() {
                 </div>
               )}
             </div>
+
             <div className="bg-amber-50 border border-amber-200 rounded-3xl p-5">
               <div className="font-bold text-amber-800 text-sm mb-3">⚠️ Key Rules</div>
               <ul className="space-y-2">
-                {['Lock before rate quote expires — re-locks cost money', 'Float-down has a one-time trigger window (5-10 days before closing)', '2-1 buydown subsidy is held in escrow by the servicer', 'Each 0.25% rate reduction ≈ 1 point in cost (rough rule)', 'Seller-funded buydown counts against concession limits', 'VA: lender credit cannot exceed total closing costs', 'FHA/USDA: seller concessions capped at 6%'].map((rule) => (
+                {[
+                  'Lock before rate quote expires — re-locks cost money',
+                  'Float-down has a one-time trigger window (5-10 days before closing)',
+                  '2-1 buydown subsidy is held in escrow by the servicer',
+                  'Each 0.25% rate reduction ≈ 1 point in cost (rough rule)',
+                  'Seller-funded buydown counts against concession limits',
+                  'VA: lender credit cannot exceed total closing costs',
+                  'FHA/USDA: seller concessions capped at 6%',
+                ].map((rule) => (
                   <li key={rule} className="flex gap-2 text-xs text-amber-800"><span className="shrink-0">•</span><span>{rule}</span></li>
                 ))}
               </ul>
@@ -1086,6 +1128,6 @@ export default function RateIntel() {
           </div>
         </div>
       </div>
-</div>
+    </div>
   );
 }

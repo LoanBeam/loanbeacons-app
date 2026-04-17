@@ -12,6 +12,7 @@ import { collection, addDoc, doc, getDoc, getDocs, setDoc, updateDoc } from 'fir
 import { getAuth } from 'firebase/auth';
 import { db } from '../firebase/config';
 import ModuleNav from '../components/ModuleNav';
+import ScenarioHeader from '../components/ScenarioHeader';
 // ── Program DTI Limits ─────────────────────────────────────────────
 // guideline = standard underwriting target
 // backMax   = AUS maximum (DU/LPA/GUS approval can exceed guideline up to this)
@@ -804,7 +805,7 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-        body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: 3000, messages: [{ role: 'user', content: msgContent }] }),
+        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 3000, messages: [{ role: 'user', content: msgContent }] }),
       });
       if (!resp.ok) throw new Error(`API ${resp.status}`);
       const data  = await resp.json();
@@ -898,6 +899,23 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
       onWriteToDecisionRecord: null,
     });
 
+  // ── localStorage autosave (loOverrides persist across refreshes) ──────────
+  const LS_KEY = activeScenarioId ? `lb_debtconsolidation_${activeScenarioId}` : null;
+
+  useEffect(() => {
+    if (!LS_KEY) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+      if (saved?.loOverrides) setLoOverrides(saved.loOverrides);
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [LS_KEY]);
+
+  useEffect(() => {
+    if (!LS_KEY) return;
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ loOverrides })); } catch { /* ignore */ }
+  }, [LS_KEY, loOverrides]);
+
   const handleSave = async () => {
     if (!selectedScenario) return;
     setSaving(true);
@@ -932,7 +950,7 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
         payToCloseCost: plan?.payToCloseCost || 0,
         dtiAfterResolution: parseFloat((plan?.dtiAfterPayoff || 0).toFixed(1)),
         timestamp: new Date().toISOString(),
-      });
+      }, [], [], '1.0.0');
       if (writtenId) {
         setSavedRecordId(writtenId);
         setFindingsReported(true);
@@ -1044,38 +1062,69 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
 
   // ── Main Module ─────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-gray-50 py-6 pb-24">
+    <div className="min-h-screen bg-slate-50 py-6 pb-24">
       {toast && <div className="fixed top-4 right-4 bg-gray-900 text-white px-5 py-3 rounded-xl shadow-lg z-50 text-sm font-semibold">{toast}</div>}
 
       <div className="max-w-6xl mx-auto px-4">
+
+        {/* ── 1. DecisionRecordBanner — FIRST ───────────────────────────── */}
+        <DecisionRecordBanner
+          recordId={savedRecordId}
+          moduleName="Debt Resolution Engine™"
+          moduleKey="DEBT_CONSOLIDATION"
+          onSave={handleSaveToRecord}
+          saving={recordSaving}
+        />
+
+        {/* ── 2. ModuleNav — SECOND ─────────────────────────────────────── */}
         <ModuleNav moduleNumber={6} />
 
-        {/* Header */}
-        <div className="bg-gradient-to-br from-slate-900 to-violet-950 text-white rounded-2xl px-6 py-5 mb-6">
-          <div className="flex items-start justify-between flex-wrap gap-4">
-            <div>
-              <div className="flex items-center gap-3 mb-1">
-                <button onClick={() => setSelectedScenario(null)} className="text-violet-300 hover:text-white text-xs">← Scenarios</button>
-                <span className="text-violet-400">|</span>
-                <span className="text-xs font-bold tracking-widest text-violet-300 uppercase">Stage 1 — Pre-Structure</span>
-                <span className="bg-violet-500/30 text-violet-200 text-xs px-2 py-0.5 rounded-full border border-violet-400/30">Module 7</span>
-              </div>
-              <h1 className="text-2xl font-bold">Debt Resolution Engine™</h1>
-              <p className="text-violet-300 text-sm mt-0.5">
+        {/* ── 3. Hero — flexbox: left flex:1 | right flexShrink:0 ──────── */}
+        <div className="bg-gradient-to-br from-slate-900 to-violet-950 text-white rounded-3xl px-6 py-5 mb-4">
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+
+            {/* Left — back link + title + subtitle */}
+            <div style={{ flex: 1 }}>
+              <button onClick={() => setSelectedScenario(null)} className="text-violet-300 hover:text-white text-xs mb-2 block">← Scenarios</button>
+              <h1
+                className="text-2xl font-bold text-white"
+                style={{ fontFamily: 'DM Serif Display, serif' }}
+              >
+                Debt Resolution Engine™
+              </h1>
+              <p className="text-violet-300 text-sm mt-1">
                 {selectedScenario.scenarioName || `${selectedScenario.firstName||''} ${selectedScenario.lastName||''}`.trim()} · {loanProgram||'--'} · {fmt$(loanAmount)} loan
               </p>
             </div>
-            <div className="flex flex-col items-end gap-2">
-              <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-400/30 font-semibold">● LIVE</span>
-              {currentDTI > 0 && (
-                <span className={`text-xs px-3 py-1 rounded-full border font-bold ${
-                  currentDTI <= (prog?.guideline||43) ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
-                  : currentDTI <= (prog?.backMax||50) ? 'bg-amber-500/20 text-amber-300 border-amber-400/30'
-                  : 'bg-red-500/20 text-red-300 border-red-400/30'
-                }`}>
-                  DTI {fmtPct(currentDTI)} {currentDTI <= (prog?.guideline||43) ? '✓ Within Guideline' : currentDTI <= (prog?.backMax||50) ? '⚠ Above Guideline — AUS Required' : '✗ Exceeds Maximum'}
+
+            {/* Right — pills stacked above scenario card */}
+            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', marginLeft: '24px' }}>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <span className="text-xs font-bold tracking-widest text-violet-300 uppercase bg-violet-500/20 px-3 py-1 rounded-full border border-violet-400/30">
+                  Stage 1 — Pre-Structure
                 </span>
-              )}
+                <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">Module 6</span>
+                <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-400/30 font-semibold">● LIVE</span>
+                {currentDTI > 0 && (
+                  <span className={`text-xs px-3 py-1 rounded-full border font-bold ${
+                    currentDTI <= (prog?.guideline||43) ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
+                    : currentDTI <= (prog?.backMax||50) ? 'bg-amber-500/20 text-amber-300 border-amber-400/30'
+                    : 'bg-red-500/20 text-red-300 border-red-400/30'
+                  }`}>
+                    DTI {fmtPct(currentDTI)} {currentDTI <= (prog?.guideline||43) ? '✓ Within Guideline' : currentDTI <= (prog?.backMax||50) ? '⚠ Above Guideline — AUS Required' : '✗ Exceeds Maximum'}
+                  </span>
+                )}
+              </div>
+              <div
+                className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right"
+                style={{ minWidth: '190px' }}
+              >
+                <p className="text-xs text-slate-300 font-medium truncate" style={{ maxWidth: '200px' }}>
+                  {selectedScenario.scenarioName || `${selectedScenario.firstName||''} ${selectedScenario.lastName||''}`.trim() || 'No Borrower'}
+                </p>
+                <p className="text-lg font-black text-white">{fmt$(loanAmount)}</p>
+                <p className="text-xs text-slate-400">{loanProgram || 'N/A'}</p>
+              </div>
             </div>
           </div>
           {activeTradelines.length > 0 && (
@@ -1095,6 +1144,9 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
             </div>
           )}
         </div>
+
+        {/* ── 4. ScenarioHeader bar ─────────────────────────────────────── */}
+        <ScenarioHeader scenario={selectedScenario} moduleNumber={6} />
 
         {/* AI Upload */}
         <div className="bg-white rounded-xl border border-indigo-200 shadow-sm p-5 mb-5">
@@ -1455,9 +1507,6 @@ Include ALL open revolving, installment, mortgage, student loans, and collection
               />
             )}
 
-            {activeScenarioId && (
-              <DecisionRecordBanner recordId={savedRecordId} moduleName="Debt Resolution Engine™" onSave={handleSaveToRecord} saving={recordSaving} />
-            )}
             <button onClick={handleSave} disabled={saving} className="bg-violet-600 hover:bg-violet-700 text-white font-bold px-6 py-3 rounded-xl disabled:opacity-50 text-sm">
               {saving ? 'Saving...' : '💾 Save to Scenario'}
             </button>

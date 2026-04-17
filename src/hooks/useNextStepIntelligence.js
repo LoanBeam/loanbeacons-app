@@ -10,15 +10,16 @@ import { useState, useEffect, useCallback } from 'react';
 
 // ─────────────────────────────────────────────
 // MODULE REGISTRY — canonical keys, labels, routes, stages
-// Order matches Canonical Sequence™ M01–M28 exactly.
+// Order matches Canonical Sequence™ M01–M28.
+// M02 = Income Analyzer, M03 = Qualifying Intelligence (swapped Apr 2026)
 // CRA Intel is background infrastructure — intentionally excluded.
 // Keys MUST match decisionRecordConstants.js MODULE_KEYS exactly.
 // ─────────────────────────────────────────────
 export const MODULE_REGISTRY = {
   // ── Stage 1: Pre-Structure (M01–M07) ──────────────────────────────────────
   SCENARIO_CREATOR:     { label: 'Scenario Creator',               route: '/scenario-creator',        stage: 1 },
-  QUALIFYING_INTEL:     { label: 'Qualifying Intelligence',         route: '/qualifying-intel',        stage: 1 },
-  INCOME_ANALYZER:      { label: 'Income Analyzer',                 route: '/income-analyzer',         stage: 1 },
+  INCOME_ANALYZER:      { label: 'Income Analyzer',                 route: '/income-analyzer',         stage: 1 }, // M02
+  QUALIFYING_INTEL:     { label: 'Qualifying Intelligence',         route: '/qualifying-intel',        stage: 1 }, // M03
   ASSET_ANALYZER:       { label: 'Asset Analyzer',                  route: '/asset-analyzer',          stage: 1 },
   CREDIT_INTEL:         { label: 'Credit Intelligence',             route: '/credit-intel',            stage: 1 },
   DEBT_CONSOLIDATION:   { label: 'Debt Consolidation Intelligence', route: '/debt-consolidation',      stage: 1 },
@@ -48,13 +49,12 @@ export const MODULE_REGISTRY = {
   FLOOD_INTEL:          { label: 'Flood Intelligence',              route: '/flood-intel',             stage: 3 },
 
   // ── Stage 4: Verify & Submit (M27–M28) ────────────────────────────────────
-  DECISION_RECORD:      { label: 'Decision Record',                 route: '/decision-records',        stage: 4 },
-  INTELLIGENT_CHECKLIST:{ label: 'Intelligent Checklist',           route: '/intelligent-checklist',   stage: 4 },
+  DECISION_RECORD:       { label: 'Decision Record',                route: '/decision-records',        stage: 4 },
+  INTELLIGENT_CHECKLIST: { label: 'Intelligent Checklist',          route: '/intelligent-checklist',   stage: 4 },
 };
 
 // ─────────────────────────────────────────────
 // LOAN PURPOSE SUPPRESSION MAP
-// Keys in this map are fully suppressed — never shown — for the listed purposes
 // ─────────────────────────────────────────────
 export const SUPPRESSION_MAP = {
   DPA_INTEL:           ['rate_term_refi', 'cash_out_refi'],
@@ -82,7 +82,7 @@ function buildSuggestion(moduleKey, reason, urgency, overrides = {}) {
     moduleLabel:         mod.label,
     route:               mod.route,
     reason,
-    urgency,             // "HIGH" | "MEDIUM" | "LOW"
+    urgency,
     stage:               mod.stage,
     loanPurposeRelevant: true,
     canSkip:             urgency !== 'HIGH',
@@ -98,329 +98,88 @@ const URGENCY_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
 // ─────────────────────────────────────────────
 // RULES ENGINE — Layer 1 Deterministic
-// First-match-wins per stage; all valid matches
-// sorted HIGH → MEDIUM → LOW after collection.
 // ─────────────────────────────────────────────
 function runRulesEngine({ currentModuleKey, loanPurpose, findings, scenarioData, completedModules }) {
   const completed = new Set(completedModules || []);
   const raw = [];
 
-  // Guard: only suggest a module if not already completed and not suppressed
   const suggest = (key, reason, urgency, overrides) => {
     if (completed.has(key)) return null;
     if (isSuppressed(key, loanPurpose)) return null;
     return buildSuggestion(key, reason, urgency, overrides);
   };
 
-  // Merge findings from both the decisionRecord findings object and raw scenarioData
   const f = { ...scenarioData, ...findings };
 
-  // ─── STAGE 1 ────────────────────────────────
+  // ─── STAGE 1 ────────────────────────────────────────────────
 
   if (currentModuleKey === 'SCENARIO_CREATOR') {
-    if (loanPurpose === 'purchase') {
-      raw.push(suggest('QUALIFYING_INTEL', 'Every purchase file starts here — confirm DTI, income type, and qualifying ratios before anything else.', 'HIGH'));
-    } else if (loanPurpose === 'rate_term_refi') {
-      raw.push(suggest('QUALIFYING_INTEL', 'Confirm qualifying ratios before evaluating refi eligibility and seasoning.', 'HIGH'));
-      raw.push(suggest('CREDIT_INTEL',     'Refi eligibility is credit-score sensitive — run Credit Intelligence in parallel.', 'MEDIUM'));
-    } else if (loanPurpose === 'cash_out_refi') {
-      raw.push(suggest('QUALIFYING_INTEL', 'Cash-out refi has strict DTI and LTV thresholds — qualifying analysis is mandatory first.', 'HIGH'));
-      raw.push(suggest('INCOME_ANALYZER',  'Cash-out triggers full income documentation review under cash-out guidelines.', 'MEDIUM'));
-      raw.push(suggest('CREDIT_INTEL',     'Score requirements vary by LTV tier on cash-out — run Credit Intelligence.', 'MEDIUM'));
-    }
-  }
-
-  if (currentModuleKey === 'QUALIFYING_INTEL') {
-    const dti          = parseFloat(f.dti || f.frontEndDTI || 0);
-    const selfEmployed = f.selfEmployed || f.isSelfEmployed || false;
-    const incomeType   = (f.incomeType || '').toLowerCase();
-    const nonQM        = f.nonQMIncomeType || incomeType === 'bank_statement' || incomeType === '1099' || incomeType === 'asset_depletion';
-
-    if (selfEmployed || nonQM) {
-      raw.push(suggest('BANK_STATEMENT_INTEL',
-        'Self-employed or non-QM income type detected. Bank Statement Intelligence is required before program qualification.',
-        'HIGH'));
-    }
-    if (dti > 45) {
-      raw.push(suggest('DEBT_CONSOLIDATION',
-        `DTI at ${dti}% exceeds the conventional 45% threshold. Debt consolidation analysis may recover 4–6 points and unlock approval.`,
-        'HIGH'));
-    } else if (dti > 43) {
-      raw.push(suggest('DEBT_CONSOLIDATION',
-        `DTI at ${dti}% exceeds the FHA guideline threshold of 43%. Consolidation analysis is recommended before AUS submission.`,
+    // M02 Income Analyzer is now the first step after scenario creation
+    raw.push(suggest('INCOME_ANALYZER',
+      'Every file starts with income documentation. Run Income Analyzer to establish verified qualifying income before DTI analysis.',
+      'HIGH'));
+    if (loanPurpose === 'cash_out_refi') {
+      raw.push(suggest('CREDIT_INTEL',
+        'Cash-out refi has strict score requirements by LTV tier — run Credit Intelligence in parallel.',
         'MEDIUM'));
-    } else if (dti > 0 && dti <= 43 && !selfEmployed && !nonQM) {
-      raw.push(suggest('INCOME_ANALYZER',
-        'DTI is within range. Proceed to full income documentation analysis.',
-        'LOW'));
     }
   }
 
+  // ── M02: Income Analyzer → M03: Qualifying Intelligence ────
   if (currentModuleKey === 'INCOME_ANALYZER') {
     const incomeType       = (f.incomeType || '').toLowerCase();
     const incomeSufficient = f.incomeSufficient !== false;
-    const assetsVerified   = f.assetsVerified || completed.has('ASSET_ANALYZER');
 
     if (incomeType === 'bank_statement' || incomeType === '1099') {
       raw.push(suggest('BANK_STATEMENT_INTEL',
-        'Income type flagged as bank statement or 1099. Run Bank Statement Intelligence before lender submission.',
+        'Income type flagged as bank statement or 1099. Run Bank Statement Intelligence before DTI analysis.',
         'HIGH'));
     } else if (!incomeSufficient) {
       raw.push(suggest('SCENARIO_CREATOR',
         'Income is insufficient for this scenario. Return to Scenario Creator to adjust purchase price or loan amount.',
         'HIGH', { canSkip: false }));
-    } else if (!assetsVerified) {
-      raw.push(suggest('ASSET_ANALYZER',
-        'Income confirmed. Verify assets to complete the qualifying picture.',
-        'MEDIUM'));
     } else {
-      raw.push(suggest('CREDIT_INTEL',
-        'Income and assets confirmed. Proceed to Credit Intelligence.',
-        'LOW'));
-    }
-  }
-
-  if (currentModuleKey === 'CREDIT_INTEL') {
-    const score         = parseInt(f.creditScore || f.fico || 0);
-    const hasCollections = f.hasCollections || f.hasDerogatory || f.derogatoryPresent || false;
-
-    if (score > 0 && score < 580) {
-      raw.push({
-        moduleKey:           'CREDIT_INTEL',
-        moduleLabel:         'Credit Intelligence — Dispute Strategy Required',
-        route:               MODULE_REGISTRY.CREDIT_INTEL.route,
-        reason:              `Score at ${score} — all program modules are blocked until score reaches 580. Focus on dispute strategy and credit rehabilitation before proceeding.`,
-        urgency:             'HIGH',
-        stage:               1,
-        loanPurposeRelevant: true,
-        canSkip:             false,
-        isBlocker:           true,
-      });
-    } else if (score >= 580 && score <= 619) {
-      raw.push(suggest('AUS_RESCUE',
-        `Score in the 580–619 range — FHA-eligible only. Run AUS Rescue before Lender Match to map the approval path.`,
+      raw.push(suggest('QUALIFYING_INTEL',
+        'Income documented. Proceed to Qualifying Intelligence to run DTI analysis and program eligibility.',
         'HIGH'));
-    } else if (hasCollections) {
-      raw.push(suggest('AUS_RESCUE',
-        'Collections or derogatory marks present. AUS Rescue recommended before Lender Match to quantify impact on approval.',
-        'MEDIUM'));
-    } else if (score >= 740) {
-      raw.push(suggest('LENDER_MATCH',
-        'Strong credit profile. Proceed directly to Lender Match.',
-        'LOW'));
-    } else if (score > 619) {
-      raw.push(suggest('LENDER_MATCH',
-        'Credit profile reviewed. Proceed to Lender Match.',
-        'LOW'));
     }
   }
 
-  // ─── STAGE 2 ────────────────────────────────
+  // ── M03: Qualifying Intelligence → downstream ───────────────
+  if (currentModuleKey === 'QUALIFYING_INTEL') {
+    const dti          = parseFloat(f.dti || f.backDTI || 0);
+    const selfEmployed = f.selfEmployed || f.isSelfEmployed || false;
+    const incomeType   = (f.incomeType || '').toLowerCase();
+    const nonQM        = f.nonQMIncomeType || incomeType === 'bank_statement' || incomeType === '1099';
 
-  if (currentModuleKey === 'LENDER_MATCH') {
-    const matchFound = f.matchFound !== false;
-
-    if (!matchFound) {
-      raw.push(suggest('AUS_RESCUE',
-        'No lender match found. AUS Rescue — Program Migration Engine can identify alternative approval paths.',
+    if (selfEmployed || nonQM) {
+      raw.push(suggest('BANK_STATEMENT_INTEL',
+        'Self-employed or non-QM income detected. Bank Statement Intelligence required before program qualification.',
         'HIGH'));
-    } else if (loanPurpose === 'purchase') {
-      raw.push(suggest('DPA_INTEL',
-        'Lender matched. Check for down payment assistance stacking opportunity before finalizing loan structure.',
-        'MEDIUM'));
-      raw.push(suggest('AUS_RESCUE',
-        'Run AUS Rescue to confirm the approval path before proceeding to optimization modules.',
-        'LOW'));
-    } else if (loanPurpose === 'rate_term_refi') {
-      raw.push(suggest('FHA_STREAMLINE',
-        'Lender matched. Evaluate FHA Streamline eligibility — lower thresholds and reduced documentation may benefit this borrower.',
-        'LOW'));
-      raw.push(suggest('VA_IRRRL',
-        'If this is a VA loan, run VA IRRRL to confirm Net Tangible Benefit.',
-        'LOW'));
-    } else if (loanPurpose === 'cash_out_refi') {
-      raw.push(suggest('AUS_RESCUE',
-        'Cash-out refinance requires AUS approval path confirmation before proceeding.',
-        'LOW'));
     }
-  }
-
-  if (currentModuleKey === 'DPA_INTEL') {
-    const grantFound   = f.grantFound || f.dpaAvailable || f.dpaProgramsFound || false;
-    const nearAmiLimit = f.nearAmiLimit || f.amiWarning || false;
-
-    if (grantFound && nearAmiLimit) {
-      raw.push(suggest('INCOME_ANALYZER',
-        'Grant found but income is near the AMI limit. Re-run Income Analyzer to confirm AMI eligibility holds before committing to this program.',
-        'HIGH'));
-    } else if (grantFound) {
-      raw.push(suggest('AUS_RESCUE',
-        'DPA grant identified. Proceed to AUS Rescue to confirm approval path with assistance applied to structure.',
-        'MEDIUM'));
-    } else {
-      raw.push(suggest('AUS_RESCUE',
-        'No DPA available for this scenario. Proceed to AUS Rescue for approval path analysis.',
-        'LOW'));
-    }
-  }
-
-  if (currentModuleKey === 'AUS_RESCUE') {
-    const blocker     = (f.primaryBlocker || f.PRIMARY_BLOCKER || '').toUpperCase();
-    const feasibility = (f.feasibility || f.FEASIBILITY || '').toUpperCase();
-    const recommended = (f.recommendedProgram || '').toUpperCase();
-
-    if (blocker === 'DTI') {
+    if (dti > 45) {
       raw.push(suggest('DEBT_CONSOLIDATION',
-        'PRIMARY_BLOCKER is DTI. Debt Consolidation Intelligence may resolve the approval block — run before re-submitting to AUS.',
+        `DTI at ${dti}% exceeds the conventional 45% threshold. Debt Consolidation may recover 4–6 points and unlock approval.`,
         'HIGH'));
-    }
-    if (blocker === 'COLLECTIONS') {
-      raw.push(suggest('CREDIT_INTEL',
-        'PRIMARY_BLOCKER is collections. Return to Credit Intelligence to map a dispute path and quantify timeline to resolution.',
-        'HIGH'));
-    }
-    if (blocker === 'LTV') {
-      raw.push(suggest('PROPERTY_INTEL',
-        'PRIMARY_BLOCKER is LTV. Run Collateral Intelligence to assess property value defensibility before restructuring.',
-        'HIGH'));
-      raw.push(suggest('RATE_BUYDOWN',
-        'Rate Buydown with seller concessions may offset LTV constraint. Evaluate alongside Collateral Intelligence.',
+    } else if (dti > 43) {
+      raw.push(suggest('DEBT_CONSOLIDATION',
+        `DTI at ${dti}% exceeds the FHA 43% guideline. Consolidation analysis recommended before AUS submission.`,
         'MEDIUM'));
-    }
-
-    // Program migration
-    if (recommended === 'FHA_STREAMLINE') {
-      raw.push(suggest('FHA_STREAMLINE', 'AUS Rescue identifies FHA Streamline as the recommended migration path.', 'HIGH'));
-    }
-    if (recommended === 'VA_IRRRL') {
-      raw.push(suggest('VA_IRRRL', 'AUS Rescue identifies VA IRRRL as the recommended migration path.', 'HIGH'));
-    }
-    if (recommended === 'USDA') {
-      raw.push(suggest('USDA_INTEL', 'AUS Rescue identifies USDA as the recommended migration path.', 'HIGH'));
-    }
-
-    // Clean path
-    if (!blocker && (feasibility === 'HIGH' || feasibility === 'MEDIUM')) {
-      raw.push(suggest('PROPERTY_INTEL',
-        `Feasibility ${feasibility}. Proceed to Collateral Intelligence for property condition review.`,
-        feasibility === 'HIGH' ? 'LOW' : 'MEDIUM'));
-    }
-  }
-
-  if (currentModuleKey === 'FHA_STREAMLINE') {
-    const ntbSatisfied      = f.ntbSatisfied !== false;
-    const seasoningOk       = f.seasoningPass !== false;
-    const eligibilityStatus = (f.eligibilityStatus || '').toUpperCase();
-
-    if (!seasoningOk) {
-      raw.push(suggest('SCENARIO_CREATOR',
-        'Seasoning requirement not met — 210 days from first payment required. Return to Scenario Creator and update the loan dates before proceeding.',
-        'HIGH', { canSkip: false }));
-    } else if (eligibilityStatus === 'INELIGIBLE') {
-      raw.push(suggest('CONVENTIONAL_REFI',
-        'FHA Streamline eligibility failed. Evaluate Conventional Refi as an alternative path.',
-        'HIGH'));
-    } else if (!ntbSatisfied) {
-      raw.push(suggest('RATE_BUYDOWN',
-        'Net Tangible Benefit test not satisfied. Rate Buydown Calculator may help restructure the rate to meet NTB thresholds.',
-        'HIGH'));
-    } else {
-      raw.push(suggest('CLOSING_COST_CALC',
-        'Streamline eligible and NTB satisfied. Proceed to Closing Cost Calculator to finalize net tangible benefit and recoupment.',
-        'MEDIUM'));
-      raw.push(suggest('DISCLOSURE_INTEL',
-        'Run Disclosure Intelligence to verify CD timing and rescission period requirements.',
-        'LOW'));
-    }
-  }
-
-  if (currentModuleKey === 'VA_IRRRL') {
-    const benefitPass  = f.benefitPass || f.ntbPass || f.netTangibleBenefitPass || false;
-    const seasoningOk  = f.seasoningPass !== false;
-    const eligStatus   = (f.eligibilityStatus || '').toUpperCase();
-
-    if (!seasoningOk) {
-      raw.push(suggest('SCENARIO_CREATOR',
-        'VA IRRRL seasoning requirement not met — 210 days from first payment required. Return to Scenario Creator and correct the loan dates.',
-        'HIGH', { canSkip: false }));
-    } else if (eligStatus === 'INELIGIBLE') {
-      raw.push(suggest('CONVENTIONAL_REFI',
-        'VA IRRRL eligibility failed. Evaluate Conventional Refi as an alternative path.',
-        'HIGH'));
-    } else if (!benefitPass) {
-      raw.push(suggest('RATE_BUYDOWN',
-        'Net Tangible Benefit test not met. Use Rate Buydown Calculator to restructure the rate and satisfy the VA benefit test.',
-        'HIGH'));
-    } else {
-      raw.push(suggest('CLOSING_COST_CALC',
-        'VA IRRRL eligible and Net Tangible Benefit confirmed. Proceed to Closing Cost Calculator.',
-        'MEDIUM'));
-      raw.push(suggest('DISCLOSURE_INTEL',
-        'Run Disclosure Intelligence to verify CD and rescission period requirements.',
-        'LOW'));
-    }
-  }
-
-  if (currentModuleKey === 'USDA_INTEL') {
-    const eligible       = f.eligible !== false && f.usda_eligible !== false;
-    const incomePass     = f.incomePass !== false && f.incomeLimitPass !== false;
-    const propertyPass   = f.propertyPass !== false && f.ruralEligible !== false;
-
-    if (!propertyPass) {
-      raw.push(suggest('LENDER_MATCH',
-        'Property is not in a USDA-eligible rural area. Return to Lender Match and filter for Conventional or FHA lenders.',
-        'HIGH', { canSkip: false }));
-    } else if (!incomePass) {
-      raw.push(suggest('INCOME_ANALYZER',
-        'Borrower income exceeds USDA area limit. Re-run Income Analyzer — consider excluding non-qualifying income sources.',
-        'HIGH'));
-    } else if (eligible) {
-      raw.push(suggest('CLOSING_COST_CALC',
-        'USDA eligibility confirmed. Proceed to Closing Cost Calculator — note USDA guarantee fee must be included.',
-        'MEDIUM'));
-      raw.push(suggest('AUS_RESCUE',
-        'Run AUS Rescue to confirm GUS approval path and document any overlays.',
-        'LOW'));
-    } else {
-      raw.push(suggest('AUS_RESCUE',
-        'USDA eligibility uncertain. Run AUS Rescue to evaluate alternative program paths.',
-        'MEDIUM'));
-    }
-  }
-
-  if (currentModuleKey === 'CONVENTIONAL_REFI') {
-    const ltv            = parseFloat(f.ltv || f.ltvPct || 0);
-    const requiresMI     = f.requiresMI || f.hasMI || (ltv > 80) || false;
-    const cashOutEligible = f.cashOutEligible !== false;
-    const eligible       = f.eligible !== false;
-
-    if (!eligible) {
-      raw.push(suggest('AUS_RESCUE',
-        'Conventional Refi eligibility not confirmed. Run AUS Rescue to identify the blocking factor and evaluate alternative programs.',
-        'HIGH'));
-    } else if (loanPurpose === 'cash_out_refi' && !cashOutEligible) {
-      raw.push(suggest('PROPERTY_INTEL',
-        'Cash-out eligibility blocked — LTV or program constraint. Run Collateral Intelligence to assess current value defensibility.',
-        'HIGH'));
-    } else if (requiresMI && ltv > 80) {
-      raw.push(suggest('MI_OPTIMIZER',
-        `LTV at ${ltv}% requires MI. Run MI Optimizer to minimize the monthly MI burden before finalizing.`,
-        'MEDIUM'));
-    } else {
-      raw.push(suggest('CLOSING_COST_CALC',
-        'Conventional Refi eligible. Proceed to Closing Cost Calculator.',
+    } else if (dti > 0 && dti <= 43 && !selfEmployed && !nonQM) {
+      raw.push(suggest('ASSET_ANALYZER',
+        'DTI is within range and income qualified. Proceed to Asset Analyzer to verify funds to close.',
         'LOW'));
     }
   }
 
   if (currentModuleKey === 'ASSET_ANALYZER') {
     const sufficient  = f.sufficientFunds !== false;
-    const reservePass = f.reservePass    !== false;
+    const reservePass = f.reservePass     !== false;
     const hasBlocking = (f.blockingIssues || []).length > 0;
 
     if (hasBlocking) {
       raw.push(suggest('SCENARIO_CREATOR',
-        'Blocking asset issues identified. Return to Scenario Creator to adjust loan amount or verify additional asset sources.',
+        'Blocking asset issues identified. Return to Scenario Creator to adjust loan structure or verify additional sources.',
         'HIGH', { canSkip: false }));
     } else if (!sufficient) {
       raw.push(suggest('SCENARIO_CREATOR',
@@ -438,16 +197,183 @@ function runRulesEngine({ currentModuleKey, loanPurpose, findings, scenarioData,
     }
   }
 
+  if (currentModuleKey === 'CREDIT_INTEL') {
+    const score          = parseInt(f.creditScore || f.fico || 0);
+    const hasCollections = f.hasCollections || f.hasDerogatory || false;
+
+    if (score > 0 && score < 580) {
+      raw.push({
+        moduleKey:           'CREDIT_INTEL',
+        moduleLabel:         'Credit Intelligence — Dispute Strategy Required',
+        route:               MODULE_REGISTRY.CREDIT_INTEL.route,
+        reason:              `Score at ${score} — all program modules blocked until score reaches 580. Focus on dispute strategy.`,
+        urgency:             'HIGH',
+        stage:               1,
+        loanPurposeRelevant: true,
+        canSkip:             false,
+        isBlocker:           true,
+      });
+    } else if (score >= 580 && score <= 619) {
+      raw.push(suggest('AUS_RESCUE',
+        `Score in the 580–619 range — FHA-eligible only. Run AUS Rescue before Lender Match to map the approval path.`,
+        'HIGH'));
+    } else if (hasCollections) {
+      raw.push(suggest('AUS_RESCUE',
+        'Collections or derogatory marks present. AUS Rescue recommended before Lender Match.',
+        'MEDIUM'));
+    } else if (score >= 740) {
+      raw.push(suggest('LENDER_MATCH', 'Strong credit profile. Proceed directly to Lender Match.', 'LOW'));
+    } else if (score > 619) {
+      raw.push(suggest('LENDER_MATCH', 'Credit profile reviewed. Proceed to Lender Match.', 'LOW'));
+    }
+  }
+
+  // ─── STAGE 2 ────────────────────────────────────────────────
+
+  if (currentModuleKey === 'LENDER_MATCH') {
+    const matchFound = f.matchFound !== false;
+    if (!matchFound) {
+      raw.push(suggest('AUS_RESCUE',
+        'No lender match found. AUS Rescue — Program Migration Engine can identify alternative approval paths.',
+        'HIGH'));
+    } else if (loanPurpose === 'purchase') {
+      raw.push(suggest('DPA_INTEL',
+        'Lender matched. Check for down payment assistance stacking opportunity.',
+        'MEDIUM'));
+      raw.push(suggest('AUS_RESCUE', 'Run AUS Rescue to confirm approval path.', 'LOW'));
+    } else if (loanPurpose === 'rate_term_refi') {
+      raw.push(suggest('FHA_STREAMLINE', 'Evaluate FHA Streamline eligibility.', 'LOW'));
+      raw.push(suggest('VA_IRRRL', 'If VA loan, run VA IRRRL to confirm Net Tangible Benefit.', 'LOW'));
+    } else if (loanPurpose === 'cash_out_refi') {
+      raw.push(suggest('AUS_RESCUE', 'Cash-out refi requires AUS approval path confirmation.', 'LOW'));
+    }
+  }
+
+  if (currentModuleKey === 'DPA_INTEL') {
+    const grantFound   = f.grantFound || f.dpaAvailable || false;
+    const nearAmiLimit = f.nearAmiLimit || f.amiWarning   || false;
+    if (grantFound && nearAmiLimit) {
+      raw.push(suggest('INCOME_ANALYZER',
+        'Grant found but income is near the AMI limit. Re-run Income Analyzer to confirm AMI eligibility holds.',
+        'HIGH'));
+    } else if (grantFound) {
+      raw.push(suggest('AUS_RESCUE', 'DPA grant identified. Confirm approval path with assistance applied.', 'MEDIUM'));
+    } else {
+      raw.push(suggest('AUS_RESCUE', 'No DPA available. Proceed to AUS Rescue for approval path analysis.', 'LOW'));
+    }
+  }
+
+  if (currentModuleKey === 'AUS_RESCUE') {
+    const blocker     = (f.primaryBlocker || f.PRIMARY_BLOCKER || '').toUpperCase();
+    const feasibility = (f.feasibility    || f.FEASIBILITY     || '').toUpperCase();
+    const recommended = (f.recommendedProgram || '').toUpperCase();
+
+    if (blocker === 'DTI') {
+      raw.push(suggest('DEBT_CONSOLIDATION',
+        'PRIMARY_BLOCKER is DTI. Debt Consolidation may resolve the approval block before re-submitting to AUS.', 'HIGH'));
+    }
+    if (blocker === 'COLLECTIONS') {
+      raw.push(suggest('CREDIT_INTEL',
+        'PRIMARY_BLOCKER is collections. Return to Credit Intelligence to map a dispute path.', 'HIGH'));
+    }
+    if (blocker === 'LTV') {
+      raw.push(suggest('PROPERTY_INTEL',
+        'PRIMARY_BLOCKER is LTV. Run Collateral Intelligence to assess value defensibility before restructuring.', 'HIGH'));
+      raw.push(suggest('RATE_BUYDOWN',
+        'Rate Buydown with seller concessions may offset LTV constraint.', 'MEDIUM'));
+    }
+    if (recommended === 'FHA_STREAMLINE') raw.push(suggest('FHA_STREAMLINE', 'AUS Rescue recommends FHA Streamline migration path.', 'HIGH'));
+    if (recommended === 'VA_IRRRL')       raw.push(suggest('VA_IRRRL',       'AUS Rescue recommends VA IRRRL migration path.', 'HIGH'));
+    if (recommended === 'USDA')           raw.push(suggest('USDA_INTEL',     'AUS Rescue recommends USDA migration path.', 'HIGH'));
+    if (!blocker && (feasibility === 'HIGH' || feasibility === 'MEDIUM')) {
+      raw.push(suggest('PROPERTY_INTEL',
+        `Feasibility ${feasibility}. Proceed to Collateral Intelligence for property condition review.`,
+        feasibility === 'HIGH' ? 'LOW' : 'MEDIUM'));
+    }
+  }
+
+  if (currentModuleKey === 'FHA_STREAMLINE') {
+    const ntbSatisfied = f.ntbSatisfied  !== false;
+    const seasoningOk  = f.seasoningPass !== false;
+    const eligStatus   = (f.eligibilityStatus || '').toUpperCase();
+    if (!seasoningOk) {
+      raw.push(suggest('SCENARIO_CREATOR',
+        'Seasoning requirement not met — 210 days required. Return to Scenario Creator to update loan dates.',
+        'HIGH', { canSkip: false }));
+    } else if (eligStatus === 'INELIGIBLE') {
+      raw.push(suggest('CONVENTIONAL_REFI', 'FHA Streamline ineligible. Evaluate Conventional Refi.', 'HIGH'));
+    } else if (!ntbSatisfied) {
+      raw.push(suggest('RATE_BUYDOWN',
+        'NTB test not satisfied. Rate Buydown may restructure the rate to meet NTB thresholds.', 'HIGH'));
+    } else {
+      raw.push(suggest('CLOSING_COST_CALC', 'Streamline eligible and NTB satisfied. Proceed to Closing Cost Calculator.', 'MEDIUM'));
+      raw.push(suggest('DISCLOSURE_INTEL',  'Run Disclosure Intelligence to verify CD timing requirements.', 'LOW'));
+    }
+  }
+
+  if (currentModuleKey === 'VA_IRRRL') {
+    const benefitPass = f.benefitPass || f.ntbPass || false;
+    const seasoningOk = f.seasoningPass !== false;
+    const eligStatus  = (f.eligibilityStatus || '').toUpperCase();
+    if (!seasoningOk) {
+      raw.push(suggest('SCENARIO_CREATOR',
+        'VA IRRRL seasoning requirement not met — 210 days required. Correct loan dates in Scenario Creator.',
+        'HIGH', { canSkip: false }));
+    } else if (eligStatus === 'INELIGIBLE') {
+      raw.push(suggest('CONVENTIONAL_REFI', 'VA IRRRL ineligible. Evaluate Conventional Refi.', 'HIGH'));
+    } else if (!benefitPass) {
+      raw.push(suggest('RATE_BUYDOWN',
+        'Net Tangible Benefit not met. Use Rate Buydown to restructure and satisfy the VA benefit test.', 'HIGH'));
+    } else {
+      raw.push(suggest('CLOSING_COST_CALC', 'VA IRRRL eligible and NTB confirmed. Proceed to Closing Cost Calculator.', 'MEDIUM'));
+      raw.push(suggest('DISCLOSURE_INTEL',  'Run Disclosure Intelligence to verify CD and rescission requirements.', 'LOW'));
+    }
+  }
+
+  if (currentModuleKey === 'USDA_INTEL') {
+    const eligible     = f.eligible     !== false && f.usda_eligible  !== false;
+    const incomePass   = f.incomePass   !== false && f.incomeLimitPass !== false;
+    const propertyPass = f.propertyPass !== false && f.ruralEligible   !== false;
+    if (!propertyPass) {
+      raw.push(suggest('LENDER_MATCH',
+        'Property not in USDA-eligible rural area. Return to Lender Match and filter for Conventional or FHA.',
+        'HIGH', { canSkip: false }));
+    } else if (!incomePass) {
+      raw.push(suggest('INCOME_ANALYZER',
+        'Borrower income exceeds USDA area limit. Re-run Income Analyzer.', 'HIGH'));
+    } else if (eligible) {
+      raw.push(suggest('CLOSING_COST_CALC',
+        'USDA eligibility confirmed. Proceed to Closing Cost Calculator — include USDA guarantee fee.', 'MEDIUM'));
+      raw.push(suggest('AUS_RESCUE', 'Run AUS Rescue to confirm GUS approval path.', 'LOW'));
+    } else {
+      raw.push(suggest('AUS_RESCUE', 'USDA eligibility uncertain. Evaluate alternative programs via AUS Rescue.', 'MEDIUM'));
+    }
+  }
+
+  if (currentModuleKey === 'CONVENTIONAL_REFI') {
+    const ltv             = parseFloat(f.ltv || f.ltvPct || 0);
+    const requiresMI      = f.requiresMI || (ltv > 80);
+    const cashOutEligible = f.cashOutEligible !== false;
+    const eligible        = f.eligible !== false;
+    if (!eligible) {
+      raw.push(suggest('AUS_RESCUE', 'Conventional Refi eligibility not confirmed. Identify blocking factor via AUS Rescue.', 'HIGH'));
+    } else if (loanPurpose === 'cash_out_refi' && !cashOutEligible) {
+      raw.push(suggest('PROPERTY_INTEL', 'Cash-out eligibility blocked. Assess current value via Collateral Intelligence.', 'HIGH'));
+    } else if (requiresMI && ltv > 80) {
+      raw.push(suggest('MI_OPTIMIZER', `LTV at ${ltv}% requires MI. Optimize MI before finalizing.`, 'MEDIUM'));
+    } else {
+      raw.push(suggest('CLOSING_COST_CALC', 'Conventional Refi eligible. Proceed to Closing Cost Calculator.', 'LOW'));
+    }
+  }
+
   if (currentModuleKey === 'BANK_STATEMENT_INTEL') {
     const incomeConfirmed = f.incomeConfirmed !== false;
     if (incomeConfirmed) {
       raw.push(suggest('LENDER_MATCH',
-        'Bank statement income confirmed. Proceed to Lender Match with Non-QM / bank statement lenders.',
-        'LOW'));
+        'Bank statement income confirmed. Proceed to Lender Match with Non-QM lenders.', 'LOW'));
     } else {
       raw.push(suggest('QUALIFYING_INTEL',
-        'Bank statement income analysis incomplete or insufficient. Re-run Qualifying Intelligence with updated income figures.',
-        'HIGH'));
+        'Bank statement income analysis incomplete. Re-run Qualifying Intelligence with updated figures.', 'HIGH'));
     }
   }
 
@@ -455,206 +381,143 @@ function runRulesEngine({ currentModuleKey, loanPurpose, findings, scenarioData,
     const dtiAfter = parseFloat(f.dtiAfterConsolidation || f.projectedDTI || 0);
     if (dtiAfter > 0 && dtiAfter <= 43) {
       raw.push(suggest('AUS_RESCUE',
-        `Consolidation brings DTI to ${dtiAfter}%. Re-submit to AUS Rescue with updated debt profile.`,
-        'MEDIUM'));
+        `Consolidation brings DTI to ${dtiAfter}%. Re-submit to AUS Rescue with updated debt profile.`, 'MEDIUM'));
     } else if (dtiAfter > 43) {
       raw.push(suggest('QUALIFYING_INTEL',
-        `Consolidation projects DTI at ${dtiAfter}% — still above threshold. Return to Qualifying Intelligence to reassess.`,
-        'HIGH'));
+        `Consolidation projects DTI at ${dtiAfter}% — still above threshold. Return to Qualifying Intelligence.`, 'HIGH'));
     } else {
-      raw.push(suggest('AUS_RESCUE',
-        'Consolidation analysis complete. Re-run AUS Rescue with updated debt figures.',
-        'LOW'));
+      raw.push(suggest('AUS_RESCUE', 'Consolidation analysis complete. Re-run AUS Rescue with updated figures.', 'LOW'));
     }
   }
 
-  // ─── STAGE 3 ────────────────────────────────
+  // ─── STAGE 3 ────────────────────────────────────────────────
 
   if (currentModuleKey === 'RATE_INTEL') {
-    const rateLocked  = f.rateLocked || f.locked || false;
     const pricingRisk = (f.pricingRisk || '').toUpperCase();
-
     if (pricingRisk === 'HIGH') {
       raw.push(suggest('RATE_BUYDOWN',
-        'High pricing risk identified. Run Rate Buydown Calculator to evaluate whether points or seller concessions improve the rate structure.',
-        'HIGH'));
-    } else if (rateLocked) {
-      raw.push(suggest('CLOSING_COST_CALC',
-        'Rate locked. Proceed to Closing Cost Calculator with confirmed rate and pricing.',
-        'LOW'));
+        'High pricing risk identified. Rate Buydown may improve the rate structure.', 'HIGH'));
     } else {
-      raw.push(suggest('CLOSING_COST_CALC',
-        'Rate analysis complete. Proceed to Closing Cost Calculator.',
-        'LOW'));
+      raw.push(suggest('CLOSING_COST_CALC', 'Rate analysis complete. Proceed to Closing Cost Calculator.', 'LOW'));
     }
   }
 
   if (currentModuleKey === 'PIGGYBACK_OPTIMIZER') {
     const piggybackViable = f.piggybackViable !== false;
-    const miEliminated    = f.miEliminated || f.miRemoved || false;
-
+    const miEliminated    = f.miEliminated    || false;
     if (!piggybackViable) {
-      raw.push(suggest('MI_OPTIMIZER',
-        'Piggyback structure not viable for this scenario. Run MI Optimizer to find the lowest-cost MI alternative.',
-        'MEDIUM'));
-    } else if (miEliminated) {
-      raw.push(suggest('CLOSING_COST_CALC',
-        'Piggyback structure eliminates MI. Proceed to Closing Cost Calculator with blended payment confirmed.',
-        'LOW'));
+      raw.push(suggest('MI_OPTIMIZER', 'Piggyback not viable. Find lowest-cost MI alternative.', 'MEDIUM'));
     } else {
-      raw.push(suggest('CLOSING_COST_CALC',
-        'Piggyback analysis complete. Proceed to Closing Cost Calculator.',
-        'LOW'));
+      raw.push(suggest('CLOSING_COST_CALC', 'Piggyback analysis complete. Proceed to Closing Cost Calculator.', 'LOW'));
     }
   }
 
   if (currentModuleKey === 'RATE_BUYDOWN') {
     const breakEven = parseInt(f.breakEvenMonths || f.breakeven || 0);
     const hasMI     = f.hasMI || f.requiresMI || false;
-
     if (breakEven > 48) {
       raw.push(suggest('ARM_STRUCTURE',
-        `Break-even at ${breakEven} months exceeds 4 years. ARM Structure Intelligence may offer a better-fit alternative for this borrower's timeline.`,
-        'MEDIUM'));
+        `Break-even at ${breakEven} months exceeds 4 years. ARM Structure may be a better fit.`, 'MEDIUM'));
     } else if (breakEven > 0 && breakEven <= 24) {
       if (hasMI) {
-        raw.push(suggest('MI_OPTIMIZER',
-          `Strong buydown case — break-even at ${breakEven} months. Optimize MI to further reduce total payment burden.`,
-          'LOW'));
+        raw.push(suggest('MI_OPTIMIZER', `Strong buydown case. Optimize MI to further reduce payment.`, 'LOW'));
       } else {
-        raw.push(suggest('PROPERTY_INTEL',
-          'Buydown structure confirmed. Proceed to Collateral Intelligence.',
-          'LOW'));
+        raw.push(suggest('PROPERTY_INTEL', 'Buydown confirmed. Proceed to Collateral Intelligence.', 'LOW'));
       }
     }
   }
 
   if (currentModuleKey === 'PROPERTY_INTEL') {
-    const flipDays      = parseInt(f.flipDays || f.daysSincePriorSale || f.flipAgeDays || -1);
-    const wellSeptic    = f.wellSeptic || f.wellSepticPresent || f.hasWellSeptic || false;
+    const flipDays      = parseInt(f.flipDays || f.daysSincePriorSale || -1);
+    const wellSeptic    = f.wellSeptic || f.wellSepticPresent || false;
     const appraisalRisk = (f.appraisalRisk || f.overallRisk || '').toUpperCase();
-    const structural    = f.structuralConcerns || f.structuralIssues || false;
-
+    const structural    = f.structuralConcerns || false;
     if (flipDays >= 0 && flipDays < 91) {
       raw.push(suggest('LENDER_MATCH',
-        `Flip at ${flipDays} days — FHA and USDA eligibility is blocked. Re-run Lender Match filtered to Conventional only. Flag logged in Decision Record.`,
+        `Flip at ${flipDays} days — FHA/USDA blocked. Re-run Lender Match filtered to Conventional only.`,
         'HIGH', { canSkip: false }));
     }
     if (wellSeptic) {
       raw.push(suggest('COMPLIANCE_INTEL',
-        'Well/Septic present. Flag for FHA/VA compliance review before AUS submission — appraiser must certify functionality.',
-        'HIGH'));
+        'Well/Septic present. FHA/VA compliance review required before AUS submission.', 'HIGH'));
     }
     if (appraisalRisk === 'HIGH') {
       if (structural) {
-        raw.push(suggest('REHAB_INTEL',
-          'HIGH appraisal risk with structural concerns identified. Rehab Intelligence required to assess renovation path and eligibility.',
-          'HIGH'));
+        raw.push(suggest('REHAB_INTEL', 'HIGH appraisal risk with structural concerns. Rehab Intelligence required.', 'HIGH'));
       } else {
-        raw.push(suggest('RATE_BUYDOWN',
-          'HIGH appraisal risk — value gap identified. Rate Buydown with seller concessions may bridge the gap and protect the deal.',
-          'HIGH'));
+        raw.push(suggest('RATE_BUYDOWN', 'HIGH appraisal risk — value gap. Rate Buydown may bridge the gap.', 'HIGH'));
       }
     }
     if ((flipDays < 0 || flipDays >= 91) && appraisalRisk !== 'HIGH' && !wellSeptic) {
-      raw.push(suggest('CLOSING_COST_CALC',
-        'Property report clean. Proceed to Closing Cost Calculator.',
-        'LOW'));
+      raw.push(suggest('CLOSING_COST_CALC', 'Property report clean. Proceed to Closing Cost Calculator.', 'LOW'));
     }
   }
 
   if (currentModuleKey === 'CLOSING_COST_CALC') {
-    const cashToClose    = parseFloat(f.cashToClose || f.totalCashToClose || 0);
-    const borrowerAssets = parseFloat(f.borrowerAssets || f.verifiedAssets || scenarioData?.assets || 0);
+    const cashToClose    = parseFloat(f.cashToClose    || f.totalCashToClose || 0);
+    const borrowerAssets = parseFloat(f.borrowerAssets || f.verifiedAssets   || 0);
     const shortfall      = cashToClose > 0 && borrowerAssets > 0 && cashToClose > borrowerAssets;
-
     if (shortfall) {
       raw.push(suggest('RATE_BUYDOWN',
-        `Cash to close of $${cashToClose.toLocaleString()} exceeds verified assets of $${borrowerAssets.toLocaleString()}. Seller concession buydown strategy may offset the gap.`,
-        'HIGH'));
-      raw.push(suggest('DPA_INTEL',
-        'Re-check DPA availability — a stacked grant may cover the cash-to-close shortfall.',
-        'HIGH'));
+        `Cash to close of $${cashToClose.toLocaleString()} exceeds verified assets. Seller concession buydown may offset the gap.`, 'HIGH'));
+      raw.push(suggest('DPA_INTEL', 'Re-check DPA — a stacked grant may cover the cash-to-close shortfall.', 'HIGH'));
     } else {
-      raw.push(suggest('TITLE_INTEL',
-        'Cash to close is within acceptable range. Proceed to Title Intelligence.',
-        'LOW'));
+      raw.push(suggest('TITLE_INTEL', 'Cash to close within range. Proceed to Title Intelligence.', 'LOW'));
     }
   }
 
   if (currentModuleKey === 'REHAB_INTEL') {
     raw.push(suggest('AUS_RESCUE',
-      'Rehab scope and program path identified. Run AUS Rescue to confirm approval path under renovation loan guidelines (203k / HomeStyle).',
-      'MEDIUM'));
+      'Rehab scope identified. Confirm approval path under renovation loan guidelines (203k/HomeStyle).', 'MEDIUM'));
   }
 
   if (currentModuleKey === 'MI_OPTIMIZER') {
-    raw.push(suggest('PROPERTY_INTEL',
-      'MI structure optimized. Proceed to Collateral Intelligence for property condition review.',
-      'LOW'));
+    raw.push(suggest('PROPERTY_INTEL', 'MI structure optimized. Proceed to Collateral Intelligence.', 'LOW'));
   }
 
   if (currentModuleKey === 'ARM_STRUCTURE') {
-    raw.push(suggest('LENDER_MATCH',
-      'ARM structure analyzed. Proceed to Lender Match with ARM product availability in mind.',
-      'LOW'));
+    raw.push(suggest('LENDER_MATCH', 'ARM structure analyzed. Proceed to Lender Match with ARM products in mind.', 'LOW'));
   }
 
-  // ─── STAGE 4 ────────────────────────────────
+  // ─── STAGE 4 ────────────────────────────────────────────────
 
   if (currentModuleKey === 'TITLE_INTEL') {
-    const lienFound    = f.lienFound || f.lienDetected || false;
+    const lienFound    = f.lienFound    || f.lienDetected || false;
     const vestingIssue = f.vestingIssue || f.vestingConcern || false;
-
     if (lienFound) {
       raw.push(suggest('DISCLOSURE_INTEL',
-        'Lien found — submission is blocked. Flag to Disclosure Intelligence immediately and document in Decision Record.',
-        'HIGH', { canSkip: false }));
+        'Lien found — submission blocked. Flag to Disclosure Intelligence immediately.', 'HIGH', { canSkip: false }));
     } else if (vestingIssue) {
-      raw.push(suggest('COMPLIANCE_INTEL',
-        'Vesting issue identified. Flag to Compliance Intelligence for review before proceeding.',
-        'HIGH'));
+      raw.push(suggest('COMPLIANCE_INTEL', 'Vesting issue — flag to Compliance Intelligence before proceeding.', 'HIGH'));
     } else {
-      raw.push(suggest('DISCLOSURE_INTEL',
-        'Title is clean. Proceed to Disclosure Intelligence.',
-        'LOW'));
+      raw.push(suggest('DISCLOSURE_INTEL', 'Title is clean. Proceed to Disclosure Intelligence.', 'LOW'));
     }
   }
 
   if (currentModuleKey === 'DISCLOSURE_INTEL') {
-    raw.push(suggest('COMPLIANCE_INTEL',
-      'Disclosures reviewed. Proceed to Compliance Intelligence before final submission.',
-      'LOW'));
+    raw.push(suggest('COMPLIANCE_INTEL', 'Disclosures reviewed. Proceed to Compliance Intelligence.', 'LOW'));
   }
 
   if (currentModuleKey === 'COMPLIANCE_INTEL') {
-    const aprSpread = f.aprSpreadFlag || f.aprFlag || false;
-    const hpml      = f.hpmlFlag || f.isHPML || false;
-
+    const aprSpread = f.aprSpreadFlag || false;
+    const hpml      = f.hpmlFlag      || false;
     if (aprSpread) {
       raw.push(suggest('RATE_BUYDOWN',
-        'APR spread flag detected — submission is blocked. Return to Rate Buydown to restructure rate and points.',
-        'HIGH', { canSkip: false }));
+        'APR spread flag — submission blocked. Restructure rate and points.', 'HIGH', { canSkip: false }));
     } else if (hpml) {
       raw.push(suggest('DISCLOSURE_INTEL',
-        'HPML flag present. Return to Disclosure Intelligence — a revised Closing Disclosure is required.',
-        'HIGH', { canSkip: false }));
+        'HPML flag present. Revised Closing Disclosure required.', 'HIGH', { canSkip: false }));
     } else {
-      raw.push(suggest('FLOOD_INTEL',
-        'Compliance clear. Proceed to Flood Intelligence.',
-        'LOW'));
+      raw.push(suggest('FLOOD_INTEL', 'Compliance clear. Proceed to Flood Intelligence.', 'LOW'));
     }
   }
 
   if (currentModuleKey === 'FLOOD_INTEL') {
     raw.push(suggest('INTELLIGENT_CHECKLIST',
-      'All intelligence modules complete. Proceed to Intelligent Checklist for final submission verification.',
-      'LOW'));
+      'All intelligence modules complete. Proceed to Intelligent Checklist for final submission verification.', 'LOW'));
   }
 
-  // ─────────────────────────────────────────────
-  // Finalize: filter nulls, apply suppression, sort
-  // ─────────────────────────────────────────────
+  // Finalize
   const valid = applySuppression(raw.filter(Boolean), loanPurpose);
 
   if (valid.length === 0) {
@@ -677,7 +540,7 @@ function runRulesEngine({ currentModuleKey, loanPurpose, findings, scenarioData,
 }
 
 // ─────────────────────────────────────────────
-// HOOK — useNextStepIntelligence
+// HOOK
 // ─────────────────────────────────────────────
 export function useNextStepIntelligence({
   currentModuleKey,
@@ -686,16 +549,15 @@ export function useNextStepIntelligence({
   scenarioData = {},
   completedModules = [],
   scenarioId,
-  onWriteToDecisionRecord,   // (payload) => void  — provided by useDecisionRecord integration
+  onWriteToDecisionRecord,
 }) {
   const [primarySuggestion,    setPrimarySuggestion]    = useState(null);
   const [secondarySuggestions, setSecondarySuggestions] = useState([]);
   const [skipReason,           setSkipReason]           = useState(null);
   const [suggestedBy,          setSuggestedBy]          = useState('RULES_ENGINE');
   const [actionLogged,         setActionLogged]         = useState(false);
-  const [actionType,           setActionType]           = useState(null); // "followed" | "overridden"
+  const [actionType,           setActionType]           = useState(null);
 
-  // Stringify deps to avoid infinite loops on object identity changes
   const findingsDep  = JSON.stringify(decisionRecordFindings);
   const scenarioDep  = JSON.stringify(scenarioData);
   const completedDep = JSON.stringify(completedModules);
@@ -703,7 +565,6 @@ export function useNextStepIntelligence({
   useEffect(() => {
     if (!currentModuleKey || !loanPurpose) return;
 
-    // Merge module-specific findings from the Decision Record
     const modulefindings = decisionRecordFindings?.[currentModuleKey] || {};
 
     const result = runRulesEngine({
@@ -721,7 +582,6 @@ export function useNextStepIntelligence({
     setActionLogged(false);
     setActionType(null);
 
-    // Write suggestion event to Decision Record
     if (result.primarySuggestion && onWriteToDecisionRecord) {
       onWriteToDecisionRecord({
         type:      'nextStepSuggested',
@@ -739,35 +599,22 @@ export function useNextStepIntelligence({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentModuleKey, loanPurpose, findingsDep, scenarioDep, completedDep]);
 
-  // ── LO follows the suggestion ──
   const logFollow = useCallback((moduleKey) => {
     if (onWriteToDecisionRecord) {
       onWriteToDecisionRecord({
-        type:      'nextStepAction',
-        moduleKey: currentModuleKey,
-        payload: {
-          action:          'followed',
-          followedModule:  moduleKey,
-          overrideNote:    null,
-          actionTimestamp: new Date().toISOString(),
-        },
+        type: 'nextStepAction', moduleKey: currentModuleKey,
+        payload: { action: 'followed', followedModule: moduleKey, actionTimestamp: new Date().toISOString() },
       });
     }
     setActionLogged(true);
     setActionType('followed');
   }, [currentModuleKey, onWriteToDecisionRecord]);
 
-  // ── LO overrides the suggestion ──
   const logOverride = useCallback((moduleKey, note = null) => {
     if (onWriteToDecisionRecord) {
       onWriteToDecisionRecord({
-        type:      'nextStepAction',
-        moduleKey: currentModuleKey,
-        payload: {
-          action:          'overridden',
-          overrideNote:    note || null,
-          actionTimestamp: new Date().toISOString(),
-        },
+        type: 'nextStepAction', moduleKey: currentModuleKey,
+        payload: { action: 'overridden', overrideNote: note || null, actionTimestamp: new Date().toISOString() },
       });
     }
     setActionLogged(true);
@@ -775,15 +622,8 @@ export function useNextStepIntelligence({
   }, [currentModuleKey, onWriteToDecisionRecord]);
 
   return {
-    primarySuggestion,
-    secondarySuggestions,
-    skipReason,
-    suggestedBy,
-    actionLogged,
-    actionType,
-    logFollow,
-    logOverride,
-    MODULE_REGISTRY,
-    SUPPRESSION_MAP,
+    primarySuggestion, secondarySuggestions, skipReason,
+    suggestedBy, actionLogged, actionType,
+    logFollow, logOverride, MODULE_REGISTRY, SUPPRESSION_MAP,
   };
 }

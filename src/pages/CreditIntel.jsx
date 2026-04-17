@@ -1,9 +1,7 @@
 // src/pages/CreditIntel.jsx
 // LoanBeacons™ — Module 5 | Stage 1: Pre-Structure
 // Credit Intelligence™ — Full Enhanced Build
-// High Impact: Upload open by default, Pay-to-Close Gap, One-click Rescore Plan
-// Medium Impact: Score gap cross-ref, Auto-check derogatory from AI, "Just missed" eligibility
-// Polish: Smart strategy pre-selection, Enhanced Decision Record log
+// Layout Pass v2: hero flexbox fix · ScenarioHeader · DRBanner render order · bg-slate-50 · localStorage autosave
 
 import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -14,6 +12,7 @@ import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
 import NextStepCard from '../components/NextStepCard';
 import ModuleNav from '../components/ModuleNav';
+import ScenarioHeader from '../components/ScenarioHeader';
 
 const SCORE_TIERS = [
   { min: 760, label: 'Excellent',     badge: 'bg-emerald-100 text-emerald-700', desc: 'Best pricing on all programs. No overlays apply.' },
@@ -147,6 +146,35 @@ export default function CreditIntel() {
 
   const borrowerName = scenario ? `${scenario.firstName || ''} ${scenario.lastName || ''}`.trim() : '';
 
+  // ── localStorage autosave ─────────────────────────────────────────────────
+  const LS_KEY = scenarioId ? `lb_creditintel_${scenarioId}` : null;
+
+  useEffect(() => {
+    if (!LS_KEY) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+      if (saved) {
+        if (saved.tradelines)      setTradelines(saved.tradelines);
+        if (saved.utilization)     setUtilization(saved.utilization);
+        if (saved.derogatory)      setDerogatory(saved.derogatory);
+        if (saved.derogatoryDates) setDerogatoryDates(saved.derogatoryDates);
+        if (saved.collections)     setCollections(saved.collections);
+        if (saved.notes)           setNotes(saved.notes);
+        if (saved.simCards)        setSimCards(saved.simCards);
+      }
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [LS_KEY]);
+
+  useEffect(() => {
+    if (!LS_KEY) return;
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify({
+        tradelines, utilization, derogatory, derogatoryDates, collections, notes, simCards,
+      }));
+    } catch { /* ignore */ }
+  }, [LS_KEY, tradelines, utilization, derogatory, derogatoryDates, collections, notes, simCards]);
+
   useEffect(() => {
     if (!scenarioId) {
       getDocs(collection(db, 'scenarios')).then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(console.error);
@@ -253,7 +281,6 @@ export default function CreditIntel() {
     }
     return lines.join('\n');
   };
-
 
   const addCollection    = ()         => setCollections(p => [...p, { id: Date.now(), creditor: '', amount: '', type: 'medical', status: 'open', loe: false }]);
   const updateCollection = (id, f, v) => setCollections(p => p.map(c => c.id === id ? { ...c, [f]: v } : c));
@@ -555,7 +582,7 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
         tradelines: { revolving: tradelines.revolving, installment: tradelines.installment, mortgage: tradelines.mortgage },
         loNotes: notes,
         timestamp: new Date().toISOString(),
-      });
+      }, [], [], '1.0.0');
       if (writtenId) setSavedRecordId(writtenId);
       setFindingsReported(true);
     } catch (e) { console.error(e); }
@@ -563,14 +590,14 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
   };
 
   if (loading) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
       <ModuleNav moduleNumber={5} />
       <div className="animate-spin w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full" />
     </div>
   );
 
   if (!scenarioId) return (
-    <div className="min-h-screen bg-gray-50 py-8">
+    <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-2xl mx-auto px-4">
         <button onClick={() => navigate('/')} className="text-blue-600 mb-4 flex items-center gap-2 text-sm">← Back</button>
         <div className="flex items-center gap-3 mb-6">
@@ -595,30 +622,70 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 py-6 pb-24">
+    <div className="min-h-screen bg-slate-50 py-6 pb-24">
       <div className="max-w-5xl mx-auto px-4">
+
+        {/* ── 1. DecisionRecordBanner — FIRST ───────────────────────────── */}
+        <DecisionRecordBanner
+          recordId={savedRecordId}
+          moduleName="Credit Intelligence™"
+          moduleKey="CREDIT_INTEL"
+          onSave={handleSaveToRecord}
+          saving={recordSaving}
+        />
+
+        {/* ── 2. ModuleNav — SECOND ─────────────────────────────────────── */}
         <ModuleNav moduleNumber={5} />
 
-        {/* Header */}
-        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-2xl px-6 py-5 mb-6">
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="flex items-center gap-3 mb-1">
-                <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase">Stage 1 — Pre-Structure</span>
-                <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">Module 5</span>
-              </div>
-              <h1 className="text-2xl font-bold">Credit Intelligence™</h1>
-              <p className="text-indigo-200 text-sm mt-0.5">{borrowerName ? `${borrowerName} · ` : ''}Score Tiers · Derogatory Events · Rapid Rescore</p>
+        {/* ── 3. Hero — flexbox: left flex:1 | right flexShrink:0 ──────── */}
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl px-6 py-5 mb-4">
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+
+            {/* Left — title + subtitle */}
+            <div style={{ flex: 1 }}>
+              <h1
+                className="text-2xl font-bold text-white"
+                style={{ fontFamily: 'DM Serif Display, serif' }}
+              >
+                Credit Intelligence™
+              </h1>
+              <p className="text-indigo-200 text-sm mt-1">
+                {borrowerName ? `${borrowerName} · ` : ''}Score Tiers · Derogatory Events · Rapid Rescore
+              </p>
             </div>
-            {tier && (
-              <div className="text-right">
-                <div className="text-xs text-slate-400 uppercase tracking-wide mb-1">Qualifying Score</div>
-                <div className="text-4xl font-black text-white">{qualifyingScore}</div>
-                <div className={`text-xs font-bold px-3 py-1 rounded-full mt-1 inline-block ${tier.badge}`}>{tier.label}</div>
+
+            {/* Right — pills stacked above scenario card */}
+            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px', marginLeft: '24px' }}>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-400/30">
+                  Stage 1 — Pre-Structure
+                </span>
+                <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">
+                  Module 5
+                </span>
               </div>
-            )}
+              {scenario && (
+                <div
+                  className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right"
+                  style={{ minWidth: '190px' }}
+                >
+                  <p className="text-xs text-slate-300 font-medium truncate" style={{ maxWidth: '200px' }}>
+                    {borrowerName || 'No Borrower Selected'}
+                  </p>
+                  <p className="text-lg font-black text-white">
+                    ${parseFloat(scenario.loanAmount || 0).toLocaleString()}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {scenario.loanPurpose || 'N/A'}{scenario.loanType ? ` · ${scenario.loanType}` : ''}
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
+
+        {/* ── 4. ScenarioHeader bar ─────────────────────────────────────── */}
+        <ScenarioHeader scenario={scenario} moduleNumber={5} />
 
         {/* Score Gap Alert — enhanced with sim cross-ref */}
         {qualifyingScore > 0 && nextMilestone && pointsToNext <= 40 && (
@@ -795,6 +862,7 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
                 </div>
               </div>
             </div>
+
             {/* ── SCORE FACTOR INTELLIGENCE ─────────────────────────── */}
             {allBorrowers.some(b => b.reasonCodes && (Object.values(b.reasonCodes).flat().length > 0)) && (
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
@@ -810,7 +878,6 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
                         Qualifying
                       </button>
                       {allBorrowers.map((b, i) => {
-                        // Handle "LASTNAME, FIRSTNAME" → "Firstname Lastname" and normalize to Title Case
                         const raw = b.name || '';
                         const commaIdx = raw.indexOf(',');
                         const reordered = commaIdx > -1
@@ -833,7 +900,6 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
                   )}
                 </div>
                 {(() => {
-                  // Find target borrower directly from allBorrowers — no name-match needed
                   const targetBorrower = focusBorrower
                     ? allBorrowers.find(b => b.name === focusBorrower)
                     : (qualifyingBorrower || allBorrowers[0]);
@@ -854,7 +920,6 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
                   const actionable = codes.filter(c => c.actionable);
                   const timeOnly   = codes.filter(c => !c.actionable);
 
-                  // Display name: handle LASTNAME, FIRSTNAME format
                   const raw = targetBorrower.name || '';
                   const commaIdx = raw.indexOf(',');
                   const reordered = commaIdx > -1
@@ -1221,27 +1286,31 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
                 <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wide">📋 Collections & Judgments</h2>
                 <button onClick={addCollection} className="text-xs text-indigo-600 font-semibold">+ Add</button>
               </div>
-              <p className="text-xs text-slate-400 mb-4">FHA ignores medical collections. Non-medical $2,000+ aggregate may require payoff or LOE.</p>
-              {collections.length === 0 ? <p className="text-sm text-slate-300 italic">None entered.</p> : (
+              <p className="text-xs text-slate-400 mb-4">Auto-populated from AI upload. Add manually if not in report.</p>
+              {collections.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-4">No collections entered.</p>
+              ) : (
                 <div className="space-y-2">
                   {collections.map(c => (
-                    <div key={c.id} className="flex flex-wrap items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
-                      <input type="text" value={c.creditor} placeholder="Creditor name" onChange={e => updateCollection(c.id, 'creditor', e.target.value)} className="flex-1 min-w-28 border border-slate-200 rounded-lg px-2 py-1.5 text-sm" />
-                      <input type="number" value={c.amount} placeholder="$" onChange={e => updateCollection(c.id, 'amount', e.target.value)} className="w-24 border border-slate-200 rounded-lg px-2 py-1.5 text-sm" />
-                      <select value={c.type} onChange={e => updateCollection(c.id, 'type', e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs">
+                    <div key={c.id} className={`grid grid-cols-12 gap-2 items-center rounded-xl p-3 border ${c.status === 'open' ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
+                      <input value={c.creditor} onChange={e => updateCollection(c.id, 'creditor', e.target.value)}
+                        placeholder="Creditor name" className="col-span-3 border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white" />
+                      <input value={c.amount} onChange={e => updateCollection(c.id, 'amount', e.target.value)}
+                        placeholder="Amount" type="number" className="col-span-2 border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white" />
+                      <select value={c.type} onChange={e => updateCollection(c.id, 'type', e.target.value)}
+                        className="col-span-3 border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white">
                         <option value="medical">Medical</option>
                         <option value="non_medical">Non-Medical</option>
-                        <option value="judgment">Judgment</option>
                       </select>
-                      <select value={c.status} onChange={e => updateCollection(c.id, 'status', e.target.value)} className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs">
+                      <select value={c.status} onChange={e => updateCollection(c.id, 'status', e.target.value)}
+                        className="col-span-2 border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white">
                         <option value="open">Open</option>
                         <option value="paid">Paid</option>
                       </select>
-                      <label className="flex items-center gap-1 text-xs cursor-pointer">
-                        <input type="checkbox" checked={c.loe} onChange={e => updateCollection(c.id, 'loe', e.target.checked)} className="accent-indigo-600" />
-                        <span className="text-slate-500">LOE</span>
-                      </label>
-                      <button onClick={() => removeCollection(c.id)} className="text-slate-300 hover:text-red-400">✕</button>
+                      <button onClick={() => removeCollection(c.id)} className="col-span-1 text-slate-300 hover:text-red-400 text-center text-xs">✕</button>
+                      <div className="col-span-1 text-[10px] text-slate-400">
+                        {c.type === 'medical' ? <span className="text-emerald-600 font-semibold">FHA OK</span> : <span className="text-amber-600 font-semibold">Review</span>}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1297,13 +1366,9 @@ For derogatoryItems, type should match: bankruptcy_7, bankruptcy_13, foreclosure
                 scenarioId={scenarioId}
               />
             )}
-
-            {scenarioId && (
-              <DecisionRecordBanner recordId={savedRecordId} moduleName="Credit Intelligence™" onSave={handleSaveToRecord} saving={recordSaving} />
-            )}
           </div>
 
-          {/* Right Panel */}
+          {/* Right Panel — sticky sidebar */}
           <div className="space-y-4">
             {tier && (
               <div className={`rounded-xl border p-4 ${tier.badge} border-current`}>
