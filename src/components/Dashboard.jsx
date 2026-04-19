@@ -208,9 +208,9 @@ const modules = {
     },
     {
       id: 'property-intel',
-      title: 'Property Intel™',
+      title: 'Collateral Intelligence™',
       icon: '🏡',
-      description: 'Property type eligibility, warrantability, valuation risk, and appraisal waiver coaching.',
+      description: 'Evaluate collateral risk before underwriting. AI appraisal review, stale comp detection, flip risk, and waiver coaching.',
       badge: null,
       status: 'live',
       path: '/property-intel',

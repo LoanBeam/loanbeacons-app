@@ -10,6 +10,8 @@ import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
 import ModuleNav from '../components/ModuleNav';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import NextStepCard from '../components/NextStepCard';
 // ─── Attorney-closing states ──────────────────────────────────────────────────
 const ATTORNEY_STATES = ['GA','SC','NC','NY','MA','CT','RI','VT','NH','ME','WV','DE','VA','KY','TN','MS','AL'];
 const TRANSFER_TAX_STATES = ['CA','NY','NJ','PA','MD','VA','DC','FL','IL','CO','WA','OR','MN','CT','MA','RI','VT','NH','ME','HI','DE','GA','SC','NC','AL','MS','TN','KY','WV','IN','OH','MI','WI','MN','IA','MO','AR','LA'];
@@ -523,10 +525,10 @@ function CCLetter({ borrowerName, scenarioName, loanAmount, purchasePrice, loanT
   const handleCopy = () => { navigator.clipboard.writeText(letterText); setCopied(true); setTimeout(() => setCopied(false), 2500); };
   return (
     <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
-      <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5 flex items-center justify-between">
+      <div className="bg-slate-50 border-b border-slate-200 px-8 py-5 flex items-center justify-between">
         <div>
           <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Communication Tools</div>
-          <h3 className="text-xl font-bold text-white">Borrower & Realtor Letters</h3>
+          <h3 className="text-xl font-bold text-slate-800">Borrower & Realtor Letters</h3>
           <p className="text-slate-400 text-sm mt-0.5">Auto-generated from your estimate. Review before sending.</p>
         </div>
         <span className="text-3xl">&#x2709;&#xFE0F;</span>
@@ -563,6 +565,28 @@ export default function ClosingCostCalc() {
 
   const { reportFindings } = useDecisionRecord(scenarioId);
   const [savedRecordId, setSavedRecordId] = useState(null);
+
+  // NSI — Next Step Intelligence™
+  const rawPurpose = (scenario?.loanPurpose || scenario?.transactionType || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('cash') ? 'cash_out_refi'
+    : rawPurpose.includes('rate') || rawPurpose.includes('refi') ? 'rate_term_refi'
+    : 'purchase';
+
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:       'CLOSING_COST_CALC',
+      loanPurpose,
+      decisionRecordFindings: {
+        CLOSING_COST_CALC: {
+          estimateGenerated: netCashToClose > 0,
+          scenarioLoaded:    !!scenario,
+        },
+      },
+      scenarioData:            scenario || {},
+      completedModules:        [],
+      scenarioId:              scenarioId,
+      onWriteToDecisionRecord: null,
+    });
   const [recordSaving, setRecordSaving] = useState(false);
 
   const [scenario, setScenario] = useState(null);
@@ -688,7 +712,7 @@ export default function ClosingCostCalc() {
           'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           max_tokens: 1024,
           tools: [{ type: 'web_search_20250305', name: 'web_search' }],
           messages: [{
@@ -765,10 +789,10 @@ export default function ClosingCostCalc() {
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">10</div>
+              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">20</div>
               <div>
-                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 2 — Lender Fit</span>
-                <h1 className="text-2xl font-bold text-white mt-0.5">Closing Cost Calculator™</h1>
+                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 3 — Property &amp; Closing</span>
+                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">Closing Cost Calculator™</h1>
               </div>
             </div>
             <p className="text-indigo-300 text-sm leading-relaxed mb-5">Build a complete, lender-accurate closing cost estimate. Itemizes all fee sections, calculates prepaids and escrow setup, and optimizes lender credits for minimum cash-to-close.</p>
@@ -858,24 +882,22 @@ export default function ClosingCostCalc() {
       <ModuleNav moduleNumber={20} />
 
       {/* Hero */}
-      <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
-        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #10b981 0%, transparent 50%), radial-gradient(circle at 80% 20%, #3b82f6 0%, transparent 40%)' }} />
-        <div className="relative max-w-7xl mx-auto px-6 py-8">
-          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
+      <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl mx-4 mt-4 mb-6">
+        <div className="relative p-8">
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 10</div>
-              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Closing Cost Calculator™</h1>
-              <p className="text-slate-400 text-base max-w-xl leading-relaxed">National · State-aware · AI-powered · Every fee explained with who pays and why</p>
+              <p className="text-orange-400 text-xs font-bold uppercase tracking-widest mb-1.5">Module 20 · Stage 3: Optimization</p>
+              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-3xl font-bold text-white mb-2">Closing Cost Calculator™</h1>
+              <p className="text-slate-400 text-sm max-w-xl leading-relaxed">National · State-aware · AI-powered · Every fee explained with who pays and why</p>
             </div>
-            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px' }}>
+            <div className="bg-slate-800/60 border border-slate-200 rounded-2xl px-5 py-4 flex-shrink-0" style={{ minWidth: '240px' }}>
               {scenario ? (
                 <>
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
                   <div className="text-white font-bold">{borrowerName || scenario.scenarioName}</div>
                   <div className="text-slate-400 text-sm mt-1">{fmt0(loanAmount)} · {loanType} · {state}</div>
                   {netCashToClose > 0 && <div className="text-emerald-300 text-sm font-bold mt-1">~{fmt0(netCashToClose)} est. cash to close</div>}
-                  <button onClick={() => navigate('/closing-cost-calc')} className="text-xs text-blue-400 hover:text-blue-300 mt-2 block">Change scenario →</button>
+                  <button onClick={() => navigate('/closing-cost-calc')} className="text-xs text-slate-400 hover:text-white mt-2 block">Change scenario →</button>
                 </>
               ) : (
                 <div className="text-slate-400 text-sm">No scenario loaded</div>
@@ -887,7 +909,7 @@ export default function ClosingCostCalc() {
 
       {/* Borrower bar */}
       {scenarioId && borrowerName && (
-        <div className="bg-[#1B3A6B] px-6 py-3">
+        <div className="bg-slate-800 px-6 py-3 mx-4 rounded-2xl mb-4">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-1">
             <span className="text-white font-bold text-sm">{borrowerName}</span>
             {scenario?.streetAddress && <span className="text-blue-200 text-xs">{[scenario.streetAddress, scenario.city, scenario.state].filter(Boolean).join(', ')}</span>}
@@ -903,6 +925,20 @@ export default function ClosingCostCalc() {
 
       <ScenarioHeader moduleTitle="Closing Cost Calculator™" moduleNumber="20" scenarioId={scenarioId} />
 
+      {/* ── Next Step Intelligence™ ── */}
+      {primarySuggestion && (
+        <div className="max-w-7xl mx-auto px-6 pt-6">
+          <NextStepCard
+            suggestion={primarySuggestion}
+            secondarySuggestions={secondarySuggestions}
+            onFollow={logFollow}
+            onOverride={logOverride}
+            loanPurpose={loanPurpose}
+            scenarioId={scenarioId}
+          />
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto px-6 py-6">
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
 
@@ -911,8 +947,8 @@ export default function ClosingCostCalc() {
 
             {/* State + AI Bar */}
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                <h2 className="text-xl font-bold text-white">State & Loan Details</h2>
+              <div className="bg-slate-50 border-b border-slate-200 px-8 py-5">
+                <h2 className="text-xl font-bold text-slate-800">State & Loan Details</h2>
                 <p className="text-slate-400 text-sm mt-1">Auto-populated from scenario. State drives transfer tax, attorney requirement, and title insurance rates.</p>
               </div>
               <div className="p-8 space-y-6">
@@ -952,7 +988,7 @@ export default function ClosingCostCalc() {
                 </div>
 
                 {/* AI Estimate */}
-                <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-5 border border-slate-700">
+                <div className="bg-slate-50 rounded-2xl p-5 border border-slate-700">
                   <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
                     <div>
                       <div className="text-xs font-bold text-emerald-400 uppercase tracking-widest mb-1">AI Estimate Engine</div>
@@ -1032,20 +1068,17 @@ export default function ClosingCostCalc() {
               }, 0);
 
               return (
-                <div key={group.id} className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className={'bg-gradient-to-r px-8 py-5 flex items-center justify-between ' + gc.header}>
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{group.icon}</span>
-                      <div>
-                        <div className={'text-xs font-bold uppercase tracking-widest mb-0.5 ' + gc.accent}>{group.label}</div>
-                        <div className="text-xs text-slate-400">{groupFees.length} fee{groupFees.length > 1 ? 's' : ''} · hover ? for education</div>
-                      </div>
+                <div key={group.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  {/* Compact section header */}
+                  <div className="flex items-center justify-between px-6 py-3 border-b border-slate-100 bg-slate-50">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{group.icon}</span>
+                      <span className={'text-sm font-bold ' + gc.accent.replace('300','700').replace('text-','text-')}>{group.label}</span>
+                      <span className="text-xs text-slate-400">{groupFees.length} fee{groupFees.length > 1 ? 's' : ''}</span>
                     </div>
-                    <div className="text-right">
-                      <div className="text-xs text-slate-400 mb-0.5">Est. Buyer Cost</div>
-                      <div className={'text-xl font-black ' + gc.accent}>{fmt0(groupTotal)}</div>
-                    </div>
+                    <span className={'text-base font-black ' + gc.accent}>{fmt0(groupTotal)}</span>
                   </div>
+                  {/* Fee rows — single line each */}
                   <div className="divide-y divide-slate-100">
                     {groupFees.map((fee) => {
                       const val = feeValues[fee.id] || 0;
@@ -1053,41 +1086,36 @@ export default function ClosingCostCalc() {
                       const pc = PAYER_COLORS[payer] || PAYER_COLORS.buyer;
                       const isConfirmed = !!feeOverrides[fee.id];
                       return (
-                        <div key={fee.id} className={'px-8 py-4 flex items-center gap-4 ' + (isConfirmed ? 'bg-slate-50/50' : 'bg-white')}>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-sm font-semibold text-slate-800 truncate">{fee.label}</span>
-                              <FeeTooltip fee={fee} loanType={loanType} />
-                              {isConfirmed && <span className="text-xs text-emerald-600 font-bold">✓</span>}
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className={'text-xs font-bold px-2 py-0.5 rounded-lg border ' + pc.bg + ' ' + pc.text + ' ' + pc.border}>
-                                {pc.label}
-                              </span>
-                              {fee.negotiable && <span className="text-xs text-slate-400 italic">negotiable</span>}
-                            </div>
+                        <div key={fee.id} className={'flex items-center gap-3 px-6 py-3 ' + (isConfirmed ? 'bg-emerald-50/40' : 'bg-white')}>
+                          {/* Fee name + tooltip */}
+                          <div className="flex-1 min-w-0 flex items-center gap-1.5">
+                            <span className="text-sm font-semibold text-slate-800 truncate">{fee.label}</span>
+                            <FeeTooltip fee={fee} loanType={loanType} />
+                            {isConfirmed && <span className="text-emerald-500 text-xs font-bold flex-shrink-0">✓</span>}
                           </div>
-                          <div className="flex items-center gap-3 shrink-0">
-                            {/* Payer toggle */}
-                            <select value={payer} onChange={(e) => setFeePayer(fee.id, e.target.value)}
-                              className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 text-slate-600 bg-white focus:outline-none focus:border-indigo-400">
-                              <option value="buyer">Buyer</option>
-                              <option value="seller">Seller</option>
-                              <option value="lender">Lender</option>
-                              <option value="split">Split</option>
-                            </select>
-                            {/* Amount input */}
-                            <div className="relative">
-                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
-                              <input
-                                type="number"
-                                value={val || ''}
-                                onChange={(e) => setFeeValue(fee.id, e.target.value)}
-                                onBlur={() => confirmFee(fee.id)}
-                                placeholder="0"
-                                className={'w-28 pl-6 pr-3 py-2 border-2 rounded-xl text-sm font-semibold text-right focus:outline-none ' + (isConfirmed ? 'border-emerald-300 bg-emerald-50 text-emerald-700 focus:border-emerald-400' : 'border-slate-200 bg-slate-50 text-slate-700 focus:border-indigo-400')}
-                              />
-                            </div>
+                          {/* Payer badge */}
+                          <span className={'text-xs font-semibold px-2 py-0.5 rounded-md flex-shrink-0 ' + pc.bg + ' ' + pc.text}>
+                            {pc.label}
+                          </span>
+                          {/* Payer select */}
+                          <select value={payer} onChange={(e) => setFeePayer(fee.id, e.target.value)}
+                            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 text-slate-600 bg-white focus:outline-none focus:border-indigo-400 flex-shrink-0">
+                            <option value="buyer">Buyer</option>
+                            <option value="seller">Seller</option>
+                            <option value="lender">Lender</option>
+                            <option value="split">Split</option>
+                          </select>
+                          {/* Amount */}
+                          <div className="relative flex-shrink-0">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs pointer-events-none">$</span>
+                            <input
+                              type="number"
+                              value={val || ''}
+                              onChange={(e) => setFeeValue(fee.id, e.target.value)}
+                              onBlur={() => confirmFee(fee.id)}
+                              placeholder="0"
+                              className={'w-24 pl-5 pr-2 py-1.5 border-2 rounded-lg text-sm font-bold text-right focus:outline-none ' + (isConfirmed ? 'border-emerald-300 bg-emerald-50 text-emerald-700 focus:border-emerald-400' : 'border-slate-200 bg-slate-50 text-slate-700 focus:border-indigo-400')}
+                            />
                           </div>
                         </div>
                       );
@@ -1096,20 +1124,6 @@ export default function ClosingCostCalc() {
                 </div>
               );
             })}
-
-            {/* Save */}
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
-              <div className="flex items-center justify-between flex-wrap gap-4">
-                <div>
-                  <h3 className="font-bold text-slate-800">Save to Decision Record™</h3>
-                  <p className="text-slate-500 text-sm">Logs all fee estimates, payer assignments, and cash-to-close to the audit trail.</p>
-                </div>
-                <button onClick={handleSaveToRecord} disabled={recordSaving}
-                  className={'px-8 py-3 rounded-2xl text-sm font-bold ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
-                  {recordSaving ? 'Saving...' : savedRecordId ? '✓ Saved' : '💾 Save Decision Record™'}
-                </button>
-              </div>
-            </div>
 
             {/* Letters */}
             <CCLetter

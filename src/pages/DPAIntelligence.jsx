@@ -12,30 +12,32 @@ import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import AEShareForm from '../components/AEShareForm';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import ModuleNav from '../components/ModuleNav';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import NextStepCard from '../components/NextStepCard';
 
 const MODULE_ID = 'dpa-intelligence';
 
-// ─── COLORS ──────────────────────────────────────────────────────────────────
+// ─── COLORS — Light Theme ────────────────────────────────────────────────────
 const C = {
-  bg: '#0f1117',
-  surface: '#1a1f2e',
-  card: '#1e2433',
-  cardHover: '#232a3a',
-  border: '#2d3448',
-  borderLight: '#374155',
-  green: '#22c55e',
-  greenDark: '#166534',
-  greenMuted: '#14532d',
-  amber: '#f59e0b',
-  amberDark: '#78350f',
-  red: '#ef4444',
-  redDark: '#7f1d1d',
-  blue: '#3b82f6',
-  blueDark: '#1e3a5f',
-  purple: '#a855f7',
-  textPrimary: '#f1f5f9',
-  textSecondary: '#94a3b8',
-  textMuted: '#64748b',
+  bg:           '#f8fafc',   // slate-50
+  surface:      '#ffffff',   // white
+  card:         '#ffffff',   // white
+  cardHover:    '#f8fafc',   // slate-50
+  border:       '#e2e8f0',   // slate-200
+  borderLight:  '#f1f5f9',   // slate-100
+  green:        '#16a34a',
+  greenDark:    '#dcfce7',
+  greenMuted:   '#f0fdf4',
+  amber:        '#d97706',
+  amberDark:    '#fffbeb',
+  red:          '#dc2626',
+  redDark:      '#fef2f2',
+  blue:         '#3b82f6',
+  blueDark:     '#eff6ff',
+  purple:       '#7c3aed',
+  textPrimary:  '#0f172a',   // slate-900
+  textSecondary:'#475569',   // slate-600
+  textMuted:    '#94a3b8',   // slate-400
 };
 
 // ─── GEORGIA AMI LOOKUP ───────────────────────────────────────────────────────
@@ -566,17 +568,17 @@ function fmtAmt(program) {
 }
 
 const TYPE_META = {
-  grant:          { label: 'Grant',          icon: '🎁', color: C.green,  bg: C.greenMuted },
-  forgivable:     { label: 'Forgivable Loan', icon: '⏱', color: '#86efac', bg: '#14532d' },
-  deferred_loan:  { label: 'Deferred Loan',  icon: '⏸', color: C.blue,   bg: C.blueDark },
-  second_mortgage:{ label: '2nd Mortgage',   icon: '🏠', color: C.amber,  bg: C.amberDark },
+  grant:          { label: 'Grant',          icon: '🎁', color: '#16a34a', bg: '#f0fdf4' },
+  forgivable:     { label: 'Forgivable Loan', icon: '⏱', color: '#0369a1', bg: '#eff6ff' },
+  deferred_loan:  { label: 'Deferred Loan',  icon: '⏸', color: '#3b82f6', bg: '#eff6ff' },
+  second_mortgage:{ label: '2nd Mortgage',   icon: '🏠', color: '#d97706', bg: '#fffbeb' },
 };
 
 const APPROVAL_STATES = ['unknown', 'requested', 'approved'];
 const APPROVAL_META = {
-  approved:  { label: '✓ Lender Approved',   color: C.green,  bg: C.greenMuted,  border: C.green },
-  requested: { label: '⏳ Approval Requested', color: C.amber,  bg: C.amberDark,   border: C.amber },
-  unknown:   { label: '? Approval Unknown',   color: C.textMuted, bg: '#1a1f2e', border: C.border },
+  approved:  { label: '✓ Lender Approved',   color: '#16a34a', bg: '#f0fdf4', border: '#16a34a' },
+  requested: { label: '⏳ Approval Requested', color: '#d97706', bg: '#fffbeb', border: '#d97706' },
+  unknown:   { label: '? Approval Unknown',   color: '#94a3b8', bg: '#f8fafc', border: '#e2e8f0' },
 };
 
 // ─── LENDER APPROVAL BADGE ────────────────────────────────────────────────────
@@ -605,10 +607,10 @@ function LenderApprovalBadge({ programId, status = 'unknown', onChange }) {
 // ─── ELIGIBILITY BADGE ────────────────────────────────────────────────────────
 function EligibilityBadge({ status }) {
   const cfg = {
-    eligible:   { label: '✓ Eligible',    bg: C.greenMuted,  color: C.green,  border: C.green },
-    ineligible: { label: '✗ Ineligible',  bg: C.redDark,     color: '#fca5a5', border: C.red },
-    unknown:    { label: '? Verify',      bg: '#1e2433',     color: C.textMuted, border: C.border },
-  }[status] || { label: '? Verify', bg: '#1e2433', color: C.textMuted, border: C.border };
+    eligible:   { label: '✓ Eligible',    bg: '#f0fdf4', color: '#16a34a', border: '#16a34a' },
+    ineligible: { label: '✗ Ineligible',  bg: '#fef2f2', color: '#dc2626', border: '#dc2626' },
+    unknown:    { label: '? Verify',      bg: '#f8fafc', color: '#94a3b8', border: '#e2e8f0' },
+  }[status] || { label: '? Verify', bg: '#f8fafc', color: '#94a3b8', border: '#e2e8f0' };
   return (
     <span style={{
       padding: '3px 9px', borderRadius: 4, fontSize: 11, fontWeight: 700,
@@ -632,7 +634,6 @@ function ProgramCard({ program, eligibility, lenderStatus, onLenderChange, stack
       borderRadius: 10, overflow: 'hidden', transition: 'border-color 0.2s, box-shadow 0.2s',
       boxShadow: stackSelected ? `0 0 0 2px ${C.blue}33` : 'none',
     }}>
-      <ModuleNav moduleNumber={9} />
       {/* Card Header */}
       <div style={{ padding: '14px 16px 12px', borderBottom: `1px solid ${C.border}` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
@@ -709,7 +710,7 @@ function ProgramCard({ program, eligibility, lenderStatus, onLenderChange, stack
           {program.eligible_loan_types?.map(lt => (
             <span key={lt} style={{
               fontSize: 11, padding: '2px 7px', borderRadius: 3, fontWeight: 600,
-              background: '#1e3a5f', color: '#93c5fd', border: '1px solid #1d4ed8',
+              background: '#eff6ff', color: '#1d4ed8', border: '1px solid #1d4ed8',
             }}>{lt}</span>
           ))}
         </div>
@@ -722,7 +723,7 @@ function ProgramCard({ program, eligibility, lenderStatus, onLenderChange, stack
       {(hasIssues || hasWarnings) && (
         <div style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}` }}>
           {hasIssues && eligibility.issues.map((issue, i) => (
-            <div key={i} style={{ fontSize: 12, color: '#fca5a5', display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: 3 }}>
+            <div key={i} style={{ fontSize: 12, color: '#dc2626', display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: 3 }}>
               <span style={{ flexShrink: 0, marginTop: 1 }}>✗</span><span>{issue}</span>
             </div>
           ))}
@@ -741,7 +742,7 @@ function ProgramCard({ program, eligibility, lenderStatus, onLenderChange, stack
 
       {/* Expanded Notes */}
       {isExpanded && (
-        <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: '#161b27' }}>
+        <div style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}`, background: '#f8fafc' }}>
           <div style={{ fontSize: 12, color: C.textSecondary, lineHeight: 1.6 }}>{program.notes}</div>
           {program.deferred_until && (
             <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>📋 Repayment: {program.deferred_until}</div>
@@ -839,8 +840,8 @@ function StackingPanel({ analysis, onClear }) {
       {pairs.map((pair, i) => (
         <div key={i} style={{
           display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
-          background: pair.compatible ? '#0f2218' : '#1c0f0f',
-          border: `1px solid ${pair.compatible ? C.greenMuted : C.redDark}`,
+          background: pair.compatible ? '#f0fdf4' : '#fef2f2',
+          border: `1px solid ${pair.compatible ? '#bbf7d0' : '#fecaca'}`,
           borderRadius: 6, marginBottom: 8,
         }}>
           <span style={{ fontSize: 16, flexShrink: 0 }}>{pair.compatible ? '✓' : '✗'}</span>
@@ -848,7 +849,7 @@ function StackingPanel({ analysis, onClear }) {
             <div style={{ fontSize: 12, fontWeight: 600, color: C.textPrimary }}>
               {pair.a.shortName} + {pair.b.shortName}
             </div>
-            <div style={{ fontSize: 12, color: pair.compatible ? C.green : '#fca5a5', marginTop: 2 }}>
+            <div style={{ fontSize: 12, color: pair.compatible ? '#16a34a' : '#dc2626', marginTop: 2 }}>
               {pair.reason}
             </div>
           </div>
@@ -856,7 +857,7 @@ function StackingPanel({ analysis, onClear }) {
       ))}
 
       {!allCompatible && (
-        <div style={{ fontSize: 12, color: C.textMuted, marginTop: 8, padding: '8px 12px', background: '#1a1014', borderRadius: 6, border: `1px solid ${C.redDark}` }}>
+        <div style={{ fontSize: 12, color: C.textMuted, marginTop: 8, padding: '8px 12px', background: '#fef2f2', borderRadius: 6, border: `1px solid ${C.redDark}` }}>
           ⚠️ One or more program pairs are not stackable. Lender must approve any layering — always verify with your AE before promising stacked DPA.
         </div>
       )}
@@ -919,8 +920,17 @@ export default function DPAIntelligence() {
   // Scenario
   const [scenario, setScenario] = useState({ loaded: false });
   const [scenarioLoading, setScenarioLoading] = useState(true);
+  const [allScenarios, setAllScenarios] = useState([]);
+  const [search,       setSearch]       = useState('');
+  const [showAll,      setShowAll]      = useState(false);
   useEffect(() => {
-    if (!scenarioId) { setScenarioLoading(false); return; }
+    if (!scenarioId) {
+      getDocs(collection(db, 'scenarios'))
+        .then(snap => setAllScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+        .catch(console.error)
+        .finally(() => setScenarioLoading(false));
+      return;
+    }
     (async () => {
       try {
         const snap = await getDoc(doc(db, 'scenarios', scenarioId));
@@ -1055,6 +1065,23 @@ export default function DPAIntelligence() {
   const eligibleCount = Object.values(eligibilityMap).filter(e => e.eligible === 'eligible').length;
   const ineligibleCount = Object.values(eligibilityMap).filter(e => e.eligible === 'ineligible').length;
 
+  // NSI — Next Step Intelligence™
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:       'DPA_INTEL',
+      loanPurpose:            'purchase',
+      decisionRecordFindings: {
+        DPA_INTEL: {
+          eligible:      eligibleCount > 0,
+          programsFound: basePrograms.length > 0,
+        },
+      },
+      scenarioData:            scenario || {},
+      completedModules:        [],
+      scenarioId:              scenarioId,
+      onWriteToDecisionRecord: null,
+    });
+
   // Report to Decision Record whenever eligible programs are found
   useEffect(() => {
     if (!scenarioId || basePrograms.length === 0) return;
@@ -1159,58 +1186,151 @@ export default function DPAIntelligence() {
     }
   };
 
+  // ─── Picker Page ─────────────────────────────────────────────────────────────
+  if (!scenarioId) {
+    if (scenarioLoading) return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><div className="text-slate-400 text-sm">Loading…</div></div>;
+    const q        = search.toLowerCase().trim();
+    const sorted   = [...allScenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
+    const filtered = q ? sorted.filter(s => (s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim()).toLowerCase().includes(q)) : sorted;
+    const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
+    const hasMore   = !q && !showAll && filtered.length > 5;
+    return (
+      <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+        <div className="bg-gradient-to-br from-slate-900 to-emerald-950 px-6 py-10">
+          <div className="max-w-2xl mx-auto">
+            <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-emerald-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-11 h-11 bg-emerald-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-emerald-900/40">09</div>
+              <div>
+                <span className="text-xs font-bold tracking-widest text-emerald-400 uppercase">Stage 2 — Strategy</span>
+                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">DPA Intelligence™</h1>
+              </div>
+            </div>
+            <p className="text-emerald-300 text-sm leading-relaxed mb-5">Nationwide down payment assistance search engine. Georgia hardcoded programs + AI-powered out-of-state search with eligibility scoring.</p>
+            <div className="flex flex-wrap gap-2">
+              {['GA Seed Programs', 'AI Web Search', 'DPA Score Ranking', 'Stack Combos', 'Lender Programs', 'Buyer Explanation'].map(tag => (
+                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-emerald-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="max-w-2xl mx-auto px-6 py-8">
+          <div className="mb-5">
+            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">Select a Scenario</h2>
+            <p className="text-xs text-slate-400">Search by name or pick from your most recent files.</p>
+          </div>
+          <div className="relative mb-4">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
+              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:border-emerald-300 transition-all" />
+            {search && <button onClick={() => setSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>}
+          </div>
+          {allScenarios.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-3xl mb-3">📂</p><p className="text-sm font-semibold text-slate-600">No scenarios found</p>
+              <button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-emerald-600 hover:text-emerald-800 underline">→ Go to Scenario Creator</button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-2xl mb-2">🔍</p><p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p>
+              <button onClick={() => setSearch('')} className="mt-2 text-xs text-emerald-500 hover:underline">Clear search</button>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {!q && !showAll && <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-1">Recently Updated</p>}
+              {displayed.map(s => {
+                const sName  = s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || 'Unnamed Scenario';
+                const amount = parseFloat(s.loanAmount || 0);
+                return (
+                  <button key={s.id} onClick={() => navigate('/dpa-intelligence?scenarioId=' + s.id)}
+                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-emerald-300 hover:shadow-md hover:bg-emerald-50/30 transition-all group">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-emerald-700">{sName}</div>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                          {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
+                          {s.loanType    && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
+                          {s.creditScore && <span className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
+                        </div>
+                      </div>
+                      <span className="text-slate-300 group-hover:text-emerald-400 text-lg shrink-0">→</span>
+                    </div>
+                  </button>
+                );
+              })}
+              {hasMore && <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-emerald-500 hover:text-emerald-700 py-3 border border-dashed border-emerald-200 rounded-2xl hover:bg-emerald-50 transition-all">View all {filtered.length} scenarios</button>}
+              {showAll && filtered.length > 5 && <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2">↑ Show less</button>}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // ─── RENDER ──────────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: '100vh', background: C.bg, color: C.textPrimary, fontFamily: "'Inter', -apple-system, sans-serif", paddingBottom: 100 }}>
-      {/* Header */}
-      <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: '20px 24px 16px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: 1, textTransform: 'uppercase' }}>
-                  Module 07
-                </span>
-                <span style={{ color: C.border }}>•</span>
-                <span style={{ fontSize: 11, color: C.green, fontWeight: 600 }}>● Live</span>
+    <div style={{ minHeight: '100vh', background: C.bg, fontFamily: "'DM Sans', system-ui, sans-serif", paddingBottom: 100 }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+
+      {/* ① DecisionRecordBanner */}
+      <DecisionRecordBanner moduleId={MODULE_ID} scenarioId={scenarioId} />
+
+      {/* ② ModuleNav */}
+      <ModuleNav moduleNumber={9} />
+
+      {/* ③ Hero */}
+      <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl mx-4 mt-4 mb-6 p-8">
+        <div className="flex items-start justify-between gap-6 flex-wrap">
+          <div>
+            <p className="text-orange-400 text-xs font-bold uppercase tracking-widest mb-1.5">
+              Module 09 · Stage 2: Lender Fit
+            </p>
+            <h1 className="text-white font-bold text-3xl mb-2" style={{ fontFamily: "'DM Serif Display', Georgia, serif" }}>
+              DPA Intelligence™
+            </h1>
+            <p className="text-slate-400 text-sm max-w-lg leading-relaxed">
+              Nationwide down payment assistance search engine. Georgia hardcoded programs + AI-powered out-of-state search with eligibility scoring and stack analysis.
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-2 flex-shrink-0">
+            <span className="bg-green-500 text-white text-xs font-bold px-3 py-1 rounded-full">LIVE</span>
+            {activeState === 'GA' && (
+              <div className="flex gap-2">
+                <span className="text-xs font-mono bg-green-900/60 text-green-400 border border-green-700 px-2.5 py-1 rounded-full">{eligibleCount} eligible</span>
+                <span className="text-xs font-mono bg-red-900/40 text-red-400 border border-red-800 px-2.5 py-1 rounded-full">{ineligibleCount} ineligible</span>
               </div>
-              <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: C.textPrimary, letterSpacing: -0.3 }}>
-                DPA Intelligence™
-              </h1>
-              <p style={{ margin: '4px 0 0', fontSize: 13, color: C.textSecondary }}>
-                Nationwide down payment assistance search engine · Georgia hardcoded + AI-powered out-of-state search
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              {activeState === 'GA' && (
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <StatBadge value={eligibleCount} label="Eligible" color={C.green} />
-                  <StatBadge value={ineligibleCount} label="Ineligible" color={C.red} />
-                  <StatBadge value={basePrograms.length - eligibleCount - ineligibleCount} label="Verify" color={C.textMuted} />
-                  {lenderProgramsForState.length > 0 && (
-                    <StatBadge value={lenderProgramsForState.length} label="Lender" color="#34d399" />
-                  )}
-                </div>
-              )}
-              {scenarioId ? (
-                <button onClick={() => navigate(`/?scenarioId=${scenarioId}`)}
-                  style={{ fontSize: 12, padding: '6px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.textSecondary, cursor: 'pointer' }}>
-                  ← Scenario
-                </button>
-              ) : (
-                <button onClick={() => navigate('/')}
-                  style={{ fontSize: 12, padding: '6px 12px', background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, color: C.textSecondary, cursor: 'pointer' }}>
-                  + Load Scenario
-                </button>
-              )}
-            </div>
+            )}
+            {scenarioId ? (
+              <button onClick={() => navigate(`/?scenarioId=${scenarioId}`)}
+                className="text-xs text-slate-400 hover:text-white border border-slate-600 px-3 py-1.5 rounded-lg hover:border-slate-400 transition-colors">
+                ← Scenario
+              </button>
+            ) : (
+              <button onClick={() => navigate('/')}
+                className="text-xs text-slate-400 hover:text-white border border-slate-600 px-3 py-1.5 rounded-lg hover:border-slate-400 transition-colors">
+                + Load Scenario
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '20px 24px' }}>
-        {/* Decision Record Banner */}
-        <DecisionRecordBanner moduleId={MODULE_ID} scenarioId={scenarioId} />
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px' }}>
+
+        {/* ── Next Step Intelligence™ ── */}
+        {primarySuggestion && (
+          <div style={{ marginBottom: 20 }}>
+            <NextStepCard
+              suggestion={primarySuggestion}
+              secondarySuggestions={secondarySuggestions}
+              onFollow={logFollow}
+              onOverride={logOverride}
+              loanPurpose="purchase"
+              scenarioId={scenarioId}
+            />
+          </div>
+        )}
 
         {/* Scenario Context Bar */}
         <ScenarioContextBar scenario={scenario} activeState={activeState} />
@@ -1254,7 +1374,7 @@ export default function DPAIntelligence() {
                   {searchLoading ? '🔍 Searching...' : `🔍 Search ${activeState} DPA Programs`}
                 </button>
                 {searchError && (
-                  <div style={{ fontSize: 12, color: '#fca5a5', marginTop: 8 }}>⚠ {searchError}</div>
+                  <div style={{ fontSize: 12, color: '#dc2626', marginTop: 8 }}>⚠ {searchError}</div>
                 )}
               </div>
             )}
@@ -1332,7 +1452,7 @@ export default function DPAIntelligence() {
         )}
 
         {activeState !== 'GA' && nonGAPrograms.length > 0 && (
-          <div style={{ background: '#1a1421', border: `1px solid #4c1d95`, borderRadius: 8, padding: '10px 16px', marginBottom: 16, fontSize: 12, color: '#c4b5fd' }}>
+          <div style={{ background: '#f5f3ff', border: `1px solid #4c1d95`, borderRadius: 8, padding: '10px 16px', marginBottom: 16, fontSize: 12, color: '#7c3aed' }}>
             🤖 AI-Researched Programs — These results were found via live web search and have not been manually verified. Always confirm program details with the state HFA or program administrator before promising DPA to a borrower.
           </div>
         )}

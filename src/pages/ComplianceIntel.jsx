@@ -1,15 +1,19 @@
 // src/pages/ComplianceIntel.jsx
-// LoanBeacons™ — Module 15 | Stage 4: Verification & Submit
-// Compliance Intelligence™ — QM · ATR · HPML · HMDA · Fair Lending review
+// Compliance Intelligence™ — Module 25
+// Stage 4 — Verification & Submit
+// Layout: DecisionRecordBanner → ModuleNav → hero → ScenarioHeader
 
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
-import ScenarioHeader from '../components/ScenarioHeader';
 import ModuleNav from '../components/ModuleNav';
+import ScenarioHeader from '../components/ScenarioHeader';
+import NextStepCard from '../components/NextStepCard';
+
 // ─── Data ─────────────────────────────────────────────────────────────────────
 const COMPLIANCE_CHECKS = [
   { id: 'qm_status',       category: 'QM / ATR',    icon: '⚖️', risk: 'critical', label: 'Qualified Mortgage (QM) Status',          description: 'Loan meets QM definition under Reg Z §1026.43. Safe Harbor (APR ≤ APOR+1.5%) or Rebuttable Presumption (HPML QM). Non-QM loans must still meet ATR requirements.', tips: 'Verify points & fees ≤3%, no balloon, no negative amortization, term ≤30 years, DTI ≤43% (or GSE/agency eligible). Document which QM category applies.' },
@@ -27,14 +31,14 @@ const COMPLIANCE_CHECKS = [
 ];
 
 const ATR_FACTORS = [
-  { factor: 'Current or reasonably expected income or assets', doc: 'Pay stubs, W-2s, tax returns, asset statements' },
-  { factor: 'Current employment status', doc: 'VOE, pay stubs, employer letter' },
-  { factor: 'Monthly payment on the covered transaction', doc: 'AUS findings, rate lock confirmation' },
-  { factor: 'Monthly payment on any simultaneous loan', doc: 'HELOC agreement, 2nd lien note' },
+  { factor: 'Current or reasonably expected income or assets',              doc: 'Pay stubs, W-2s, tax returns, asset statements' },
+  { factor: 'Current employment status',                                    doc: 'VOE, pay stubs, employer letter' },
+  { factor: 'Monthly payment on the covered transaction',                   doc: 'AUS findings, rate lock confirmation' },
+  { factor: 'Monthly payment on any simultaneous loan',                     doc: 'HELOC agreement, 2nd lien note' },
   { factor: 'Monthly payment for mortgage-related obligations (taxes, insurance, HOA)', doc: 'Property tax records, insurance quote, HOA statement' },
-  { factor: 'Current debt obligations, alimony, and child support', doc: 'Credit report, court orders, divorce decree' },
-  { factor: 'Monthly debt-to-income ratio or residual income', doc: 'AUS findings with DTI calculation' },
-  { factor: 'Credit history', doc: 'Tri-merge credit report, VOR if needed' },
+  { factor: 'Current debt obligations, alimony, and child support',         doc: 'Credit report, court orders, divorce decree' },
+  { factor: 'Monthly debt-to-income ratio or residual income',              doc: 'AUS findings with DTI calculation' },
+  { factor: 'Credit history',                                               doc: 'Tri-merge credit report, VOR if needed' },
 ];
 
 const HMDA_FIELDS = [
@@ -69,7 +73,6 @@ const RISK_BADGE = {
 
 const CATEGORIES = [...new Set(COMPLIANCE_CHECKS.map(c => c.category))];
 
-// ─── Formatters ───────────────────────────────────────────────────────────────
 const fmt0 = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
 
 // ─── Letter Builder ───────────────────────────────────────────────────────────
@@ -131,24 +134,28 @@ function LetterCard({ title, icon, body }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ComplianceIntel() {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const scenarioId = searchParams.get('scenarioId');
+  const navigate       = useNavigate();
+  const scenarioId     = searchParams.get('scenarioId');
 
-  const [scenario, setScenario]   = useState(null);
-  const [scenarios, setScenarios] = useState([]);
-  const [search,    setSearch]    = useState('');
-  const [showAll,   setShowAll]   = useState(false);
-  const [loading,   setLoading]   = useState(true);
+  // ─── Decision Record
+  const { reportFindings, savedRecordId, setSavedRecordId } = useDecisionRecord('COMPLIANCE_INTEL', scenarioId);
+  const [recordSaving, setRecordSaving] = useState(false);
+
+  // ─── Scenario state
+  const [scenario,     setScenario]     = useState(null);
+  const [scenarios,    setScenarios]    = useState([]);
+  const [search,       setSearch]       = useState('');
+  const [showAll,      setShowAll]      = useState(false);
+  const [loading,      setLoading]      = useState(true);
   const [borrowerName, setBorrowerName] = useState('');
+  const [activeTab,    setActiveTab]    = useState(0);
 
-  const [activeTab, setActiveTab] = useState(0);
-
-  // Compliance tracking
+  // ─── Compliance tracking
   const [results, setResults] = useState(Object.fromEntries(COMPLIANCE_CHECKS.map(c => [c.id, 'pending'])));
   const [notes,   setNotes]   = useState(Object.fromEntries(COMPLIANCE_CHECKS.map(c => [c.id, ''])));
   const [hmda,    setHmda]    = useState(Object.fromEntries(HMDA_FIELDS.map(f => [f.id, 'pending'])));
 
-  // HPML calculator
+  // ─── HPML calculator
   const [loanApr,    setLoanApr]    = useState('');
   const [aporRate,   setAporRate]   = useState('');
   const [lienType,   setLienType]   = useState('first_conforming');
@@ -156,16 +163,12 @@ export default function ComplianceIntel() {
   const [loanAmount, setLoanAmount] = useState('');
   const [pointsFees, setPointsFees] = useState('');
 
-  // AI
+  // ─── AI
   const [aiAnalysis,  setAiAnalysis]  = useState(null);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [loNotes,     setLoNotes]     = useState('');
 
-  const [loNotes,       setLoNotes]       = useState('');
-  const [recordSaving,  setRecordSaving]  = useState(false);
-  const [savedRecordId, setSavedRecordId] = useState(null);
-  const { reportFindings } = useDecisionRecord(scenarioId);
-
-  // ─── localStorage ────────────────────────────────────────────────────────────
+  // ─── localStorage
   const lsKey = scenarioId ? `lb_compliance_${scenarioId}` : null;
 
   const saveToStorage = useCallback(() => {
@@ -175,13 +178,10 @@ export default function ComplianceIntel() {
 
   useEffect(() => { saveToStorage(); }, [saveToStorage]);
 
-  // ─── Load ─────────────────────────────────────────────────────────────────────
+  // ─── Load
   useEffect(() => {
     if (!scenarioId) {
-      getDocs(collection(db, 'scenarios'))
-        .then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
-        .catch(console.error)
-        .finally(() => setLoading(false));
+      getDocs(collection(db, 'scenarios')).then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(console.error).finally(() => setLoading(false));
       return;
     }
     if (lsKey) {
@@ -216,22 +216,21 @@ export default function ComplianceIntel() {
     }).catch(console.error).finally(() => setLoading(false));
   }, [scenarioId, lsKey]);
 
-  // ─── HPML Calculations ────────────────────────────────────────────────────────
-  const aprSpread     = loanApr && aporRate ? (parseFloat(loanApr) - parseFloat(aporRate)).toFixed(3) : '';
+  // ─── HPML Calculations
+  const aprSpread      = loanApr && aporRate ? (parseFloat(loanApr) - parseFloat(aporRate)).toFixed(3) : '';
   const hpmlThresholds = { first_conforming: 1.5, first_jumbo: 2.5, subordinate: 3.5 };
   const hpmlThreshold  = hpmlThresholds[lienType] || 1.5;
   const isHPML         = aprSpread !== '' && parseFloat(aprSpread) >= hpmlThreshold;
   const isHOEPA_APR    = aprSpread !== '' && parseFloat(aprSpread) >= 6.5;
 
-  // Points & fees cap
-  const loanAmt   = parseFloat(loanAmount) || 0;
-  const pf        = parseFloat(pointsFees) || 0;
-  const pfPct     = loanAmt > 0 ? (pf / loanAmt) * 100 : 0;
-  const pfCapPct  = loanAmt >= 100000 ? 3 : loanAmt >= 60000 ? 3.5 : loanAmt >= 20000 ? 4 : 5;
-  const pfOverCap = pf > 0 && pfPct > pfCapPct;
+  const loanAmt    = parseFloat(loanAmount) || 0;
+  const pf         = parseFloat(pointsFees) || 0;
+  const pfPct      = loanAmt > 0 ? (pf / loanAmt) * 100 : 0;
+  const pfCapPct   = loanAmt >= 100000 ? 3 : loanAmt >= 60000 ? 3.5 : loanAmt >= 20000 ? 4 : 5;
+  const pfOverCap  = pf > 0 && pfPct > pfCapPct;
   const hoepaFeeTest = pf > 0 && pfPct > 5;
 
-  // ─── Score ───────────────────────────────────────────────────────────────────
+  // ─── Score
   const passCount      = Object.values(results).filter(r => r === 'pass').length;
   const failCount      = Object.values(results).filter(r => r === 'fail').length;
   const reviewCount    = Object.values(results).filter(r => r === 'review').length;
@@ -242,21 +241,60 @@ export default function ComplianceIntel() {
   const hmdaCollected  = Object.values(hmda).filter(v => v === 'collected').length;
   const hmdaMissing    = Object.values(hmda).filter(v => v === 'missing').length;
 
-  // ─── AI Analysis ──────────────────────────────────────────────────────────────
+  // ─── NSI — Next Step Intelligence™
+  const { primarySuggestion, logFollow } = useNextStepIntelligence({
+    currentModuleKey:       'COMPLIANCE_INTEL',
+    loanPurpose:            scenario?.loanPurpose || 'PURCHASE',
+    scenarioId,
+    decisionRecordFindings: {
+      COMPLIANCE_INTEL: {
+        complianceScore,
+        failCount,
+        reviewCount,
+        isHPML,
+        isHOEPA_APR,
+        pfOverCap,
+        hmdaMissing,
+        aiRiskLevel: aiAnalysis?.riskLevel || null,
+      },
+    },
+    suggestions: [
+      {
+        moduleKey:           'DISCLOSURE_INTEL',
+        moduleLabel:         'Disclosure Intelligence™',
+        route:               '/disclosure-intel',
+        urgency:             (failCount > 0 || isHPML || isHOEPA_APR) ? 'HIGH' : 'MEDIUM',
+        stage:               4,
+        canSkip:             false,
+        loanPurposeRelevant: true,
+        reason:              failCount > 0
+          ? `Compliance has ${failCount} failed check(s) — document findings in Disclosure Intelligence™ and confirm TRID deadlines before issuing the Loan Estimate.`
+          : isHPML
+          ? 'HPML loan requires mandatory escrow disclosure. Track this deadline in Disclosure Intelligence™ before closing.'
+          : 'Compliance review complete. Proceed to Disclosure Intelligence™ for TRID deadline tracking and final LE/CD compliance.',
+      },
+      {
+        moduleKey:           'DECISION_RECORD',
+        moduleLabel:         'Decision Record',
+        route:               '/decision-records',
+        urgency:             failCount > 0 ? 'HIGH' : 'MEDIUM',
+        stage:               4,
+        canSkip:             true,
+        loanPurposeRelevant: true,
+        reason:              'Save compliance findings to the Decision Record audit trail before submission.',
+      },
+    ],
+  });
+
+  // ─── AI Analysis
   const handleAIAnalysis = async () => {
     setAiAnalyzing(true);
     try {
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
+        headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 1500,
+          model: 'claude-sonnet-4-6', max_tokens: 1500,
           messages: [{
             role: 'user',
             content: `You are a senior mortgage compliance officer and regulatory expert. Review this compliance file and provide an assessment.
@@ -287,15 +325,15 @@ Return ONLY valid JSON (no markdown, no preamble):
         }),
       });
       if (!resp.ok) throw new Error('Status ' + resp.status);
-      const data = await resp.json();
-      const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      const data  = await resp.json();
+      const text  = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
       const match = text.match(/\{[\s\S]*\}/);
       if (match) setAiAnalysis(JSON.parse(match[0]));
     } catch (err) { console.error(err); }
     setAiAnalyzing(false);
   };
 
-  // ─── Decision Record ──────────────────────────────────────────────────────────
+  // ─── Save to Decision Record
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
@@ -323,14 +361,13 @@ Return ONLY valid JSON (no markdown, no preamble):
   };
 
   const TABS = [
-    { id: 0, label: 'HPML Calculator',    icon: '📊' },
-    { id: 1, label: 'Compliance Checks',  icon: '⚖️' },
-    { id: 2, label: 'ATR Factors',        icon: '📄' },
-    { id: 3, label: 'HMDA Data',          icon: '📋' },
-    { id: 4, label: 'AI Assessment',      icon: '🤖' },
+    { id: 0, label: 'HPML Calculator',   icon: '📊' },
+    { id: 1, label: 'Compliance Checks', icon: '⚖️' },
+    { id: 2, label: 'ATR Factors',       icon: '📄' },
+    { id: 3, label: 'HMDA Data',         icon: '📋' },
+    { id: 4, label: 'AI Assessment',     icon: '🤖' },
   ];
 
-  // ─── AI risk level → static class maps (fixes Vite 500 from dynamic Tailwind) ─
   const aiRiskBadge = {
     LOW:      'text-emerald-700 bg-emerald-100 border-emerald-300',
     MEDIUM:   'text-amber-700 bg-amber-100 border-amber-300',
@@ -338,96 +375,79 @@ Return ONLY valid JSON (no markdown, no preamble):
     CRITICAL: 'text-red-900 bg-red-200 border-red-500',
   };
 
-  // ─── Loading ──────────────────────────────────────────────────────────────────
+  // ─── Loading
   if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
       <div className="text-center"><div className="text-5xl mb-4">⚖️</div><div className="text-slate-500">Loading...</div></div>
     </div>
   );
 
-  // ─── Scenario Picker ──────────────────────────────────────────────────────────
+  // ─── Picker Page ──────────────────────────────────────────────────────────
   if (!scenarioId) {
-    const q        = search.toLowerCase().trim();
-    const sorted   = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
-    const filtered = q ? sorted.filter(s => (s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim()).toLowerCase().includes(q)) : sorted;
+    const q         = search.toLowerCase().trim();
+    const sorted    = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
+    const filtered  = q ? sorted.filter(s => (s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim()).toLowerCase().includes(q)) : sorted;
     const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
     const hasMore   = !q && !showAll && filtered.length > 5;
     return (
-      <div className="min-h-screen bg-slate-50">
+      <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
         <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-10">
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">15</div>
+              <div className="w-11 h-11 bg-purple-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-purple-900/40">25</div>
               <div>
-                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 4 — Verification & Submit</span>
-                <h1 className="text-2xl font-bold text-white mt-0.5">Compliance Intelligence™</h1>
+                <span className="text-xs font-bold tracking-widest text-purple-400 uppercase">Stage 4 — Verification &amp; Submit</span>
+                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">Compliance Intelligence™</h1>
               </div>
             </div>
             <p className="text-indigo-300 text-sm leading-relaxed mb-5">Run QM, ATR, HPML, HMDA, and Fair Lending checks before submission. Flag compliance issues early and document your review trail.</p>
             <div className="flex flex-wrap gap-2">
               {['QM Safe Harbor', 'ATR Analysis', 'HPML Detection', 'HMDA Reporting', 'Fair Lending Review', 'Compliance Audit Trail'].map(tag => (
-                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-indigo-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-purple-200 px-3 py-1 rounded-full font-medium">{tag}</span>
               ))}
             </div>
           </div>
         </div>
         <div className="max-w-2xl mx-auto px-6 py-8">
-          <div className="mb-5">
-            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">Select a Scenario</h2>
-            <p className="text-xs text-slate-400">Search by name or pick from your most recent files.</p>
-          </div>
+          <div className="mb-5"><h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">Select a Scenario</h2><p className="text-xs text-slate-400">Search by name or pick from your most recent files.</p></div>
           <div className="relative mb-4">
             <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
             <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
-              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition-all" />
+              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-300 transition-all" />
             {search && <button onClick={() => setSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>}
           </div>
           {scenarios.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
-              <p className="text-3xl mb-3">📂</p>
-              <p className="text-sm font-semibold text-slate-600">No scenarios found</p>
-              <p className="text-xs text-slate-400 mt-1">Create one in Scenario Creator first.</p>
-              <button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline">→ Go to Scenario Creator</button>
-            </div>
+            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm"><p className="text-3xl mb-3">📂</p><p className="text-sm font-semibold text-slate-600">No scenarios found</p><button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-purple-600 hover:text-purple-800 underline">→ Go to Scenario Creator</button></div>
           ) : filtered.length === 0 ? (
-            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
-              <p className="text-2xl mb-2">🔍</p>
-              <p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p>
-              <button onClick={() => setSearch('')} className="mt-2 text-xs text-indigo-500 hover:underline">Clear search</button>
-            </div>
+            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm"><p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p><button onClick={() => setSearch('')} className="mt-2 text-xs text-purple-500 hover:underline">Clear search</button></div>
           ) : (
             <div className="space-y-2.5">
               {!q && !showAll && <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-1">Recently Updated</p>}
               {displayed.map(s => {
-                const sName  = s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || 'Unnamed Scenario';
+                const sName = s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || 'Unnamed Scenario';
                 const amount = parseFloat(s.loanAmount || 0);
                 return (
                   <button key={s.id} onClick={() => navigate('/compliance-intel?scenarioId=' + s.id)}
-                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-indigo-300 hover:shadow-md hover:bg-indigo-50/30 transition-all group">
+                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-purple-300 hover:shadow-md hover:bg-purple-50/30 transition-all group">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-indigo-700 transition-colors">{sName}</div>
+                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-purple-700 transition-colors">{sName}</div>
                         <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                          {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
-                          {s.loanType   && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
-                          {s.creditScore && <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
-                          {s.stage      && <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full font-medium">{s.stage}</span>}
+                          {amount > 0    && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
+                          {s.loanType    && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
+                          {s.creditScore && <span className="text-xs bg-purple-50 text-purple-600 border border-purple-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
                         </div>
                       </div>
-                      <span className="text-slate-300 group-hover:text-indigo-400 text-lg transition-colors shrink-0">→</span>
+                      <span className="text-slate-300 group-hover:text-purple-400 text-lg transition-colors shrink-0">→</span>
                     </div>
                   </button>
                 );
               })}
-              {hasMore && (
-                <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-indigo-500 hover:text-indigo-700 py-3 border border-dashed border-indigo-200 rounded-2xl hover:bg-indigo-50 transition-all">
-                  View all {filtered.length} scenarios
-                </button>
-              )}
-              {showAll && filtered.length > 5 && (
-                <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>
-              )}
+              {hasMore && <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-purple-500 hover:text-purple-700 py-3 border border-dashed border-purple-200 rounded-2xl hover:bg-purple-50 transition-all">View all {filtered.length} scenarios</button>}
+              {showAll && filtered.length > 5 && <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>}
             </div>
           )}
         </div>
@@ -435,29 +455,32 @@ Return ONLY valid JSON (no markdown, no preamble):
     );
   }
 
-  // ─── Main Module ──────────────────────────────────────────────────────────────
+  // ─── Module Page ──────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
-      <DecisionRecordBanner
-        recordId={savedRecordId}
-        moduleName="Compliance Intelligence™"
-        moduleKey="COMPLIANCE_INTEL"
-        onSave={handleSaveToRecord}
-      />
+      {/* 1 — Decision Record Banner */}
+      <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="COMPLIANCE_INTEL" />
+
+      {/* 2 — Module Nav */}
       <ModuleNav moduleNumber={25} />
 
-      {/* Hero */}
+      {/* 3 — Hero */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #7c3aed 0%, transparent 50%), radial-gradient(circle at 80% 20%, #a855f7 0%, transparent 40%)' }} />
         <div className="relative max-w-7xl mx-auto px-6 py-8">
-          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
+          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2 transition-colors">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 25</div>
-              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Compliance Intelligence™</h1>
+              <span className="text-xs font-bold tracking-widest text-purple-400 uppercase">Stage 4 — Verification &amp; Submit</span>
+              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2 mt-0.5">Compliance Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl">QM · ATR · HPML · HOEPA · HMDA · Fair Lending · AI risk assessment</p>
+              <div className="flex flex-wrap gap-2 mt-4">
+                {['QM Safe Harbor', 'ATR Analysis', 'HPML Detection', 'HMDA Reporting', 'Fair Lending'].map(tag => (
+                  <span key={tag} className="text-xs bg-white/10 border border-white/10 text-purple-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+                ))}
+              </div>
             </div>
             <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px', flexShrink: 0 }}>
               {scenario ? (
@@ -491,6 +514,7 @@ Return ONLY valid JSON (no markdown, no preamble):
         </div>
       )}
 
+      {/* 4 — Scenario Header */}
       <ScenarioHeader moduleTitle="Compliance Intelligence™" moduleNumber="25" scenarioId={scenarioId} />
 
       {/* Tab Bar */}
@@ -519,14 +543,13 @@ Return ONLY valid JSON (no markdown, no preamble):
               <>
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="bg-gradient-to-r from-purple-800 to-purple-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">HPML & HOEPA Calculator</h2>
+                    <h2 className="text-xl font-bold text-white">HPML &amp; HOEPA Calculator</h2>
                     <p className="text-purple-200 text-sm mt-1">Enter loan APR and current APOR to auto-calculate spread and determine HPML / HOEPA status</p>
                   </div>
                   <div className="p-8 space-y-6">
                     <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-xs text-blue-800">
                       <strong>📍 Current APOR Rate:</strong> Look up the weekly APOR at <strong>ffiec.cfpb.gov</strong> → Rate Spread Calculator. APOR is published every Thursday for the following week's applications.
                     </div>
-
                     <div className="grid grid-cols-2 gap-5">
                       <div>
                         <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Loan APR (%)</label>
@@ -539,12 +562,10 @@ Return ONLY valid JSON (no markdown, no preamble):
                           className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-purple-400" />
                       </div>
                     </div>
-
                     <div className="grid grid-cols-2 gap-5">
                       <div>
                         <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Lien Type</label>
-                        <select value={lienType} onChange={e => setLienType(e.target.value)}
-                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-purple-400 bg-white">
+                        <select value={lienType} onChange={e => setLienType(e.target.value)} className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-purple-400 bg-white">
                           <option value="first_conforming">1st Lien — Conforming (threshold: 1.5%)</option>
                           <option value="first_jumbo">1st Lien — Jumbo (threshold: 2.5%)</option>
                           <option value="subordinate">Subordinate Lien (threshold: 3.5%)</option>
@@ -552,15 +573,12 @@ Return ONLY valid JSON (no markdown, no preamble):
                       </div>
                       <div>
                         <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Loan Type</label>
-                        <select value={loanType} onChange={e => setLoanType(e.target.value)}
-                          className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-purple-400 bg-white">
+                        <select value={loanType} onChange={e => setLoanType(e.target.value)} className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-purple-400 bg-white">
                           <option value="">Select…</option>
                           {['Conventional', 'FHA', 'VA', 'USDA', 'Jumbo', 'ARM', 'Non-QM'].map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                       </div>
                     </div>
-
-                    {/* HPML Result */}
                     {aprSpread !== '' && (
                       <div className={'rounded-3xl border-2 p-6 ' + (isHPML ? 'border-amber-400 bg-amber-50' : 'border-emerald-400 bg-emerald-50')}>
                         <div className="flex items-center gap-4 mb-4">
@@ -577,13 +595,7 @@ Return ONLY valid JSON (no markdown, no preamble):
                         {isHPML && (
                           <div className="space-y-2">
                             <div className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2">HPML Mandatory Requirements:</div>
-                            {[
-                              'Escrow account required for taxes and insurance (minimum 5 years)',
-                              'Independent written appraisal required (by certified or licensed appraiser)',
-                              'If LTV ≥ 110%: second independent appraisal required at no cost to borrower',
-                              'Prepayment penalty restrictions: cannot exceed 3 years from consummation',
-                              'Pre-loan counseling encouraged (not required but best practice)',
-                            ].map((req, i) => (
+                            {['Escrow account required for taxes and insurance (minimum 5 years)', 'Independent written appraisal required (by certified or licensed appraiser)', 'If LTV ≥ 110%: second independent appraisal required at no cost to borrower', 'Prepayment penalty restrictions: cannot exceed 3 years from consummation', 'Pre-loan counseling encouraged (not required but best practice)'].map((req, i) => (
                               <div key={i} className="flex gap-2 text-xs text-amber-800"><span className="shrink-0 font-bold">{i + 1}.</span><span>{req}</span></div>
                             ))}
                           </div>
@@ -596,10 +608,8 @@ Return ONLY valid JSON (no markdown, no preamble):
                         )}
                       </div>
                     )}
-
-                    {/* Points & Fees QM Test */}
                     <div className="border-t border-slate-200 pt-6">
-                      <div className="text-sm font-bold text-slate-700 mb-4">Points & Fees QM Cap Test</div>
+                      <div className="text-sm font-bold text-slate-700 mb-4">Points &amp; Fees QM Cap Test</div>
                       <div className="grid grid-cols-2 gap-5">
                         <div>
                           <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Loan Amount ($)</label>
@@ -607,7 +617,7 @@ Return ONLY valid JSON (no markdown, no preamble):
                             className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-purple-400" />
                         </div>
                         <div>
-                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Total Points & Fees ($)</label>
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Total Points &amp; Fees ($)</label>
                           <input type="number" value={pointsFees} onChange={e => setPointsFees(e.target.value)} placeholder="12000"
                             className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-purple-400" />
                         </div>
@@ -626,6 +636,7 @@ Return ONLY valid JSON (no markdown, no preamble):
                     </div>
                   </div>
                 </div>
+                {primarySuggestion && <NextStepCard suggestion={primarySuggestion} onFollow={logFollow} />}
               </>
             )}
 
@@ -669,6 +680,7 @@ Return ONLY valid JSON (no markdown, no preamble):
                     </div>
                   </div>
                 ))}
+                {primarySuggestion && <NextStepCard suggestion={primarySuggestion} onFollow={logFollow} />}
               </div>
             )}
 
@@ -759,75 +771,57 @@ Return ONLY valid JSON (no markdown, no preamble):
                       </div>
                     ) : (
                       <div className="space-y-5">
-                        {/* Risk badge — static class lookup, no dynamic Tailwind */}
                         <div className={'inline-flex items-center gap-2 px-4 py-2 rounded-xl border-2 font-black text-sm ' + (aiRiskBadge[aiAnalysis.riskLevel] || aiRiskBadge.MEDIUM)}>
                           {aiAnalysis.riskLevel === 'LOW' ? '✅' : aiAnalysis.riskLevel === 'MEDIUM' ? '⚠️' : '🚨'} Risk: {aiAnalysis.riskLevel}
                           {aiAnalysis.clearanceReady && <span className="ml-2 text-xs bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded-full">Ready for Clearance</span>}
                         </div>
-
                         <p className="text-slate-700 leading-relaxed">{aiAnalysis.summary}</p>
-
-                        {/* Static two-column grid — no dynamic color interpolation */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="rounded-2xl border p-4 bg-red-50 border-red-200">
                             <div className="text-xs font-bold text-red-700 mb-2">🚨 Critical Issues</div>
-                            <ul className="space-y-1">
-                              {(aiAnalysis.criticalIssues || []).map((item, i) => (
-                                <li key={i} className="text-xs text-red-800 flex gap-2"><span className="shrink-0">•</span><span>{item}</span></li>
-                              ))}
-                            </ul>
+                            <ul className="space-y-1">{(aiAnalysis.criticalIssues || []).map((item, i) => <li key={i} className="text-xs text-red-800 flex gap-2"><span className="shrink-0">•</span><span>{item}</span></li>)}</ul>
                           </div>
                           <div className="rounded-2xl border p-4 bg-blue-50 border-blue-200">
                             <div className="text-xs font-bold text-blue-700 mb-2">✅ Action Items</div>
-                            <ul className="space-y-1">
-                              {(aiAnalysis.actionItems || []).map((item, i) => (
-                                <li key={i} className="text-xs text-blue-800 flex gap-2"><span className="shrink-0">•</span><span>{item}</span></li>
-                              ))}
-                            </ul>
+                            <ul className="space-y-1">{(aiAnalysis.actionItems || []).map((item, i) => <li key={i} className="text-xs text-blue-800 flex gap-2"><span className="shrink-0">•</span><span>{item}</span></li>)}</ul>
                           </div>
                         </div>
-
                         {aiAnalysis.hpmlGuidance?.length > 0 && (
                           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
                             <div className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-3">⚠️ HPML-Specific Guidance</div>
-                            {aiAnalysis.hpmlGuidance.map((g, i) => (
-                              <div key={i} className="flex gap-2 text-sm text-amber-800 mb-1.5"><span className="shrink-0">•</span><span>{g}</span></div>
-                            ))}
+                            {aiAnalysis.hpmlGuidance.map((g, i) => <div key={i} className="flex gap-2 text-sm text-amber-800 mb-1.5"><span className="shrink-0">•</span><span>{g}</span></div>)}
                           </div>
                         )}
-
                         {aiAnalysis.regulatoryNotes?.length > 0 && (
                           <div className="bg-purple-50 border border-purple-200 rounded-2xl p-5">
                             <div className="text-xs font-bold text-purple-700 uppercase tracking-wide mb-3">📋 Regulatory Notes</div>
-                            {aiAnalysis.regulatoryNotes.map((n, i) => (
-                              <div key={i} className="flex gap-2 text-sm text-purple-800 mb-1.5"><span className="shrink-0">•</span><span>{n}</span></div>
-                            ))}
+                            {aiAnalysis.regulatoryNotes.map((n, i) => <div key={i} className="flex gap-2 text-sm text-purple-800 mb-1.5"><span className="shrink-0">•</span><span>{n}</span></div>)}
                           </div>
                         )}
-
-                        <button onClick={handleAIAnalysis} disabled={aiAnalyzing} className="text-xs text-purple-600 hover:text-purple-500 font-semibold">
-                          {aiAnalyzing ? 'Re-analyzing...' : '↺ Re-run'}
-                        </button>
+                        <div className="flex items-center gap-4">
+                          <button onClick={handleAIAnalysis} disabled={aiAnalyzing} className="text-xs text-purple-600 hover:text-purple-500 font-semibold">
+                            {aiAnalyzing ? 'Re-analyzing...' : '↺ Re-run'}
+                          </button>
+                          <button onClick={handleSaveToRecord} disabled={recordSaving}
+                            className={'px-5 py-2.5 rounded-xl text-sm font-bold transition-all ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
+                            {recordSaving ? 'Saving…' : savedRecordId ? '✔ Decision Record Saved' : '💾 Save Decision Record'}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
                 </div>
-
-                {/* LO Notes */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">LO Notes</h2>
-                  </div>
+                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5"><h2 className="text-xl font-bold text-white">LO Notes</h2></div>
                   <div className="p-8">
                     <textarea value={loNotes} onChange={e => setLoNotes(e.target.value)} rows={4}
                       placeholder="QM exception documentation, HPML compliance steps taken, fair lending notes, state law overlays..."
                       className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-purple-400 resize-none" />
                   </div>
                 </div>
-
-                {/* Letter */}
                 <LetterCard title="Compliance Summary Letter" icon="⚖️"
                   body={buildComplianceLetter({ borrowerName, loanType, loanApr, aporRate, aprSpread, isHPML, complianceScore, passCount, failCount, reviewCount, results, loNotes, aiSummary: aiAnalysis?.summary })} />
+                {primarySuggestion && <NextStepCard suggestion={primarySuggestion} onFollow={logFollow} />}
               </>
             )}
           </div>
@@ -840,58 +834,42 @@ Return ONLY valid JSON (no markdown, no preamble):
                 <div className={'text-5xl font-black ' + (complianceScore >= 80 ? 'text-emerald-400' : complianceScore >= 50 ? 'text-amber-400' : 'text-red-400')}>{complianceScore}%</div>
                 <div className="text-slate-400 text-sm mt-1">Pass: {passCount} · Fail: {failCount} · Review: {reviewCount} · N/A: {naCount}</div>
                 <div className="mt-3 bg-slate-800 rounded-full h-3 overflow-hidden">
-                  <div className={'h-full rounded-full transition-all ' + (complianceScore >= 80 ? 'bg-emerald-400' : complianceScore >= 50 ? 'bg-amber-400' : 'bg-red-400')}
-                    style={{ width: complianceScore + '%' }} />
+                  <div className={'h-full rounded-full transition-all ' + (complianceScore >= 80 ? 'bg-emerald-400' : complianceScore >= 50 ? 'bg-amber-400' : 'bg-red-400')} style={{ width: complianceScore + '%' }} />
                 </div>
               </div>
-
-              {/* HPML status */}
               {aprSpread !== '' && (
                 <div className={'rounded-2xl border p-3 mb-4 ' + (isHPML ? 'bg-amber-900/30 border-amber-700/50' : 'bg-emerald-900/30 border-emerald-700/50')}>
                   <div className={'text-xs font-bold uppercase mb-0.5 ' + (isHPML ? 'text-amber-400' : 'text-emerald-400')}>HPML Status</div>
                   <div className={'font-black ' + (isHPML ? 'text-amber-300' : 'text-emerald-300')}>{isHPML ? '⚠️ HPML — ' + aprSpread + '% spread' : '✅ Not HPML'}</div>
                 </div>
               )}
-
-              {/* Failed items */}
               {failItems.length > 0 && (
                 <div className="bg-red-900/30 border border-red-700/50 rounded-2xl p-4 mb-4">
                   <div className="text-xs font-bold text-red-400 uppercase mb-2">🚨 Failed Checks</div>
-                  {failItems.map(item => (
-                    <div key={item.id} className="text-xs text-red-300 mb-1 flex gap-1.5"><span className="shrink-0">•</span><span>{item.label}</span></div>
-                  ))}
+                  {failItems.map(item => <div key={item.id} className="text-xs text-red-300 mb-1 flex gap-1.5"><span className="shrink-0">•</span><span>{item.label}</span></div>)}
                 </div>
               )}
-
-              {/* HMDA status */}
               <div className={'rounded-2xl border p-3 ' + (hmdaMissing > 0 ? 'bg-amber-900/30 border-amber-700/50' : 'bg-slate-800 border-slate-700')}>
                 <div className="text-xs text-slate-400 mb-0.5">HMDA Data</div>
                 <div className={'text-sm font-black ' + (hmdaMissing > 0 ? 'text-amber-300' : 'text-slate-300')}>
                   {hmdaCollected}/{HMDA_FIELDS.length} fields collected{hmdaMissing > 0 ? ' · ' + hmdaMissing + ' missing' : ''}
                 </div>
               </div>
-
               {aiAnalysis?.riskLevel && (
                 <div className={'mt-3 rounded-2xl p-3 border text-center ' + (aiAnalysis.riskLevel === 'LOW' ? 'bg-emerald-900/30 border-emerald-700/50' : aiAnalysis.riskLevel === 'MEDIUM' ? 'bg-amber-900/30 border-amber-700/50' : 'bg-red-900/30 border-red-700/50')}>
                   <div className="text-xs font-bold text-slate-400 uppercase mb-0.5">AI Risk Level</div>
                   <div className={'font-black ' + (aiAnalysis.riskLevel === 'LOW' ? 'text-emerald-300' : aiAnalysis.riskLevel === 'MEDIUM' ? 'text-amber-300' : 'text-red-300')}>{aiAnalysis.riskLevel}</div>
                 </div>
               )}
+              <button onClick={handleSaveToRecord} disabled={recordSaving}
+                className={'mt-4 w-full py-2.5 rounded-xl text-xs font-bold transition-all ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-50')}>
+                {recordSaving ? 'Saving…' : savedRecordId ? '✔ Record Saved' : '💾 Save Decision Record'}
+              </button>
             </div>
-
-            {/* Key Rules */}
             <div className="bg-amber-50 border border-amber-200 rounded-3xl p-5">
               <div className="font-bold text-amber-800 text-sm mb-3">⚠️ Key Rules</div>
               <ul className="space-y-2">
-                {[
-                  'HPML (1st conforming): APR ≥ APOR + 1.5% — escrow + appraisal required',
-                  'QM points & fees cap: 3% for loans ≥ $100K (sliding scale for smaller loans)',
-                  'HOEPA fee test: points & fees > 5% = high-cost mortgage',
-                  'ATR: all 8 factors must be documented — cannot rely on stated income',
-                  'Fair lending: pricing exceptions must be documented with risk-based justification',
-                  'HMDA: demographic data must be offered — record even if borrower declines',
-                  'Non-QM loans: no ATR presumption — higher documentation standard',
-                ].map(rule => (
+                {['HPML (1st conforming): APR ≥ APOR + 1.5% — escrow + appraisal required', 'QM points & fees cap: 3% for loans ≥ $100K (sliding scale for smaller loans)', 'HOEPA fee test: points & fees > 5% = high-cost mortgage', 'ATR: all 8 factors must be documented — cannot rely on stated income', 'Fair lending: pricing exceptions must be documented with risk-based justification', 'HMDA: demographic data must be offered — record even if borrower declines', 'Non-QM loans: no ATR presumption — higher documentation standard'].map(rule => (
                   <li key={rule} className="flex gap-2 text-xs text-amber-800"><span className="shrink-0">•</span><span>{rule}</span></li>
                 ))}
               </ul>
@@ -899,7 +877,6 @@ Return ONLY valid JSON (no markdown, no preamble):
           </div>
         </div>
       </div>
-
-</div>
+    </div>
   );
 }

@@ -1,15 +1,19 @@
 // src/pages/FloodIntel.jsx
-// LoanBeacons™ — Module 16 | Stage 4: Verification & Submit
-// Flood Intelligence™ — FEMA flood zone · NFIP · Insurance tracking · Coverage calculator
+// Flood Intelligence™ — Module 24
+// Stage 4 — Verification & Submit
+// Layout: DecisionRecordBanner → ModuleNav → hero → ScenarioHeader
 
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
-import ScenarioHeader from '../components/ScenarioHeader';
 import ModuleNav from '../components/ModuleNav';
+import ScenarioHeader from '../components/ScenarioHeader';
+import NextStepCard from '../components/NextStepCard';
+
 // ─── Data ─────────────────────────────────────────────────────────────────────
 const FLOOD_ZONES = [
   { zone: 'AE',    sfha: true,  risk: 'HIGH',     icon: '🔴', label: 'Zone AE — High Risk (BFE Determined)',      description: 'SFHA with Base Flood Elevation established. Most common high-risk zone. 1% annual chance of flooding. Flood insurance REQUIRED.',  color: 'red' },
@@ -24,16 +28,16 @@ const FLOOD_ZONES = [
 ];
 
 const CHECKLIST = [
-  { id: 'determination_ordered',    label: 'Flood Zone Determination Ordered',          description: 'SFHDF completed by certified determination service (e.g., CoreLogic, First American). Must be standard form.',   required: true,  trigger: 'always' },
-  { id: 'sfha_confirmed',           label: 'SFHA Status Confirmed',                    description: 'Determination confirms whether property is in Special Flood Hazard Area.',                                          required: true,  trigger: 'always' },
-  { id: 'community_participating',  label: 'Community Participates in NFIP',           description: 'Confirm the community participates in NFIP. Lenders cannot require NFIP insurance in non-participating communities.', required: true,  trigger: 'sfha' },
-  { id: 'insurance_ordered',        label: 'Flood Insurance Ordered / In Force',       description: 'If SFHA, flood insurance must be in place at or before closing. Policy effective date must be at or before closing.', required: true,  trigger: 'sfha' },
-  { id: 'coverage_adequate',        label: 'Coverage Amount Adequate',                 description: 'Greater of: loan amount, building replacement cost, or NFIP max ($250k). Does not include land value.',              required: true,  trigger: 'sfha' },
-  { id: 'lender_named',             label: 'Lender Named as Loss Payee',               description: 'Lender and its successors and assigns must be named as mortgagee and loss payee on the flood insurance policy.',       required: true,  trigger: 'sfha' },
-  { id: 'life_of_loan',             label: 'Life-of-Loan Monitoring Flagged',          description: 'Property must be monitored for flood zone remapping for the life of the loan. Flag in servicing system.',             required: true,  trigger: 'always' },
-  { id: 'borrower_notified',        label: 'Flood Hazard Notice Delivered — 10 Days',  description: 'Borrower must be notified of SFHA status and insurance requirement at least 10 business days before closing.',        required: true,  trigger: 'sfha' },
-  { id: 'elevation_cert',           label: 'Elevation Certificate (LOMA/LOMR)',        description: 'If disputing flood zone placement, LOMA or LOMR from FEMA must be obtained and reviewed.',                           required: false, trigger: 'dispute' },
-  { id: 'private_approved',         label: 'Private Flood Policy Meets Requirements',  description: 'If using private flood insurance, policy must be at least as broad as NFIP. Verify lender accepts private flood.',    required: false, trigger: 'private' },
+  { id: 'determination_ordered',   label: 'Flood Zone Determination Ordered',         description: 'SFHDF completed by certified determination service (e.g., CoreLogic, First American). Must be standard form.',    required: true,  trigger: 'always' },
+  { id: 'sfha_confirmed',          label: 'SFHA Status Confirmed',                    description: 'Determination confirms whether property is in Special Flood Hazard Area.',                                           required: true,  trigger: 'always' },
+  { id: 'community_participating', label: 'Community Participates in NFIP',           description: 'Confirm the community participates in NFIP. Lenders cannot require NFIP insurance in non-participating communities.', required: true,  trigger: 'sfha' },
+  { id: 'insurance_ordered',       label: 'Flood Insurance Ordered / In Force',       description: 'If SFHA, flood insurance must be in place at or before closing. Policy effective date must be at or before closing.', required: true,  trigger: 'sfha' },
+  { id: 'coverage_adequate',       label: 'Coverage Amount Adequate',                 description: 'Greater of: loan amount, building replacement cost, or NFIP max ($250k). Does not include land value.',              required: true,  trigger: 'sfha' },
+  { id: 'lender_named',            label: 'Lender Named as Loss Payee',               description: 'Lender and its successors and assigns must be named as mortgagee and loss payee on the flood insurance policy.',       required: true,  trigger: 'sfha' },
+  { id: 'life_of_loan',            label: 'Life-of-Loan Monitoring Flagged',          description: 'Property must be monitored for flood zone remapping for the life of the loan. Flag in servicing system.',             required: true,  trigger: 'always' },
+  { id: 'borrower_notified',       label: 'Flood Hazard Notice Delivered — 10 Days',  description: 'Borrower must be notified of SFHA status and insurance requirement at least 10 business days before closing.',        required: true,  trigger: 'sfha' },
+  { id: 'elevation_cert',          label: 'Elevation Certificate (LOMA/LOMR)',        description: 'If disputing flood zone placement, LOMA or LOMR from FEMA must be obtained and reviewed.',                           required: false, trigger: 'dispute' },
+  { id: 'private_approved',        label: 'Private Flood Policy Meets Requirements',  description: 'If using private flood insurance, policy must be at least as broad as NFIP. Verify lender accepts private flood.',    required: false, trigger: 'private' },
 ];
 
 const NFIP_MAX = { building: 250000, contents: 100000 };
@@ -42,14 +46,14 @@ const fmt0 = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency
 const fmtD = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(n || 0);
 
 const BORDER_COLOR = { red: 'border-red-300', orange: 'border-orange-300', amber: 'border-amber-300', emerald: 'border-emerald-300', slate: 'border-slate-300' };
-const BG_COLOR    = { red: 'bg-red-50', orange: 'bg-orange-50', amber: 'bg-amber-50', emerald: 'bg-emerald-50', slate: 'bg-slate-50' };
-const TEXT_COLOR  = { red: 'text-red-700', orange: 'text-orange-700', amber: 'text-amber-700', emerald: 'text-emerald-700', slate: 'text-slate-600' };
+const BG_COLOR     = { red: 'bg-red-50', orange: 'bg-orange-50', amber: 'bg-amber-50', emerald: 'bg-emerald-50', slate: 'bg-slate-50' };
+const TEXT_COLOR   = { red: 'text-red-700', orange: 'text-orange-700', amber: 'text-amber-700', emerald: 'text-emerald-700', slate: 'text-slate-600' };
 
 // ─── Letter Builder ───────────────────────────────────────────────────────────
 function buildFloodLetter({ borrowerName, propertyAddress, selectedZone, isSFHA, buildingCoverage, annualPremium, policyNumber, insuranceCarrier, minCoverage, loNotes, aiSummary }) {
-  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const today  = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const zoneObj = FLOOD_ZONES.find(z => z.zone === selectedZone);
-  const lines = [];
+  const lines  = [];
   lines.push(today); lines.push('');
   lines.push('To: Mortgage Underwriter / Processor / Compliance Officer');
   lines.push('From: George Jules Chevalier IV, NMLS #1175947 — Clearview Lending Solutions');
@@ -65,10 +69,10 @@ function buildFloodLetter({ borrowerName, propertyAddress, selectedZone, isSFHA,
     lines.push('Minimum required coverage: ' + fmt0(minCoverage));
     if (buildingCoverage) lines.push('Building coverage in place: ' + fmt0(parseFloat(buildingCoverage)));
     if (insuranceCarrier) lines.push('Insurance carrier: ' + insuranceCarrier);
-    if (policyNumber)    lines.push('Policy number: ' + policyNumber);
-    if (annualPremium)   lines.push('Annual premium: ' + fmtD(parseFloat(annualPremium)));
+    if (policyNumber)     lines.push('Policy number: ' + policyNumber);
+    if (annualPremium)    lines.push('Annual premium: ' + fmtD(parseFloat(annualPremium)));
   } else {
-    lines.push('Flood insurance is NOT federally required for this property. It is strongly recommended for Zone X (Shaded) properties and Zone D (undetermined risk) properties.');
+    lines.push('Flood insurance is NOT federally required for this property. It is strongly recommended for Zone X (Shaded) and Zone D (undetermined risk) properties.');
   }
   if (aiSummary) { lines.push(''); lines.push('AI FLOOD RISK ASSESSMENT'); lines.push(aiSummary); }
   lines.push(''); lines.push('REGULATORY REQUIREMENTS (if SFHA)');
@@ -102,60 +106,56 @@ function LetterCard({ body }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function FloodIntel() {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const scenarioId = searchParams.get('scenarioId');
+  const navigate       = useNavigate();
+  const scenarioId     = searchParams.get('scenarioId');
 
-  const [scenario, setScenario]   = useState(null);
-  const [scenarios, setScenarios] = useState([]);
-  const [search,   setSearch]   = useState('');
-  const [showAll,  setShowAll]  = useState(false);
-  const [loading, setLoading]     = useState(true);
-  const [borrowerName, setBorrowerName] = useState('');
-  const [propertyAddress, setPropertyAddress] = useState('');
+  // ─── Scenario state
+  const [scenario,         setScenario]         = useState(null);
+  const [scenarios,        setScenarios]        = useState([]);
+  const [search,           setSearch]           = useState('');
+  const [showAll,          setShowAll]          = useState(false);
+  const [loading,          setLoading]          = useState(true);
+  const [borrowerName,     setBorrowerName]     = useState('');
+  const [propertyAddress,  setPropertyAddress]  = useState('');
+  const [activeTab,        setActiveTab]        = useState(0);
 
-  const [activeTab, setActiveTab] = useState(0);
-
-  // Zone
-  const [selectedZone, setSelectedZone]           = useState('');
-  const [mapNumber, setMapNumber]                 = useState('');
-  const [mapDate, setMapDate]                     = useState('');
-  const [panelNumber, setPanelNumber]             = useState('');
-  const [determinationDate, setDeterminationDate] = useState('');
+  // ─── Zone state
+  const [selectedZone,          setSelectedZone]          = useState('');
+  const [mapNumber,             setMapNumber]             = useState('');
+  const [mapDate,               setMapDate]               = useState('');
+  const [panelNumber,           setPanelNumber]           = useState('');
+  const [determinationDate,     setDeterminationDate]     = useState('');
   const [determinationProvider, setDeterminationProvider] = useState('');
   const [communityParticipates, setCommunityParticipates] = useState(null);
 
-  // Insurance
-  const [insuranceType, setInsuranceType]         = useState('nfip_building');
-  const [insuranceCarrier, setInsuranceCarrier]   = useState('');
-  const [buildingCoverage, setBuildingCoverage]   = useState('');
-  const [contentsCoverage, setContentsCoverage]   = useState('');
-  const [annualPremium, setAnnualPremium]         = useState('');
-  const [policyNumber, setPolicyNumber]           = useState('');
-  const [policyEffective, setPolicyEffective]     = useState('');
-  const [policyExpiration, setPolicyExpiration]   = useState('');
+  // ─── Insurance state
+  const [insuranceType,    setInsuranceType]    = useState('nfip_building');
+  const [insuranceCarrier, setInsuranceCarrier] = useState('');
+  const [buildingCoverage, setBuildingCoverage] = useState('');
+  const [contentsCoverage, setContentsCoverage] = useState('');
+  const [annualPremium,    setAnnualPremium]    = useState('');
+  const [policyNumber,     setPolicyNumber]     = useState('');
+  const [policyEffective,  setPolicyEffective]  = useState('');
+  const [policyExpiration, setPolicyExpiration] = useState('');
 
-  // Loan
-  const [loanAmount, setLoanAmount]         = useState('');
+  // ─── Loan state
+  const [loanAmount,     setLoanAmount]     = useState('');
   const [replacementCost, setReplacementCost] = useState('');
 
-  // Checklist
-  const [checkStatuses, setCheckStatuses] = useState(
-    Object.fromEntries(CHECKLIST.map(c => [c.id, 'pending']))
-  );
-  const [checkNotes, setCheckNotes] = useState(
-    Object.fromEntries(CHECKLIST.map(c => [c.id, '']))
-  );
+  // ─── Checklist state
+  const [checkStatuses, setCheckStatuses] = useState(Object.fromEntries(CHECKLIST.map(c => [c.id, 'pending'])));
+  const [checkNotes,    setCheckNotes]    = useState(Object.fromEntries(CHECKLIST.map(c => [c.id, ''])));
 
-  // AI
-  const [aiAnalysis, setAiAnalysis]   = useState(null);
+  // ─── AI
+  const [aiAnalysis,  setAiAnalysis]  = useState(null);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [loNotes,     setLoNotes]     = useState('');
 
-  const [loNotes, setLoNotes] = useState('');
-  const [recordSaving, setRecordSaving]   = useState(false);
-  const [savedRecordId, setSavedRecordId] = useState(null);
-  const { reportFindings } = useDecisionRecord(scenarioId);
+  // ─── Decision Record
+  const { reportFindings, savedRecordId, setSavedRecordId } = useDecisionRecord('FLOOD_INTEL', scenarioId);
+  const [recordSaving, setRecordSaving] = useState(false);
 
-  // ─── localStorage ──────────────────────────────────────────────────────────
+  // ─── localStorage
   const lsKey = scenarioId ? `lb_flood_${scenarioId}` : null;
 
   const saveToStorage = useCallback(() => {
@@ -171,7 +171,7 @@ export default function FloodIntel() {
 
   useEffect(() => { saveToStorage(); }, [saveToStorage]);
 
-  // ─── Load ───────────────────────────────────────────────────────────────────
+  // ─── Load
   useEffect(() => {
     if (!scenarioId) {
       getDocs(collection(db, 'scenarios')).then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(console.error).finally(() => setLoading(false));
@@ -181,28 +181,28 @@ export default function FloodIntel() {
       try {
         const saved = JSON.parse(localStorage.getItem(lsKey) || 'null');
         if (saved) {
-          if (saved.selectedZone)        setSelectedZone(saved.selectedZone);
-          if (saved.mapNumber)           setMapNumber(saved.mapNumber);
-          if (saved.mapDate)             setMapDate(saved.mapDate);
-          if (saved.panelNumber)         setPanelNumber(saved.panelNumber);
-          if (saved.determinationDate)   setDeterminationDate(saved.determinationDate);
+          if (saved.selectedZone)          setSelectedZone(saved.selectedZone);
+          if (saved.mapNumber)             setMapNumber(saved.mapNumber);
+          if (saved.mapDate)               setMapDate(saved.mapDate);
+          if (saved.panelNumber)           setPanelNumber(saved.panelNumber);
+          if (saved.determinationDate)     setDeterminationDate(saved.determinationDate);
           if (saved.determinationProvider) setDeterminationProvider(saved.determinationProvider);
           if (saved.communityParticipates !== undefined) setCommunityParticipates(saved.communityParticipates);
-          if (saved.insuranceType)       setInsuranceType(saved.insuranceType);
-          if (saved.insuranceCarrier)    setInsuranceCarrier(saved.insuranceCarrier);
-          if (saved.buildingCoverage)    setBuildingCoverage(saved.buildingCoverage);
-          if (saved.contentsCoverage)    setContentsCoverage(saved.contentsCoverage);
-          if (saved.annualPremium)       setAnnualPremium(saved.annualPremium);
-          if (saved.policyNumber)        setPolicyNumber(saved.policyNumber);
-          if (saved.policyEffective)     setPolicyEffective(saved.policyEffective);
-          if (saved.policyExpiration)    setPolicyExpiration(saved.policyExpiration);
-          if (saved.loanAmount)          setLoanAmount(saved.loanAmount);
-          if (saved.replacementCost)     setReplacementCost(saved.replacementCost);
-          if (saved.checkStatuses)       setCheckStatuses(saved.checkStatuses);
-          if (saved.checkNotes)          setCheckNotes(saved.checkNotes);
-          if (saved.loNotes)             setLoNotes(saved.loNotes);
-          if (saved.aiAnalysis)          setAiAnalysis(saved.aiAnalysis);
-          if (saved.savedRecordId)       setSavedRecordId(saved.savedRecordId);
+          if (saved.insuranceType)         setInsuranceType(saved.insuranceType);
+          if (saved.insuranceCarrier)      setInsuranceCarrier(saved.insuranceCarrier);
+          if (saved.buildingCoverage)      setBuildingCoverage(saved.buildingCoverage);
+          if (saved.contentsCoverage)      setContentsCoverage(saved.contentsCoverage);
+          if (saved.annualPremium)         setAnnualPremium(saved.annualPremium);
+          if (saved.policyNumber)          setPolicyNumber(saved.policyNumber);
+          if (saved.policyEffective)       setPolicyEffective(saved.policyEffective);
+          if (saved.policyExpiration)      setPolicyExpiration(saved.policyExpiration);
+          if (saved.loanAmount)            setLoanAmount(saved.loanAmount);
+          if (saved.replacementCost)       setReplacementCost(saved.replacementCost);
+          if (saved.checkStatuses)         setCheckStatuses(saved.checkStatuses);
+          if (saved.checkNotes)            setCheckNotes(saved.checkNotes);
+          if (saved.loNotes)               setLoNotes(saved.loNotes);
+          if (saved.aiAnalysis)            setAiAnalysis(saved.aiAnalysis);
+          if (saved.savedRecordId)         setSavedRecordId(saved.savedRecordId);
         }
       } catch (_) {}
     }
@@ -220,22 +220,67 @@ export default function FloodIntel() {
     }).catch(console.error).finally(() => setLoading(false));
   }, [scenarioId, lsKey]);
 
-  // ─── Derived ────────────────────────────────────────────────────────────────
-  const zoneObj    = FLOOD_ZONES.find(z => z.zone === selectedZone);
-  const isSFHA     = zoneObj?.sfha || false;
-  const loanAmt    = parseFloat(loanAmount) || 0;
-  const replCost   = parseFloat(replacementCost) || 0;
-  const bldgCov    = parseFloat(buildingCoverage) || 0;
+  // ─── Derived values
+  const zoneObj     = FLOOD_ZONES.find(z => z.zone === selectedZone);
+  const isSFHA      = zoneObj?.sfha || false;
+  const loanAmt     = parseFloat(loanAmount) || 0;
+  const replCost    = parseFloat(replacementCost) || 0;
+  const bldgCov     = parseFloat(buildingCoverage) || 0;
   const minCoverage = isSFHA ? Math.min(Math.max(loanAmt, replCost), NFIP_MAX.building) : 0;
   const coverageGap = isSFHA && minCoverage > 0 && bldgCov > 0 ? Math.max(0, minCoverage - bldgCov) : 0;
   const coverageOK  = isSFHA ? (bldgCov >= minCoverage && minCoverage > 0) : true;
 
-  // Checklist progress
   const completedChecks = Object.values(checkStatuses).filter(s => s === 'complete').length;
   const issueChecks     = Object.values(checkStatuses).filter(s => s === 'issue').length;
-  const totalRelevant   = isSFHA ? CHECKLIST.length : CHECKLIST.filter(c => c.trigger === 'always').length;
 
-  // ─── AI Analysis ────────────────────────────────────────────────────────────
+  const riskColor = { LOW: 'text-emerald-700 bg-emerald-100 border-emerald-300', MEDIUM: 'text-amber-700 bg-amber-100 border-amber-300', HIGH: 'text-red-700 bg-red-100 border-red-300', CRITICAL: 'text-red-900 bg-red-200 border-red-500' };
+
+  // ─── NSI — Next Step Intelligence™
+  const { primarySuggestion, logFollow } = useNextStepIntelligence({
+    currentModuleKey:       'FLOOD_INTEL',
+    loanPurpose:            scenario?.loanPurpose || 'PURCHASE',
+    scenarioId,
+    decisionRecordFindings: {
+      FLOOD_INTEL: {
+        isSFHA,
+        selectedZone:    selectedZone || null,
+        coverageOK,
+        coverageGap,
+        issueChecks,
+        completedChecks,
+        aiRiskLevel:     aiAnalysis?.riskLevel || null,
+        readyToClose:    aiAnalysis?.readyToClose || null,
+      },
+    },
+    suggestions: [
+      {
+        moduleKey:           'COMPLIANCE_INTEL',
+        moduleLabel:         'Compliance Intelligence™',
+        route:               '/compliance-intel',
+        urgency:             isSFHA ? 'HIGH' : 'MEDIUM',
+        stage:               4,
+        canSkip:             false,
+        loanPurposeRelevant: true,
+        reason:              isSFHA
+          ? 'Property is in SFHA — flood insurance requirement triggers HPML escrow rules. Run Compliance Intelligence™ to verify escrow and HPML thresholds.'
+          : 'Flood determination complete. Proceed to Compliance Intelligence™ for QM/ATR and HPML review before disclosures.',
+      },
+      {
+        moduleKey:           'DISCLOSURE_INTEL',
+        moduleLabel:         'Disclosure Intelligence™',
+        route:               '/disclosure-intel',
+        urgency:             isSFHA ? 'HIGH' : 'LOW',
+        stage:               4,
+        canSkip:             true,
+        loanPurposeRelevant: true,
+        reason:              isSFHA
+          ? 'SFHA requires 10-business-day flood hazard notice before closing. Track this TRID deadline in Disclosure Intelligence™.'
+          : 'Flood review complete. Proceed to Disclosure Intelligence™ for final TRID deadline management.',
+      },
+    ],
+  });
+
+  // ─── AI Analysis
   const handleAIAnalysis = async () => {
     if (!selectedZone) return;
     setAiAnalyzing(true);
@@ -244,7 +289,7 @@ export default function FloodIntel() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514', max_tokens: 1000,
+          model: 'claude-sonnet-4-6', max_tokens: 1000,
           messages: [{ role: 'user', content: `You are a senior mortgage compliance officer specializing in flood insurance requirements. Analyze this flood file.
 
 FLOOD DETERMINATION:
@@ -268,31 +313,31 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
         }),
       });
       if (!resp.ok) throw new Error('Status ' + resp.status);
-      const data = await resp.json();
-      const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      const data  = await resp.json();
+      const text  = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
       const match = text.match(/\{[\s\S]*\}/);
       if (match) setAiAnalysis(JSON.parse(match[0]));
     } catch (err) { console.error(err); }
     setAiAnalyzing(false);
   };
 
-  // ─── Decision Record ─────────────────────────────────────────────────────────
+  // ─── Save to Decision Record
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
       const flags = [];
-      if (isSFHA && !bldgCov) flags.push({ flagCode: 'NO_FLOOD_INSURANCE', sourceModule: 'FLOOD_INTEL', severity: 'HIGH',   detail: 'SFHA property — no flood insurance entered' });
-      if (coverageGap > 0)   flags.push({ flagCode: 'COVERAGE_GAP',        sourceModule: 'FLOOD_INTEL', severity: 'HIGH',   detail: 'Coverage gap: ' + fmt0(coverageGap) + ' below minimum required' });
-      if (issueChecks > 0)   flags.push({ flagCode: 'CHECKLIST_ISSUES',    sourceModule: 'FLOOD_INTEL', severity: 'MEDIUM', detail: issueChecks + ' checklist item(s) flagged as issues' });
+      if (isSFHA && !bldgCov)  flags.push({ flagCode: 'NO_FLOOD_INSURANCE', sourceModule: 'FLOOD_INTEL', severity: 'HIGH',   detail: 'SFHA property — no flood insurance entered' });
+      if (coverageGap > 0)     flags.push({ flagCode: 'COVERAGE_GAP',       sourceModule: 'FLOOD_INTEL', severity: 'HIGH',   detail: 'Coverage gap: ' + fmt0(coverageGap) + ' below minimum required' });
+      if (issueChecks > 0)     flags.push({ flagCode: 'CHECKLIST_ISSUES',   sourceModule: 'FLOOD_INTEL', severity: 'MEDIUM', detail: issueChecks + ' checklist item(s) flagged as issues' });
       const writtenId = await reportFindings(
         'FLOOD_INTEL',
         {
-          verdict: !isSFHA ? 'No SFHA — Flood insurance not required' : coverageOK && issueChecks === 0 ? 'SFHA — Insurance in place and adequate' : 'SFHA — Action required',
-          summary: `Flood Intelligence — Zone ${selectedZone || 'Not entered'} · SFHA: ${isSFHA ? 'Yes' : 'No'} · Min required: ${fmt0(minCoverage)} · Building coverage: ${fmt0(bldgCov)} · Checklist: ${completedChecks}/${CHECKLIST.length} complete`,
+          verdict:        !isSFHA ? 'No SFHA — Flood insurance not required' : coverageOK && issueChecks === 0 ? 'SFHA — Insurance in place and adequate' : 'SFHA — Action required',
+          summary:        `Flood Intelligence — Zone ${selectedZone || 'Not entered'} · SFHA: ${isSFHA ? 'Yes' : 'No'} · Min required: ${fmt0(minCoverage)} · Building coverage: ${fmt0(bldgCov)} · Checklist: ${completedChecks}/${CHECKLIST.length} complete`,
           selectedZone, isSFHA, mapNumber, mapDate, determinationDate,
-          loanAmount: loanAmt, replacementCost: replCost, buildingCoverage: bldgCov,
+          loanAmount:     loanAmt, replacementCost: replCost, buildingCoverage: bldgCov,
           minCoverage, coverageGap, insuranceType, insuranceCarrier, policyNumber,
-          annualPremium: parseFloat(annualPremium) || null, checkStatuses, loNotes,
+          annualPremium:  parseFloat(annualPremium) || null, checkStatuses, loNotes,
         },
         [],
         flags,
@@ -304,42 +349,44 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
   };
 
   const TABS = [
-    { id: 0, label: 'Zone Determination', icon: '🗺️' },
-    { id: 1, label: 'Insurance Tracking', icon: '🛡️' },
+    { id: 0, label: 'Zone Determination',  icon: '🗺️' },
+    { id: 1, label: 'Insurance Tracking',  icon: '🛡️' },
     { id: 2, label: 'Compliance Checklist', icon: '📋' },
-    { id: 3, label: 'AI Assessment', icon: '🤖' },
+    { id: 3, label: 'AI Assessment',        icon: '🤖' },
   ];
 
-  const riskColor = { LOW: 'text-emerald-700 bg-emerald-100 border-emerald-300', MEDIUM: 'text-amber-700 bg-amber-100 border-amber-300', HIGH: 'text-red-700 bg-red-100 border-red-300', CRITICAL: 'text-red-900 bg-red-200 border-red-500' };
-
+  // ─── Loading
   if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
       <div className="text-center"><div className="text-5xl mb-4">🌊</div><div className="text-slate-500">Loading...</div></div>
     </div>
   );
 
+  // ─── Picker Page ──────────────────────────────────────────────────────────
   if (!scenarioId) {
-    const q = search.toLowerCase().trim();
-    const sorted = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
-    const filtered = q ? sorted.filter(s => (s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim()).toLowerCase().includes(q)) : sorted;
+    const q         = search.toLowerCase().trim();
+    const sorted    = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
+    const filtered  = q ? sorted.filter(s => (s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim()).toLowerCase().includes(q)) : sorted;
     const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
-    const hasMore = !q && !showAll && filtered.length > 5;
+    const hasMore   = !q && !showAll && filtered.length > 5;
     return (
-      <div className="min-h-screen bg-slate-50">
+      <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
         <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-10">
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">24</div>
+              <div className="w-11 h-11 bg-cyan-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-cyan-900/40">26</div>
               <div>
-                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 4 — Verification &amp; Submit</span>
+                <span className="text-xs font-bold tracking-widest text-cyan-400 uppercase">Stage 4 — Verification &amp; Submit</span>
                 <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">Flood Intelligence™</h1>
               </div>
             </div>
             <p className="text-indigo-300 text-sm leading-relaxed mb-5">Determine FEMA flood zone status, calculate NFIP coverage requirements, track insurance policies, and generate borrower flood disclosure letters.</p>
             <div className="flex flex-wrap gap-2">
               {['FEMA Zone Lookup', 'NFIP Coverage Calc', 'Insurance Tracking', 'Flood Cert Review', 'Borrower Disclosure Letter', 'Elevation Certificate'].map(tag => (
-                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-indigo-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-cyan-200 px-3 py-1 rounded-full font-medium">{tag}</span>
               ))}
             </div>
           </div>
@@ -352,54 +399,38 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
           <div className="relative mb-4">
             <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
             <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
-              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition-all" />
+              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-cyan-300 transition-all" />
             {search && <button onClick={() => setSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>}
           </div>
           {scenarios.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
-              <p className="text-3xl mb-3">📂</p>
-              <p className="text-sm font-semibold text-slate-600">No scenarios found</p>
-              <p className="text-xs text-slate-400 mt-1">Create one in Scenario Creator first.</p>
-              <button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline">→ Go to Scenario Creator</button>
-            </div>
+            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm"><p className="text-3xl mb-3">📂</p><p className="text-sm font-semibold text-slate-600">No scenarios found</p><button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-cyan-600 hover:text-cyan-800 underline">→ Go to Scenario Creator</button></div>
           ) : filtered.length === 0 ? (
-            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
-              <p className="text-2xl mb-2">🔍</p>
-              <p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p>
-              <button onClick={() => setSearch('')} className="mt-2 text-xs text-indigo-500 hover:underline">Clear search</button>
-            </div>
+            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm"><p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p><button onClick={() => setSearch('')} className="mt-2 text-xs text-cyan-500 hover:underline">Clear search</button></div>
           ) : (
             <div className="space-y-2.5">
               {!q && !showAll && <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-1">Recently Updated</p>}
               {displayed.map(s => {
-                const sName = s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim() || 'Unnamed Scenario';
+                const sName  = s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim() || 'Unnamed Scenario';
                 const amount = parseFloat(s.loanAmount || 0);
                 return (
                   <button key={s.id} onClick={() => navigate('/flood-intel?scenarioId=' + s.id)}
-                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-indigo-300 hover:shadow-md hover:bg-indigo-50/30 transition-all group">
+                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-cyan-300 hover:shadow-md hover:bg-cyan-50/30 transition-all group">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-indigo-700 transition-colors">{sName}</div>
+                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-cyan-700 transition-colors">{sName}</div>
                         <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                          {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
-                          {s.loanType && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
-                          {s.creditScore && <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
-                          {s.stage && <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full font-medium">{s.stage}</span>}
+                          {amount > 0    && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
+                          {s.loanType    && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
+                          {s.creditScore && <span className="text-xs bg-cyan-50 text-cyan-600 border border-cyan-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
                         </div>
                       </div>
-                      <span className="text-slate-300 group-hover:text-indigo-400 text-lg transition-colors shrink-0">→</span>
+                      <span className="text-slate-300 group-hover:text-cyan-400 text-lg transition-colors shrink-0">→</span>
                     </div>
                   </button>
                 );
               })}
-              {hasMore && (
-                <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-indigo-500 hover:text-indigo-700 py-3 border border-dashed border-indigo-200 rounded-2xl hover:bg-indigo-50 transition-all">
-                  View all {filtered.length} scenarios
-                </button>
-              )}
-              {showAll && filtered.length > 5 && (
-                <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>
-              )}
+              {hasMore && <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-cyan-500 hover:text-cyan-700 py-3 border border-dashed border-cyan-200 rounded-2xl hover:bg-cyan-50 transition-all">View all {filtered.length} scenarios</button>}
+              {showAll && filtered.length > 5 && <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>}
             </div>
           )}
         </div>
@@ -407,28 +438,32 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
     );
   }
 
+  // ─── Module Page ──────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
-      <DecisionRecordBanner
-        recordId={savedRecordId}
-        moduleName="Flood Intelligence™"
-        moduleKey="FLOOD_INTEL"
-        onSave={handleSaveToRecord}
-      />
-      <ModuleNav moduleNumber={24} />
+      {/* 1 — Decision Record Banner */}
+      <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="FLOOD_INTEL" />
 
-      {/* Hero */}
+      {/* 2 — Module Nav */}
+      <ModuleNav moduleNumber={26} />
+
+      {/* 3 — Hero */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #0891b2 0%, transparent 50%), radial-gradient(circle at 80% 20%, #0e7490 0%, transparent 40%)' }} />
         <div className="relative max-w-7xl mx-auto px-6 py-8">
-          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
+          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2 transition-colors">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 24</div>
-              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Flood Intelligence™</h1>
+              <span className="text-xs font-bold tracking-widest text-cyan-400 uppercase">Stage 4 — Verification &amp; Submit</span>
+              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2 mt-0.5">Flood Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl">FEMA flood zone · NFIP requirements · Insurance tracking · Coverage calculator · AI risk assessment</p>
+              <div className="flex flex-wrap gap-2 mt-4">
+                {['FEMA Zone Lookup', 'NFIP Coverage Calc', 'Insurance Tracking', 'Borrower Disclosure Letter'].map(tag => (
+                  <span key={tag} className="text-xs bg-white/10 border border-white/10 text-cyan-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+                ))}
+              </div>
             </div>
             <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px', flexShrink: 0 }}>
               {scenario ? (
@@ -441,6 +476,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
                       {isSFHA ? '⚠️ SFHA — Zone ' + selectedZone : '✓ Zone ' + selectedZone + ' — Not SFHA'}
                     </div>
                   ) : <div className="text-amber-400 text-sm mt-1">Zone not selected</div>}
+                  <button onClick={() => navigate('/flood-intel')} className="text-xs text-cyan-400 hover:text-cyan-300 mt-2 block transition-colors">Change scenario →</button>
                 </>
               ) : <div className="text-slate-400 text-sm">No scenario loaded</div>}
             </div>
@@ -456,14 +492,15 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
             {propertyAddress && <span className="text-blue-200 text-xs">{propertyAddress}</span>}
             <div className="flex flex-wrap gap-x-4 text-xs text-blue-200">
               {selectedZone && <span>Zone <strong className="text-white">{selectedZone}</strong></span>}
-              {isSFHA && <span className="text-red-300 font-bold">⚠️ Insurance Required</span>}
-              {bldgCov > 0 && <span>Coverage <strong className="text-white">{fmt0(bldgCov)}</strong></span>}
+              {isSFHA       && <span className="text-red-300 font-bold">⚠️ Insurance Required</span>}
+              {bldgCov > 0  && <span>Coverage <strong className="text-white">{fmt0(bldgCov)}</strong></span>}
             </div>
           </div>
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Flood Intelligence™" moduleNumber="24" scenarioId={scenarioId} />
+      {/* 4 — Scenario Header */}
+      <ScenarioHeader moduleTitle="Flood Intelligence™" moduleNumber="26" scenarioId={scenarioId} />
 
       {/* Tab Bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
@@ -489,7 +526,6 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
             {/* ─── TAB 0: ZONE DETERMINATION ───────────────────────────────── */}
             {activeTab === 0 && (
               <>
-                {/* Zone selector */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
                     <h2 className="text-xl font-bold text-white">FEMA Flood Zone Selection</h2>
@@ -535,7 +571,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
                   </div>
                 </div>
 
-                {/* Determination details */}
+                {/* Determination Details */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
                     <h2 className="text-xl font-bold text-white">Determination Details</h2>
@@ -543,10 +579,10 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
                   </div>
                   <div className="p-8 grid grid-cols-2 gap-5">
                     {[
-                      { label: 'FEMA Map Number (FIRM)', val: mapNumber, set: setMapNumber, ph: '13097C0802E' },
-                      { label: 'Map Date', val: mapDate, set: setMapDate, ph: '', type: 'date' },
-                      { label: 'Panel Number', val: panelNumber, set: setPanelNumber, ph: '0802E' },
-                      { label: 'Determination Date', val: determinationDate, set: setDeterminationDate, ph: '', type: 'date' },
+                      { label: 'FEMA Map Number (FIRM)', val: mapNumber,             set: setMapNumber,             ph: '13097C0802E' },
+                      { label: 'Map Date',               val: mapDate,               set: setMapDate,               ph: '', type: 'date' },
+                      { label: 'Panel Number',           val: panelNumber,           set: setPanelNumber,           ph: '0802E' },
+                      { label: 'Determination Date',     val: determinationDate,     set: setDeterminationDate,     ph: '', type: 'date' },
                       { label: 'Determination Provider', val: determinationProvider, set: setDeterminationProvider, ph: 'CoreLogic / First American / etc.' },
                     ].map(f => (
                       <div key={f.label} className={f.label.includes('Provider') ? 'col-span-2' : ''}>
@@ -571,6 +607,11 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
                     </div>
                   </div>
                 </div>
+
+                {/* NSI on Zone tab after zone is selected */}
+                {selectedZone && primarySuggestion && (
+                  <NextStepCard suggestion={primarySuggestion} onFollow={logFollow} />
+                )}
               </>
             )}
 
@@ -598,12 +639,11 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
                           className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3 text-sm font-semibold focus:outline-none focus:border-cyan-400" />
                       </div>
                     </div>
-
                     {(loanAmt > 0 || replCost > 0) && (
                       <div className="bg-slate-50 border border-slate-200 rounded-2xl divide-y divide-slate-100">
                         {[
-                          { label: 'Loan Amount', value: loanAmt },
-                          { label: 'Replacement Cost', value: replCost },
+                          { label: 'Loan Amount',            value: loanAmt },
+                          { label: 'Replacement Cost',       value: replCost },
                           { label: 'NFIP Maximum (Building)', value: NFIP_MAX.building },
                         ].map(row => (
                           <div key={row.label} className={'flex justify-between items-center px-5 py-3 ' + (row.value === Math.min(Math.max(loanAmt, replCost), NFIP_MAX.building) && isSFHA ? 'bg-cyan-50' : '')}>
@@ -658,10 +698,10 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
                     </div>
                     <div className="grid grid-cols-2 gap-5">
                       {[
-                        { label: 'Annual Premium ($)', val: annualPremium, set: setAnnualPremium, ph: '2400', type: 'number' },
-                        { label: 'Policy Number', val: policyNumber, set: setPolicyNumber, ph: 'Policy #' },
-                        { label: 'Effective Date', val: policyEffective, set: setPolicyEffective, ph: '', type: 'date' },
-                        { label: 'Expiration Date', val: policyExpiration, set: setPolicyExpiration, ph: '', type: 'date' },
+                        { label: 'Annual Premium ($)', val: annualPremium,    set: setAnnualPremium,    ph: '2400', type: 'number' },
+                        { label: 'Policy Number',      val: policyNumber,     set: setPolicyNumber,     ph: 'Policy #' },
+                        { label: 'Effective Date',     val: policyEffective,  set: setPolicyEffective,  ph: '', type: 'date' },
+                        { label: 'Expiration Date',    val: policyExpiration, set: setPolicyExpiration, ph: '', type: 'date' },
                       ].map(f => (
                         <div key={f.label}>
                           <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">{f.label}</label>
@@ -684,43 +724,50 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
 
             {/* ─── TAB 2: CHECKLIST ────────────────────────────────────────── */}
             {activeTab === 2 && (
-              <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                  <h2 className="text-xl font-bold text-white">Flood Compliance Checklist</h2>
-                  <p className="text-slate-400 text-sm mt-1">{completedChecks} of {CHECKLIST.length} complete · {issueChecks > 0 ? issueChecks + ' issues' : 'No issues'}</p>
-                </div>
-                <div className="divide-y divide-slate-100">
-                  {CHECKLIST.map(item => {
-                    const status = checkStatuses[item.id];
-                    const isRelevant = isSFHA || item.trigger === 'always';
-                    return (
-                      <div key={item.id} className={'p-6 ' + (status === 'issue' ? 'bg-red-50' : status === 'complete' ? 'bg-emerald-50' : !isRelevant ? 'bg-slate-50 opacity-50' : 'hover:bg-slate-50')}>
-                        <div className="flex items-start gap-4">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 flex-wrap mb-1">
-                              <span className="font-bold text-slate-800">{item.label}</span>
-                              {item.required && isSFHA && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-lg font-bold">Required</span>}
-                              {!isRelevant && <span className="text-xs bg-slate-100 text-slate-400 px-2 py-0.5 rounded-lg">Not applicable (non-SFHA)</span>}
+              <>
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
+                    <h2 className="text-xl font-bold text-white">Flood Compliance Checklist</h2>
+                    <p className="text-slate-400 text-sm mt-1">{completedChecks} of {CHECKLIST.length} complete · {issueChecks > 0 ? issueChecks + ' issues' : 'No issues'}</p>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {CHECKLIST.map(item => {
+                      const status     = checkStatuses[item.id];
+                      const isRelevant = isSFHA || item.trigger === 'always';
+                      return (
+                        <div key={item.id} className={'p-6 ' + (status === 'issue' ? 'bg-red-50' : status === 'complete' ? 'bg-emerald-50' : !isRelevant ? 'bg-slate-50 opacity-50' : 'hover:bg-slate-50')}>
+                          <div className="flex items-start gap-4">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 flex-wrap mb-1">
+                                <span className="font-bold text-slate-800">{item.label}</span>
+                                {item.required && isSFHA && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-lg font-bold">Required</span>}
+                                {!isRelevant && <span className="text-xs bg-slate-100 text-slate-400 px-2 py-0.5 rounded-lg">Not applicable (non-SFHA)</span>}
+                              </div>
+                              <p className="text-xs text-slate-500 mb-3">{item.description}</p>
+                              <input type="text" value={checkNotes[item.id]} onChange={e => setCheckNotes(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                placeholder="Notes / tracking # / exception..." disabled={!isRelevant}
+                                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-cyan-400 bg-slate-50 disabled:opacity-40" />
                             </div>
-                            <p className="text-xs text-slate-500 mb-3">{item.description}</p>
-                            <input type="text" value={checkNotes[item.id]} onChange={e => setCheckNotes(prev => ({ ...prev, [item.id]: e.target.value }))}
-                              placeholder="Notes / tracking # / exception..." disabled={!isRelevant}
-                              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-cyan-400 bg-slate-50 disabled:opacity-40" />
+                            <select value={status} onChange={e => setCheckStatuses(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              disabled={!isRelevant}
+                              className={'text-xs border-2 rounded-2xl px-3 py-2 font-bold focus:outline-none shrink-0 cursor-pointer disabled:opacity-40 ' + (status === 'complete' ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : status === 'issue' ? 'border-red-400 bg-red-50 text-red-800' : status === 'na' ? 'border-slate-200 bg-slate-100 text-slate-400' : 'border-slate-200 bg-slate-50 text-slate-600')}>
+                              <option value="pending">⏳ Pending</option>
+                              <option value="complete">✅ Complete</option>
+                              <option value="issue">⚠️ Issue</option>
+                              <option value="na">— N/A</option>
+                            </select>
                           </div>
-                          <select value={status} onChange={e => setCheckStatuses(prev => ({ ...prev, [item.id]: e.target.value }))}
-                            disabled={!isRelevant}
-                            className={'text-xs border-2 rounded-2xl px-3 py-2 font-bold focus:outline-none shrink-0 cursor-pointer disabled:opacity-40 ' + (status === 'complete' ? 'border-emerald-400 bg-emerald-50 text-emerald-800' : status === 'issue' ? 'border-red-400 bg-red-50 text-red-800' : status === 'na' ? 'border-slate-200 bg-slate-100 text-slate-400' : 'border-slate-200 bg-slate-50 text-slate-600')}>
-                            <option value="pending">⏳ Pending</option>
-                            <option value="complete">✅ Complete</option>
-                            <option value="issue">⚠️ Issue</option>
-                            <option value="na">— N/A</option>
-                          </select>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+
+                {/* NSI on checklist tab */}
+                {primarySuggestion && (
+                  <NextStepCard suggestion={primarySuggestion} onFollow={logFollow} />
+                )}
+              </>
             )}
 
             {/* ─── TAB 3: AI ASSESSMENT ────────────────────────────────────── */}
@@ -757,7 +804,13 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
                             </div>
                           ))}
                         </div>
-                        <button onClick={handleAIAnalysis} disabled={aiAnalyzing} className="text-xs text-cyan-600 hover:text-cyan-500 font-semibold">{aiAnalyzing ? 'Re-analyzing...' : '↺ Re-run'}</button>
+                        <div className="flex items-center gap-4">
+                          <button onClick={handleAIAnalysis} disabled={aiAnalyzing} className="text-xs text-cyan-600 hover:text-cyan-500 font-semibold">{aiAnalyzing ? 'Re-analyzing...' : '↺ Re-run'}</button>
+                          <button onClick={handleSaveToRecord} disabled={recordSaving}
+                            className={'px-5 py-2.5 rounded-xl text-sm font-bold transition-all ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
+                            {recordSaving ? 'Saving…' : savedRecordId ? '✔ Decision Record Saved' : '💾 Save Decision Record'}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -775,23 +828,28 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
 
                 {/* Letter */}
                 <LetterCard body={buildFloodLetter({ borrowerName, propertyAddress, selectedZone, isSFHA, buildingCoverage, annualPremium, policyNumber, insuranceCarrier, minCoverage, loNotes, aiSummary: aiAnalysis?.summary })} />
+
+                {/* NSI on AI tab */}
+                {primarySuggestion && (
+                  <NextStepCard suggestion={primarySuggestion} onFollow={logFollow} />
+                )}
               </>
             )}
           </div>
 
-          {/* Sidebar */}
+          {/* ── Sidebar ── */}
           <div className="space-y-5">
             <div className="bg-slate-900 rounded-3xl p-6 sticky top-6">
               <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5">Flood Summary</div>
               <div className="space-y-3">
                 {[
-                  ['Flood Zone', selectedZone || '--', selectedZone ? (isSFHA ? 'text-red-400' : 'text-emerald-400') : 'text-slate-400'],
-                  ['SFHA Status', isSFHA ? '⚠️ In SFHA' : selectedZone ? '✓ Not SFHA' : '--', isSFHA ? 'text-red-400' : 'text-emerald-400'],
-                  ['Min Coverage', minCoverage > 0 ? fmt0(minCoverage) : '--', 'text-white'],
-                  ['Coverage in Place', bldgCov > 0 ? fmt0(bldgCov) : '--', coverageOK && bldgCov > 0 ? 'text-emerald-400' : coverageGap > 0 ? 'text-red-400' : 'text-slate-400'],
-                  ['Annual Premium', annualPremium ? fmtD(parseFloat(annualPremium)) : '--', 'text-white'],
-                  ['Monthly Escrow', annualPremium ? fmtD(parseFloat(annualPremium) / 12) : '--', 'text-cyan-300'],
-                  ['Checklist', completedChecks + '/' + CHECKLIST.length + ' complete', completedChecks === CHECKLIST.length ? 'text-emerald-400' : 'text-amber-400'],
+                  ['Flood Zone',        selectedZone || '--',                          selectedZone ? (isSFHA ? 'text-red-400' : 'text-emerald-400') : 'text-slate-400'],
+                  ['SFHA Status',       isSFHA ? '⚠️ In SFHA' : selectedZone ? '✓ Not SFHA' : '--', isSFHA ? 'text-red-400' : 'text-emerald-400'],
+                  ['Min Coverage',      minCoverage > 0 ? fmt0(minCoverage) : '--',   'text-white'],
+                  ['Coverage in Place', bldgCov > 0 ? fmt0(bldgCov) : '--',           coverageOK && bldgCov > 0 ? 'text-emerald-400' : coverageGap > 0 ? 'text-red-400' : 'text-slate-400'],
+                  ['Annual Premium',    annualPremium ? fmtD(parseFloat(annualPremium)) : '--', 'text-white'],
+                  ['Monthly Escrow',    annualPremium ? fmtD(parseFloat(annualPremium) / 12) : '--', 'text-cyan-300'],
+                  ['Checklist',         completedChecks + '/' + CHECKLIST.length + ' complete', completedChecks === CHECKLIST.length ? 'text-emerald-400' : 'text-amber-400'],
                 ].map(([l, v, c]) => (
                   <div key={l} className="flex justify-between items-center py-2 border-b border-slate-800">
                     <span className="text-slate-400 text-sm">{l}</span><span className={'font-bold text-sm ' + c}>{v}</span>
@@ -814,13 +872,27 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
                   {aiAnalysis.readyToClose !== undefined && <div className={'text-xs mt-0.5 ' + (aiAnalysis.readyToClose ? 'text-emerald-400' : 'text-red-400')}>{aiAnalysis.readyToClose ? 'Ready to Close' : 'Action Required'}</div>}
                 </div>
               )}
+
+              <button onClick={handleSaveToRecord} disabled={recordSaving}
+                className={'mt-4 w-full py-2.5 rounded-xl text-xs font-bold transition-all ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-50')}>
+                {recordSaving ? 'Saving…' : savedRecordId ? '✔ Record Saved' : '💾 Save Decision Record'}
+              </button>
             </div>
 
             {/* Key Rules */}
             <div className="bg-amber-50 border border-amber-200 rounded-3xl p-5">
               <div className="font-bold text-amber-800 text-sm mb-3">⚠️ Key Rules</div>
               <ul className="space-y-2">
-                {['SFHA property: flood insurance required by federal law before closing', 'Coverage minimum: greater of loan amount, replacement cost, or $250k NFIP max', 'Lender must be named as mortgagee and loss payee on every policy', 'Borrower must be notified 10+ business days before closing (SFHA)', 'Private flood insurance: must be at least as broad as NFIP', 'Life-of-loan monitoring: flag in servicing for zone remapping', 'Zone X (Shaded): not required but strongly recommended', 'Escrow required: flood premiums must be escrowed for federally regulated lenders'].map(rule => (
+                {[
+                  'SFHA property: flood insurance required by federal law before closing',
+                  'Coverage minimum: greater of loan amount, replacement cost, or $250k NFIP max',
+                  'Lender must be named as mortgagee and loss payee on every policy',
+                  'Borrower must be notified 10+ business days before closing (SFHA)',
+                  'Private flood insurance: must be at least as broad as NFIP',
+                  'Life-of-loan monitoring: flag in servicing for zone remapping',
+                  'Zone X (Shaded): not required but strongly recommended',
+                  'Escrow required: flood premiums must be escrowed for federally regulated lenders',
+                ].map(rule => (
                   <li key={rule} className="flex gap-2 text-xs text-amber-800"><span className="shrink-0">•</span><span>{rule}</span></li>
                 ))}
               </ul>
@@ -828,7 +900,6 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","readyToClose":t
           </div>
         </div>
       </div>
-
-</div>
+    </div>
   );
 }

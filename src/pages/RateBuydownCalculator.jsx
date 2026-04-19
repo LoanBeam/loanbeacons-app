@@ -1,26 +1,33 @@
+// src/pages/RateBuydownCalculator.jsx
+// Rate Buydown Calculator™ — Module 15
+// Stage 3 — Property & Closing
+// Layout: DecisionRecordBanner → ModuleNav → hero → ScenarioHeader
+
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import ModuleNav from '../components/ModuleNav';
 import ScenarioHeader from '../components/ScenarioHeader';
+import NextStepCard from '../components/NextStepCard';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
 import { collection, query, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
-import ModuleNav from '../components/ModuleNav';
 
-const fmt = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
+const fmt  = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
 const fmtD = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
 
-// ─── Glossary terms ───────────────────────────────────────────────────────────
+// ─── Glossary ────────────────────────────────────────────────────────────────
 const GLOSSARY = [
   {
     term: 'Baseline Rate',
-    icon: '📊',
+    icon: '📈',
     definition: 'The interest rate on your current rate sheet with zero points — no buydown, no credit. This is your starting point for comparison.',
     example: 'If your lender quotes 7.000% with 0 points, that is your baseline.',
   },
   {
     term: 'Price (%)',
-    icon: '💲',
+    icon: '💳',
     definition: 'The cost or credit expressed as a percentage of the loan amount. Negative price = lender credit to borrower. Positive price = borrower pays to buy the rate down.',
     example: 'Price of -1.500 means the lender pays 1.5% of the loan amount ($4,500 on a $300K loan) toward closing costs. Price of +2.000 means the borrower pays 2 points ($6,000) to get a lower rate.',
     highlight: true,
@@ -46,7 +53,7 @@ const GLOSSARY = [
   },
   {
     term: 'Net Savings',
-    icon: '📈',
+    icon: '📊',
     definition: 'Total monthly savings over your planning horizon, minus the upfront cost. This is the real bottom line number.',
     example: 'Saving $95/month for 60 months = $5,700 total savings. Minus $3,800 upfront = $1,900 net benefit.',
   },
@@ -57,14 +64,14 @@ const WHEN_TO_USE = [
     scenario: 'Seller Concession Negotiation',
     icon: '🏠',
     color: 'emerald',
-    description: "Instead of asking for a price reduction, use seller concessions to permanently buy down the rate. Often more valuable than a price cut.",
+    description: 'Instead of asking for a price reduction, use seller concessions to permanently buy down the rate. Often more valuable than a price cut.',
     tip: 'A $5,000 seller concession toward rate buydown can save more over 5 years than a $5,000 price reduction.',
   },
   {
     scenario: 'Rate Sheet Comparison',
     icon: '📋',
     color: 'blue',
-    description: "Compare multiple rate/price combinations from your pricing engine to find the optimal tradeoff for the borrower's specific situation.",
+    description: 'Compare multiple rate/price combinations from your pricing engine to find the optimal tradeoff for the borrower\'s specific situation.',
     tip: 'Run 3-4 options at once to show the borrower exactly where the best value is on the rate sheet.',
   },
   {
@@ -83,9 +90,9 @@ const WHEN_TO_USE = [
   },
 ];
 
-// ─── Letter builder ───────────────────────────────────────────────────────────
+// ─── Letter Builder ───────────────────────────────────────────────────────────
 function buildLetter(type, borrowerName, scenarioName, loanAmount, baselineRate, planningHorizon, computedOptions) {
-  const best = computedOptions.find((o) => o.badge === 'Best Long-Term');
+  const best  = computedOptions.find((o) => o.badge === 'Best Long-Term');
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const lines = [];
   lines.push(today);
@@ -119,7 +126,7 @@ function buildLetter(type, borrowerName, scenarioName, loanAmount, baselineRate,
     lines.push('ALL OPTIONS ANALYZED');
     computedOptions.forEach((o, i) => {
       const badge = o.badge ? ' [' + o.badge + ']' : '';
-      const be = o.breakEvenMonths < 999 ? (o.breakEvenMonths + ' months') : 'N/A';
+      const be    = o.breakEvenMonths < 999 ? (o.breakEvenMonths + ' months') : 'N/A';
       lines.push((i + 1) + '. Rate ' + o.rate.toFixed(3) + '% | Upfront: ' + fmtD(o.upfrontCostUsd) + ' | Saves ' + fmtD(o.monthlySavings) + '/mo | Break-Even: ' + be + ' | Net: ' + fmtD(o.netSavingsHorizon) + badge);
     });
     lines.push('');
@@ -136,7 +143,7 @@ function buildLetter(type, borrowerName, scenarioName, loanAmount, baselineRate,
     lines.push('');
     lines.push('RE: Rate Buydown Strategy for ' + (borrowerName || 'Your Buyer') + ' - ' + (scenarioName || 'Active Transaction'));
     lines.push('');
-    lines.push('I have completed a rate buydown analysis for your buyer that could be a powerful negotiating tool in your current transaction. I wanted to share this with you so we can use it strategically in any seller concession discussions.');
+    lines.push('I have completed a rate buydown analysis for your buyer that could be a powerful negotiating tool in your current transaction.');
     lines.push('');
     lines.push('WHY A RATE BUYDOWN BEATS A PRICE REDUCTION');
     lines.push('When a seller offers concessions, most buyers instinctively ask for a price reduction. But a seller-funded rate buydown often delivers significantly more value:');
@@ -160,7 +167,7 @@ function buildLetter(type, borrowerName, scenarioName, loanAmount, baselineRate,
     lines.push('USDA: Up to 6% of purchase price');
     lines.push('Conventional: 3-9% depending on LTV and occupancy');
     lines.push('');
-    lines.push('I can model any offer scenario instantly -- just send me the proposed concession amount and I will show you exactly what rate and payment your buyer would receive.');
+    lines.push('I can model any offer scenario instantly — just send me the proposed concession amount and I will show you exactly what rate and payment your buyer would receive.');
     lines.push('');
     lines.push("Let's win this deal together.");
     lines.push('');
@@ -178,7 +185,8 @@ function GlossaryCard({ term, icon, definition, example, highlight }) {
   return (
     <div
       onClick={() => setOpen((v) => !v)}
-      className={'rounded-2xl border cursor-pointer transition-all duration-200 overflow-hidden ' + (highlight ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white hover:border-slate-300')}
+      className={'rounded-2xl border cursor-pointer transition-all duration-200 overflow-hidden ' +
+        (highlight ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white hover:border-slate-300')}
     >
       <div className="flex items-center gap-3 px-4 py-3">
         <span className="text-xl">{icon}</span>
@@ -201,7 +209,7 @@ function GlossaryCard({ term, icon, definition, example, highlight }) {
 
 function BreakEvenBar({ breakEvenMonths, planningHorizon }) {
   if (breakEvenMonths >= 999) return <div className="text-xs text-red-500 font-semibold">Never breaks even</div>;
-  const pct = Math.min((breakEvenMonths / planningHorizon) * 100, 100);
+  const pct   = Math.min((breakEvenMonths / planningHorizon) * 100, 100);
   const color = pct <= 50 ? 'bg-emerald-500' : pct <= 75 ? 'bg-amber-500' : 'bg-red-400';
   return (
     <div className="w-full">
@@ -224,7 +232,7 @@ function BreakEvenBar({ breakEvenMonths, planningHorizon }) {
 
 function BuydownLetter({ borrowerName, scenarioName, loanAmount, baselineRate, planningHorizon, computedOptions }) {
   const [letterType, setLetterType] = useState('borrower');
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied]         = useState(false);
   const letterText = buildLetter(letterType, borrowerName, scenarioName, loanAmount, baselineRate, planningHorizon, computedOptions);
   const handleCopy = () => {
     navigator.clipboard.writeText(letterText);
@@ -245,7 +253,8 @@ function BuydownLetter({ borrowerName, scenarioName, loanAmount, baselineRate, p
         <div className="flex gap-2">
           {[['borrower', '👤 Borrower Letter'], ['realtor', '🏠 Realtor Letter']].map(([val, label]) => (
             <button key={val} onClick={() => setLetterType(val)}
-              className={'px-5 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ' + (letterType === val ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400')}>
+              className={'px-5 py-2.5 rounded-xl text-sm font-bold border-2 transition-all ' +
+                (letterType === val ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400')}>
               {label}
             </button>
           ))}
@@ -255,8 +264,9 @@ function BuydownLetter({ borrowerName, scenarioName, loanAmount, baselineRate, p
         </div>
         <div className="flex gap-3">
           <button onClick={handleCopy}
-            className={'flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all ' + (copied ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white')}>
-            {copied ? '✓ Copied to Clipboard' : '📋 Copy Letter'}
+            className={'flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all ' +
+              (copied ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white')}>
+            {copied ? '✔ Copied to Clipboard' : '📋 Copy Letter'}
           </button>
           <button onClick={() => window.print()}
             className="flex items-center gap-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-xl">
@@ -268,35 +278,145 @@ function BuydownLetter({ borrowerName, scenarioName, loanAmount, baselineRate, p
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+// ─── Key Rules Card ───────────────────────────────────────────────────────────
+function KeyRulesCard() {
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
+      <div className="font-bold text-amber-800 text-sm mb-3">⚠️ Important — Results Vary by Loan Product</div>
+      <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+        {[
+          ['FHA',         'Seller concessions capped at 6%. MIP is unaffected by rate buydown.'],
+          ['VA',          'Seller concessions capped at 4%. No PMI — pure rate savings, very efficient.'],
+          ['USDA',        'Seller concessions up to 6%. Annual guarantee fee (0.35%) unaffected.'],
+          ['Conventional','Concessions 3-9% based on LTV. PMI threshold unaffected by buydown.'],
+          ['2-1 Buydown', 'Temporary buydown (2% year 1, 1% year 2) — not modeled here. Use Rate Intel.'],
+          ['Lender Credit','Negative price = lender pays costs. Borrower accepts higher rate permanently.'],
+        ].map(([label, note]) => (
+          <div key={label} className="flex gap-2 text-xs text-amber-800">
+            <span className="font-black shrink-0">{label}:</span>
+            <span className="opacity-80">{note}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function RateBuydownCalculator() {
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const navigate          = useNavigate();
+  const [searchParams]    = useSearchParams();
   const scenarioIdFromUrl = searchParams.get('scenarioId');
 
-  const [scenarios, setScenarios] = useState([]);
+  // ─── Scenario / data state
+  const [scenarios,        setScenarios]        = useState([]);
   const [selectedScenario, setSelectedScenario] = useState(null);
-  const [scenarioId, setScenarioId] = useState(scenarioIdFromUrl || '');
-  const [borrowerName, setBorrowerName] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [showGuide, setShowGuide] = useState(true);
+  const [scenarioId,       setScenarioId]       = useState(scenarioIdFromUrl || '');
+  const [borrowerName,     setBorrowerName]     = useState('');
+  const [loading,          setLoading]          = useState(true);
+  const [search,           setSearch]           = useState('');
+  const [showAll,          setShowAll]          = useState(false);
 
-  const { reportFindings, savedRecordId, setSavedRecordId } = useDecisionRecord('RATE_BUYDOWN', scenarioId);
-  const [recordSaving, setRecordSaving] = useState(false);
-
-  const [loanAmount, setLoanAmount] = useState(0);
-  const [loanTerm, setLoanTerm] = useState(360);
-  const [baselineRate, setBaselineRate] = useState(0);
-  const [rateOptions, setRateOptions] = useState([
+  // ─── Module inputs
+  const [loanAmount,     setLoanAmount]     = useState(0);
+  const [loanTerm,       setLoanTerm]       = useState(360);
+  const [baselineRate,   setBaselineRate]   = useState(0);
+  const [rateOptions,    setRateOptions]    = useState([
     { rate: '6.750', points: '1', price: '1.0' },
     { rate: '6.500', points: '2', price: '2.0' },
   ]);
   const [planningHorizon, setPlanningHorizon] = useState(60);
-  const [computedOptions, setComputedOptions] = useState([]);
-  const [showResults, setShowResults] = useState(false);
-  const [search, setSearch] = useState('');
-  const [showAll, setShowAll] = useState(false);
 
+  // ─── Results
+  const [computedOptions, setComputedOptions] = useState([]);
+  const [showResults,     setShowResults]     = useState(false);
+  const [showGuide,       setShowGuide]       = useState(true);
+
+  // ─── Decision Record
+  const { reportFindings, savedRecordId, setSavedRecordId } = useDecisionRecord('RATE_BUYDOWN', scenarioId);
+  const [recordSaving, setRecordSaving] = useState(false);
+
+  // ─── NSI — Next Step Intelligence™
+  const best = computedOptions.find((o) => o.badge === 'Best Long-Term');
+  const { primarySuggestion, logFollow } = useNextStepIntelligence({
+    currentModuleKey:       'RATE_BUYDOWN',
+    loanPurpose:            selectedScenario?.loanPurpose || 'PURCHASE',
+    scenarioId,
+    decisionRecordFindings: {
+      RATE_BUYDOWN: {
+        analyzed:         showResults,
+        optionsCount:     computedOptions.length,
+        bestNetSavings:   best?.netSavingsHorizon || null,
+        bestBreakEven:    best?.breakEvenMonths   || null,
+        planningHorizon,
+        hasAvoidOptions:  computedOptions.some((o) => o.badge === 'Avoid'),
+      },
+    },
+    suggestions: [
+      {
+        moduleKey:            'RATE_INTEL',
+        moduleLabel:          'Rate Intelligence™',
+        route:                '/rate-intel',
+        urgency:              'HIGH',
+        stage:                3,
+        canSkip:              false,
+        loanPurposeRelevant:  true,
+        reason:               showResults
+          ? `Rate buydown complete — ${computedOptions.length} option(s) analyzed. Run Rate Intelligence™ to confirm rate lock strategy and lock period before disclosures.`
+          : 'Complete rate buydown analysis, then confirm your lock strategy in Rate Intelligence™.',
+      },
+      {
+        moduleKey:            'MI_OPTIMIZER',
+        moduleLabel:          'MI Optimizer™',
+        route:                '/mi-optimizer',
+        urgency:              'MEDIUM',
+        stage:                3,
+        canSkip:              true,
+        loanPurposeRelevant:  true,
+        reason:               'Buydown points are a closing cost. Run MI Optimizer™ to compare LPMI vs BPMI — a no-MI structure may outperform the buydown depending on LTV.',
+      },
+      {
+        moduleKey:            'CLOSING_COST',
+        moduleLabel:          'Closing Cost Calculator™',
+        route:                '/closing-cost',
+        urgency:              'MEDIUM',
+        stage:                3,
+        canSkip:              true,
+        loanPurposeRelevant:  true,
+        reason:               best
+          ? `Buydown costs ${fmtD(best.upfrontCostUsd)} at closing. Include this in the full cash-to-close picture via Closing Cost Calculator™.`
+          : 'Include buydown costs in the full cash-to-close picture via Closing Cost Calculator™.',
+      },
+    ],
+  });
+
+  // ─── localStorage autosave
+  const LS_KEY = scenarioId ? `lb_ratebuydown_${scenarioId}` : null;
+
+  useEffect(() => {
+    if (!LS_KEY) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+      if (saved) {
+        if (saved.rateOptions)    setRateOptions(saved.rateOptions);
+        if (saved.planningHorizon) setPlanningHorizon(saved.planningHorizon);
+        if (saved.computedOptions && saved.computedOptions.length > 0) {
+          setComputedOptions(saved.computedOptions);
+          setShowResults(true);
+          setShowGuide(false);
+        }
+      }
+    } catch (e) { /* ignore */ }
+  }, [LS_KEY]);
+
+  useEffect(() => {
+    if (!LS_KEY) return;
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify({ rateOptions, planningHorizon, computedOptions }));
+    } catch (e) { /* ignore */ }
+  }, [rateOptions, planningHorizon, computedOptions, LS_KEY]);
+
+  // ─── Data loading
   useEffect(() => { loadScenarios(); }, []);
   useEffect(() => { if (scenarioIdFromUrl) loadScenarioData(scenarioIdFromUrl); }, [scenarioIdFromUrl]);
 
@@ -327,32 +447,36 @@ export default function RateBuydownCalculator() {
     } catch (e) { console.error(e); }
   };
 
-  const addRateOption = () => setRateOptions([...rateOptions, { rate: '', points: '', price: '' }]);
+  // ─── Rate option CRUD
+  const addRateOption    = () => setRateOptions([...rateOptions, { rate: '', points: '', price: '' }]);
   const removeRateOption = (i) => setRateOptions(rateOptions.filter((_, idx) => idx !== i));
   const updateRateOption = (i, field, value) => {
-    const n = [...rateOptions];
-    n[i][field] = value;
-    setRateOptions(n);
+    const n = [...rateOptions]; n[i][field] = value; setRateOptions(n);
   };
 
+  // ─── Calculate
   const calculateResults = () => {
     if (!loanAmount || !baselineRate) { alert('Please load a scenario first'); return; }
-    const bRate = baselineRate / 100 / 12;
-    const basePmt = loanAmount * (bRate * Math.pow(1 + bRate, loanTerm)) / (Math.pow(1 + bRate, loanTerm) - 1);
+    const bRate    = baselineRate / 100 / 12;
+    const basePmt  = loanAmount * (bRate * Math.pow(1 + bRate, loanTerm)) / (Math.pow(1 + bRate, loanTerm) - 1);
 
     const computed = rateOptions.map((opt, idx) => {
-      const rate = parseFloat(opt.rate);
+      const rate  = parseFloat(opt.rate);
       const price = parseFloat(opt.price);
       if (!rate || isNaN(rate)) return null;
-      const upfrontCostUsd = loanAmount * (price / 100);
-      const mr = rate / 100 / 12;
-      const payment = loanAmount * (mr * Math.pow(1 + mr, loanTerm)) / (Math.pow(1 + mr, loanTerm) - 1);
-      const monthlySavings = basePmt - payment;
-      const breakEvenMonths = monthlySavings > 0 && upfrontCostUsd > 0 ? Math.ceil(upfrontCostUsd / monthlySavings) : monthlySavings > 0 ? 0 : 999;
+      const upfrontCostUsd   = loanAmount * (price / 100);
+      const mr               = rate / 100 / 12;
+      const payment          = loanAmount * (mr * Math.pow(1 + mr, loanTerm)) / (Math.pow(1 + mr, loanTerm) - 1);
+      const monthlySavings   = basePmt - payment;
+      const breakEvenMonths  = monthlySavings > 0 && upfrontCostUsd > 0
+        ? Math.ceil(upfrontCostUsd / monthlySavings)
+        : monthlySavings > 0 ? 0 : 999;
       const netSavingsHorizon = (monthlySavings * planningHorizon) - upfrontCostUsd;
       let benefitScore = 50;
-      if (monthlySavings > 0 && breakEvenMonths <= planningHorizon) benefitScore = Math.min(100, 50 + (netSavingsHorizon / 1000));
-      else if (monthlySavings <= 0 && upfrontCostUsd > 0) benefitScore = 0;
+      if (monthlySavings > 0 && breakEvenMonths <= planningHorizon)
+        benefitScore = Math.min(100, 50 + (netSavingsHorizon / 1000));
+      else if (monthlySavings <= 0 && upfrontCostUsd > 0)
+        benefitScore = 0;
       return { index: idx, rate, price, upfrontCostUsd, payment, monthlySavings, breakEvenMonths, netSavingsHorizon, benefitScore };
     }).filter(Boolean);
 
@@ -372,37 +496,67 @@ export default function RateBuydownCalculator() {
     setTimeout(() => { const el = document.getElementById('results-section'); if (el) el.scrollIntoView({ behavior: 'smooth' }); }, 100);
   };
 
+  // ─── Save to Decision Record (positional signature)
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
-      const best = computedOptions.find((o) => o.badge === 'Best Long-Term');
+      const bestOpt   = computedOptions.find((o) => o.badge === 'Best Long-Term');
       const riskFlags = [];
       computedOptions.forEach((o) => {
-        if (o.badge === 'Avoid') riskFlags.push({ field: 'option_' + (o.index + 1), message: 'Rate ' + o.rate.toFixed(3) + '% has negative savings with upfront cost', severity: 'MEDIUM' });
-        if (o.breakEvenMonths > planningHorizon && o.breakEvenMonths < 999) riskFlags.push({ field: 'option_' + (o.index + 1), message: 'Break-even (' + o.breakEvenMonths + ' mo) exceeds planning horizon (' + planningHorizon + ' mo)', severity: 'LOW' });
+        if (o.badge === 'Avoid')
+          riskFlags.push({ flagCode: 'BUYDOWN_AVOID_OPTION', sourceModule: 'RATE_BUYDOWN', severity: 'MEDIUM', detail: `Rate ${o.rate.toFixed(3)}% has negative savings with upfront cost of ${fmtD(o.upfrontCostUsd)}` });
+        if (o.breakEvenMonths > planningHorizon && o.breakEvenMonths < 999)
+          riskFlags.push({ flagCode: 'BUYDOWN_BREAK_EVEN_EXCEEDS_HORIZON', sourceModule: 'RATE_BUYDOWN', severity: 'LOW', detail: `Break-even (${o.breakEvenMonths} mo) exceeds planning horizon (${planningHorizon} mo) for ${o.rate.toFixed(3)}%` });
       });
-      const writtenId = await reportFindings({
-        verdict: best ? ('Best Long-Term: ' + best.rate.toFixed(3) + '%') : 'No beneficial buydown found',
-        summary: 'Rate Buydown Analysis — ' + computedOptions.length + ' options. Baseline: ' + baselineRate + '%. Horizon: ' + planningHorizon + ' months.' + (best ? ' Best: ' + best.rate.toFixed(3) + '% saves ' + fmtD(best.netSavingsHorizon) + ' net.' : ''),
-        riskFlags,
-        findings: {
-          baselineRate, loanAmount, loanTerm, planningHorizon,
-          optionsAnalyzed: computedOptions.length,
-          bestLongTerm: best ? { rate: best.rate, netSavings: best.netSavingsHorizon, breakEven: best.breakEvenMonths } : null,
-          allOptions: computedOptions.map((o) => ({ rate: o.rate, upfront: o.upfrontCostUsd, monthlySavings: o.monthlySavings, breakEven: o.breakEvenMonths, netSavings: o.netSavingsHorizon, badge: o.badge || null })),
+
+      const writtenId = await reportFindings(
+        'RATE_BUYDOWN',
+        {
+          verdict:          bestOpt ? `Best Long-Term: ${bestOpt.rate.toFixed(3)}%` : 'No beneficial buydown found',
+          summary:          `Rate Buydown Analysis — ${computedOptions.length} options. Baseline: ${baselineRate}%. Horizon: ${planningHorizon} months.` +
+                            (bestOpt ? ` Best: ${bestOpt.rate.toFixed(3)}% saves ${fmtD(bestOpt.netSavingsHorizon)} net.` : ''),
+          baselineRate,
+          loanAmount,
+          loanTerm,
+          planningHorizon,
+          optionsAnalyzed:  computedOptions.length,
+          bestLongTerm:     bestOpt
+            ? { rate: bestOpt.rate, netSavings: bestOpt.netSavingsHorizon, breakEven: bestOpt.breakEvenMonths }
+            : null,
+          allOptions:       computedOptions.map((o) => ({
+            rate: o.rate, upfront: o.upfrontCostUsd,
+            monthlySavings: o.monthlySavings,
+            breakEven: o.breakEvenMonths,
+            netSavings: o.netSavingsHorizon,
+            badge: o.badge || null,
+          })),
+          completeness: {
+            scenarioLoaded:    !!selectedScenario,
+            rateOptionsEntered: rateOptions.some((o) => o.rate),
+            resultsCalculated: showResults,
+          },
         },
-        completeness: { scenarioLoaded: !!selectedScenario, rateOptionsEntered: rateOptions.some((o) => o.rate), resultsCalculated: showResults },
-      });
+        [],
+        riskFlags,
+        '1.0.0'
+      );
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
     setRecordSaving(false);
   };
 
+  // ─── Save to Firestore scenario
   const saveResults = async () => {
     if (!scenarioId) return;
     try {
       await updateDoc(doc(db, 'scenarios', scenarioId), {
-        rate_buydown_analysis: { baseline_rate: baselineRate, rate_options: rateOptions, planning_horizon: planningHorizon, computed_options: computedOptions, analyzed_at: new Date() },
+        rate_buydown_analysis: {
+          baseline_rate:    baselineRate,
+          rate_options:     rateOptions,
+          planning_horizon: planningHorizon,
+          computed_options: computedOptions,
+          analyzed_at:      new Date(),
+        },
         updated_at: new Date(),
       });
       alert('Analysis saved to scenario.');
@@ -410,38 +564,42 @@ export default function RateBuydownCalculator() {
   };
 
   const getBadgeStyle = (badge) => {
-    if (badge === 'Best Long-Term') return 'bg-blue-600 text-white';
+    if (badge === 'Best Long-Term')  return 'bg-blue-600 text-white';
     if (badge === 'Best Short-Term') return 'bg-emerald-600 text-white';
-    if (badge === 'Lowest Cash') return 'bg-violet-600 text-white';
-    if (badge === 'Avoid') return 'bg-red-500 text-white';
+    if (badge === 'Lowest Cash')     return 'bg-violet-600 text-white';
+    if (badge === 'Avoid')           return 'bg-red-500 text-white';
     return 'bg-slate-400 text-white';
   };
 
-  const best = computedOptions.find((o) => o.badge === 'Best Long-Term');
   const baselinePmt = loanAmount && baselineRate ? (() => {
     const r = baselineRate / 100 / 12;
     return loanAmount * (r * Math.pow(1 + r, loanTerm)) / (Math.pow(1 + r, loanTerm) - 1);
   })() : 0;
 
+  // ─── Loading
   if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
       <div className="text-center">
         <div className="text-5xl mb-4 animate-pulse">💰</div>
-        <div className="text-slate-500 font-medium">Loading LoanBeacons...</div>
+        <div className="text-slate-500 font-medium">Loading LoanBeacons™...</div>
       </div>
     </div>
   );
 
-  // ─── Picker Page ──────────────────────────────────────────────────────────────
+  // ─── Picker Page ──────────────────────────────────────────────────────────
   if (!scenarioIdFromUrl) {
-    const q        = search.toLowerCase().trim();
-    const sorted   = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
-    const filtered = q ? sorted.filter(s => (s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim()).toLowerCase().includes(q)) : sorted;
+    const q         = search.toLowerCase().trim();
+    const sorted    = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
+    const filtered  = q ? sorted.filter(s => (s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim()).toLowerCase().includes(q)) : sorted;
     const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
     const hasMore   = !q && !showAll && filtered.length > 5;
+
     return (
       <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
         <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+
+        {/* Picker hero */}
         <div className="bg-gradient-to-br from-slate-900 to-blue-950 px-6 py-10">
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-blue-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
@@ -460,6 +618,7 @@ export default function RateBuydownCalculator() {
             </div>
           </div>
         </div>
+
         <div className="max-w-2xl mx-auto px-6 py-8">
           <div className="mb-5">
             <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">Select a Scenario</h2>
@@ -467,13 +626,15 @@ export default function RateBuydownCalculator() {
           </div>
           <div className="relative mb-4">
             <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
-            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
+            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }}
+              placeholder="Search borrower name…"
               className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-300 transition-all" />
             {search && <button onClick={() => setSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>}
           </div>
+
           {scenarios.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
-              <p className="text-3xl mb-3">📂</p>
+              <p className="text-3xl mb-3">📭</p>
               <p className="text-sm font-semibold text-slate-600">No scenarios found</p>
               <p className="text-xs text-slate-400 mt-1">Create one in Scenario Creator first.</p>
               <button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-blue-600 hover:text-blue-800 underline">→ Go to Scenario Creator</button>
@@ -497,8 +658,8 @@ export default function RateBuydownCalculator() {
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-blue-700 transition-colors">{sName}</div>
                         <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                          {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
-                          {s.loanType   && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
+                          {amount > 0    && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
+                          {s.loanType    && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
                           {s.creditScore && <span className="text-xs bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
                         </div>
                       </div>
@@ -522,19 +683,18 @@ export default function RateBuydownCalculator() {
     );
   }
 
+  // ─── Module Page ──────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
-      <DecisionRecordBanner
-        recordId={savedRecordId}
-        moduleName="Rate Buydown Calculator™"
-        moduleKey="RATE_BUYDOWN"
-        onSave={handleSaveToRecord}
-      />
+      {/* 1 — Decision Record Banner */}
+      <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="RATE_BUYDOWN" />
+
+      {/* 2 — Module Nav */}
       <ModuleNav moduleNumber={15} />
 
-      {/* ── Hero Header ── */}
+      {/* 3 — Hero */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #3b82f6 0%, transparent 50%), radial-gradient(circle at 80% 20%, #8b5cf6 0%, transparent 40%)' }} />
         <div className="relative max-w-7xl mx-auto px-6 py-8">
@@ -543,13 +703,18 @@ export default function RateBuydownCalculator() {
           </button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 15</div>
-              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">
+              <span className="text-xs font-bold tracking-widest text-blue-400 uppercase">Stage 3 — Property &amp; Closing</span>
+              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2 mt-0.5">
                 Rate Buydown Calculator™
               </h1>
               <p className="text-slate-400 text-base max-w-xl leading-relaxed">
                 Compare every rate option on your pricing sheet. Find the break-even, score the tradeoff, and generate a client-ready explanation in seconds.
               </p>
+              <div className="flex flex-wrap gap-2 mt-4">
+                {['Break-Even Analysis', 'Points vs Credits', 'Seller Concessions', 'Borrower Letter', 'Realtor Letter'].map(tag => (
+                  <span key={tag} className="text-xs bg-white/10 border border-white/10 text-blue-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+                ))}
+              </div>
             </div>
             <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4 backdrop-blur-sm" style={{ minWidth: '220px', flexShrink: 0 }}>
               {selectedScenario ? (
@@ -557,8 +722,9 @@ export default function RateBuydownCalculator() {
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
                   <div className="text-white font-bold">{borrowerName || selectedScenario.scenarioName}</div>
                   <div className="text-slate-400 text-sm mt-1">{fmt(loanAmount)} · {baselineRate}% baseline · {loanTerm === 360 ? '30yr' : '15yr'}</div>
-                  <button onClick={() => { setSelectedScenario(null); setScenarioId(''); setBorrowerName(''); setShowResults(false); }}
-                    className="text-xs text-blue-400 hover:text-blue-300 mt-2 block">
+                  <button
+                    onClick={() => { setSelectedScenario(null); setScenarioId(''); setBorrowerName(''); setShowResults(false); navigate('/rate-buydown'); }}
+                    className="text-xs text-blue-400 hover:text-blue-300 mt-2 block transition-colors">
                     Change scenario →
                   </button>
                 </>
@@ -566,7 +732,6 @@ export default function RateBuydownCalculator() {
                 <>
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">No Scenario Loaded</div>
                   <div className="text-slate-400 text-sm">Select a scenario below to begin</div>
-                  <div className="text-slate-600 text-xs mt-2">↓ Choose from your pipeline</div>
                 </>
               )}
             </div>
@@ -574,28 +739,13 @@ export default function RateBuydownCalculator() {
         </div>
       </div>
 
-      {/* Borrower bar */}
-      {scenarioId && borrowerName && (
-        <div className="bg-[#1B3A6B] px-6 py-3">
-          <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-1">
-            <span className="text-white font-bold text-sm">{borrowerName}</span>
-            {selectedScenario?.streetAddress && (
-              <span className="text-blue-200 text-xs">{[selectedScenario.streetAddress, selectedScenario.city, selectedScenario.state].filter(Boolean).join(', ')}</span>
-            )}
-            <div className="flex flex-wrap gap-x-4 text-xs text-blue-200">
-              {loanAmount > 0 && <span>Loan <strong className="text-white">{fmt(loanAmount)}</strong></span>}
-              {baselineRate > 0 && <span>Baseline <strong className="text-white">{baselineRate}%</strong></span>}
-              {baselinePmt > 0 && <span>Baseline P&amp;I <strong className="text-white">{fmtD(baselinePmt)}/mo</strong></span>}
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* 4 — Scenario Header */}
       <ScenarioHeader moduleTitle="Rate Buydown Calculator™" moduleNumber="15" scenarioId={scenarioId} />
 
+      {/* ── Body ── */}
       <div className="max-w-7xl mx-auto px-6 py-6 space-y-8">
 
-        {/* ── Education Panel ── */}
+        {/* Education / Glossary Panel */}
         <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
           <button onClick={() => setShowGuide((v) => !v)}
             className="w-full flex items-center justify-between px-8 py-5 hover:bg-slate-50 transition-colors">
@@ -607,7 +757,7 @@ export default function RateBuydownCalculator() {
               </div>
             </div>
             <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500">
-              ▼
+              {showGuide ? '▲' : '▼'}
             </div>
           </button>
 
@@ -619,15 +769,15 @@ export default function RateBuydownCalculator() {
                   {WHEN_TO_USE.map((w) => {
                     const colors = {
                       emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700',
-                      blue: 'bg-blue-50 border-blue-200 text-blue-700',
-                      violet: 'bg-violet-50 border-violet-200 text-violet-700',
-                      amber: 'bg-amber-50 border-amber-200 text-amber-700',
+                      blue:    'bg-blue-50 border-blue-200 text-blue-700',
+                      violet:  'bg-violet-50 border-violet-200 text-violet-700',
+                      amber:   'bg-amber-50 border-amber-200 text-amber-700',
                     };
                     const tipColors = {
                       emerald: 'bg-emerald-100 text-emerald-800',
-                      blue: 'bg-blue-100 text-blue-800',
-                      violet: 'bg-violet-100 text-violet-800',
-                      amber: 'bg-amber-100 text-amber-800',
+                      blue:    'bg-blue-100 text-blue-800',
+                      violet:  'bg-violet-100 text-violet-800',
+                      amber:   'bg-amber-100 text-amber-800',
                     };
                     return (
                       <div key={w.scenario} className={'rounded-2xl border p-4 ' + colors[w.color]}>
@@ -644,14 +794,13 @@ export default function RateBuydownCalculator() {
                   })}
                 </div>
               </div>
-
               <div className="px-8 pb-8">
                 <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Field-by-Field Glossary — Click to Expand</div>
                 <div className="grid grid-cols-2 gap-3">
                   {GLOSSARY.map((g) => <GlossaryCard key={g.term} {...g} />)}
                 </div>
                 <div className="mt-4 bg-slate-800 rounded-2xl px-5 py-4">
-                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">💬 What to Tell Your Borrower</div>
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">💼 What to Tell Your Borrower</div>
                   <p className="text-slate-300 text-sm leading-relaxed">
                     "I'm going to run a few rate options side by side. For each one, I'll show you exactly what you pay upfront, how much you save every month, and how long it takes to get your money back. Then I'll tell you which option makes the most sense for how long you plan to stay in the home."
                   </p>
@@ -663,25 +812,26 @@ export default function RateBuydownCalculator() {
 
         {selectedScenario && (
           <>
-            {/* ── Rate Options Input ── */}
+            {/* Rate Options Input */}
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-6">
                 <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Step 2</div>
                 <h2 className="text-xl font-bold text-white">Enter Rate Options from Your Pricing Sheet</h2>
                 <p className="text-slate-400 text-sm mt-1">Add each rate option. Positive price = borrower pays. Negative price = lender credit.</p>
               </div>
-
               <div className="p-8 space-y-6">
+
                 {/* Planning Horizon */}
                 <div className="bg-blue-50 border border-blue-200 rounded-2xl px-5 py-4 flex items-center gap-6 flex-wrap">
                   <div>
                     <div className="text-xs font-bold text-blue-600 uppercase tracking-wide mb-1">Planning Horizon</div>
                     <div className="text-xs text-blue-700">How long does the borrower expect to keep this loan?</div>
                   </div>
-                  <div className="flex items-center gap-3 ml-auto">
+                  <div className="flex items-center gap-3 ml-auto flex-wrap">
                     {[24, 36, 48, 60, 84, 120].map((mo) => (
                       <button key={mo} onClick={() => setPlanningHorizon(mo)}
-                        className={'px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ' + (planningHorizon === mo ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-600 border-blue-300 hover:border-blue-500')}>
+                        className={'px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ' +
+                          (planningHorizon === mo ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-600 border-blue-300 hover:border-blue-500')}>
                         {mo}mo
                       </button>
                     ))}
@@ -712,7 +862,7 @@ export default function RateBuydownCalculator() {
                   <div className="grid grid-cols-12 gap-3 px-2">
                     <div className="col-span-1" />
                     <div className="col-span-3 text-xs font-bold text-slate-500 uppercase tracking-wide">Interest Rate (%)</div>
-                    <div className="col-span-3 text-xs font-bold text-slate-500 uppercase tracking-wide">Points <span className="font-normal normal-case text-slate-400">(optional label)</span></div>
+                    <div className="col-span-3 text-xs font-bold text-slate-500 uppercase tracking-wide">Points <span className="font-normal normal-case text-slate-400">(label)</span></div>
                     <div className="col-span-4 text-xs font-bold text-slate-500 uppercase tracking-wide">
                       Price (%) <span className="font-normal normal-case text-slate-400">negative = lender credit</span>
                     </div>
@@ -720,23 +870,28 @@ export default function RateBuydownCalculator() {
                   </div>
 
                   {rateOptions.map((opt, i) => {
-                    const rate = parseFloat(opt.rate);
-                    const price = parseFloat(opt.price);
+                    const rate   = parseFloat(opt.rate);
+                    const price  = parseFloat(opt.price);
                     const isBelow = rate < baselineRate;
                     const isAbove = rate > baselineRate;
                     const upfront = loanAmount && price ? loanAmount * (price / 100) : 0;
                     return (
-                      <div key={i} className={'rounded-2xl border-2 p-4 transition-all ' + (isBelow ? 'border-emerald-200 bg-emerald-50/50' : isAbove ? 'border-amber-200 bg-amber-50/50' : 'border-slate-200 bg-slate-50')}>
+                      <div key={i} className={'rounded-2xl border-2 p-4 transition-all ' +
+                        (isBelow ? 'border-emerald-200 bg-emerald-50/50' : isAbove ? 'border-amber-200 bg-amber-50/50' : 'border-slate-200 bg-slate-50')}>
                         <div className="grid grid-cols-12 gap-3 items-center">
                           <div className="col-span-1 text-center">
-                            <span className={'text-xs font-black w-6 h-6 rounded-full flex items-center justify-center mx-auto ' + (isBelow ? 'bg-emerald-200 text-emerald-800' : isAbove ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-600')}>
+                            <span className={'text-xs font-black w-6 h-6 rounded-full flex items-center justify-center mx-auto ' +
+                              (isBelow ? 'bg-emerald-200 text-emerald-800' : isAbove ? 'bg-amber-200 text-amber-800' : 'bg-slate-200 text-slate-600')}>
                               {i + 1}
                             </span>
                           </div>
                           <div className="col-span-3">
                             <input type="number" step="0.001" value={opt.rate}
                               onChange={(e) => updateRateOption(i, 'rate', e.target.value)}
-                              className={'w-full px-4 py-2.5 border-2 rounded-xl font-bold text-lg text-center focus:outline-none transition-all ' + (isBelow ? 'border-emerald-400 bg-white text-emerald-700 focus:border-emerald-500' : isAbove ? 'border-amber-400 bg-white text-amber-700' : 'border-slate-300 bg-white text-slate-700')}
+                              className={'w-full px-4 py-2.5 border-2 rounded-xl font-bold text-lg text-center focus:outline-none transition-all ' +
+                                (isBelow ? 'border-emerald-400 bg-white text-emerald-700 focus:border-emerald-500' :
+                                 isAbove ? 'border-amber-400 bg-white text-amber-700' :
+                                           'border-slate-300 bg-white text-slate-700')}
                               placeholder={baselineRate ? (baselineRate - 0.25).toFixed(3) : '6.750'} />
                             <div className="text-center text-xs mt-1" style={{ minHeight: '16px' }}>
                               {isBelow && <span className="text-emerald-600 font-semibold">▼ {(baselineRate - rate).toFixed(3)}% below baseline</span>}
@@ -753,16 +908,21 @@ export default function RateBuydownCalculator() {
                           <div className="col-span-4">
                             <input type="number" step="0.001" value={opt.price}
                               onChange={(e) => updateRateOption(i, 'price', e.target.value)}
-                              className={'w-full px-4 py-2.5 border-2 rounded-xl font-semibold focus:outline-none transition-all ' + (price < 0 ? 'border-violet-300 bg-violet-50 text-violet-700 focus:border-violet-500' : price > 0 ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-slate-200 bg-white text-slate-600')}
+                              className={'w-full px-4 py-2.5 border-2 rounded-xl font-semibold focus:outline-none transition-all ' +
+                                (price < 0 ? 'border-violet-300 bg-violet-50 text-violet-700 focus:border-violet-500' :
+                                 price > 0 ? 'border-orange-300 bg-orange-50 text-orange-700' :
+                                             'border-slate-200 bg-white text-slate-600')}
                               placeholder="1.500" />
-                            {/* FIX: div always renders (minHeight holds space), only text is conditional — prevents layout bounce on scenario load */}
                             <div className={'text-xs mt-1 font-semibold ' + (upfront < 0 ? 'text-violet-600' : 'text-orange-600')} style={{ minHeight: '16px' }}>
-                              {upfront !== 0 && (upfront < 0 ? '🏷 Lender pays ' + fmtD(Math.abs(upfront)) : '💳 Borrower pays ' + fmtD(upfront))}
+                              {upfront !== 0 && (upfront < 0
+                                ? '🏦 Lender pays ' + fmtD(Math.abs(upfront))
+                                : '💳 Borrower pays ' + fmtD(upfront))}
                             </div>
                           </div>
                           <div className="col-span-1">
                             {rateOptions.length > 1 && (
-                              <button onClick={() => removeRateOption(i)} className="w-8 h-8 rounded-full bg-red-100 hover:bg-red-200 text-red-600 flex items-center justify-center text-lg transition-colors">
+                              <button onClick={() => removeRateOption(i)}
+                                className="w-8 h-8 rounded-full bg-red-100 hover:bg-red-200 text-red-600 flex items-center justify-center text-lg transition-colors">
                                 ×
                               </button>
                             )}
@@ -779,7 +939,7 @@ export default function RateBuydownCalculator() {
                 </div>
 
                 <button onClick={calculateResults}
-                  className="w-full bg-slate-900 hover:bg-slate-800 text-white py-4 rounded-2xl font-bold text-lg shadow-lg">
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-white py-4 rounded-2xl font-bold text-lg shadow-lg transition-colors">
                   Calculate &amp; Compare →
                 </button>
               </div>
@@ -789,7 +949,7 @@ export default function RateBuydownCalculator() {
             {showResults && computedOptions.length > 0 && (
               <div id="results-section" className="space-y-6">
 
-                {/* Recommendation hero card */}
+                {/* Best Long-Term hero */}
                 {best && (
                   <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 rounded-3xl p-8 border border-slate-700 shadow-xl relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full -translate-y-32 translate-x-32" />
@@ -825,16 +985,18 @@ export default function RateBuydownCalculator() {
                         <BreakEvenBar breakEvenMonths={best.breakEvenMonths} planningHorizon={planningHorizon} />
                       </div>
                       <div className="bg-blue-900/30 border border-blue-700/40 rounded-2xl px-5 py-4">
-                        <div className="text-xs font-bold text-blue-400 uppercase tracking-wide mb-2">💬 What to Tell Your Borrower</div>
+                        <div className="text-xs font-bold text-blue-400 uppercase tracking-wide mb-2">💼 What to Tell Your Borrower</div>
                         <p className="text-slate-300 text-sm leading-relaxed">
-                          "By paying {fmtD(best.upfrontCostUsd)} today, your monthly payment drops {fmtD(best.monthlySavings)}. You get that money back in {best.breakEvenMonths} months. After that, every single month puts {fmtD(best.monthlySavings)} back in your pocket. Over {planningHorizon} months, you come out {fmtD(best.netSavingsHorizon)} ahead."
+                          "By paying {fmtD(best.upfrontCostUsd)} today, your monthly payment drops {fmtD(best.monthlySavings)}.
+                          You get that money back in {best.breakEvenMonths} months. After that, every single month puts {fmtD(best.monthlySavings)} back in your pocket.
+                          Over {planningHorizon} months, you come out {fmtD(best.netSavingsHorizon)} ahead."
                         </p>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* All options table */}
+                {/* All Options Table */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="px-8 py-5 border-b border-slate-100 flex items-center justify-between flex-wrap gap-3">
                     <div>
@@ -843,8 +1005,9 @@ export default function RateBuydownCalculator() {
                     </div>
                     <div className="flex gap-2 flex-wrap">
                       <button onClick={handleSaveToRecord} disabled={recordSaving}
-                        className={'px-5 py-2.5 rounded-xl text-sm font-bold transition-all ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
-                        {recordSaving ? 'Saving...' : savedRecordId ? '✓ Decision Record Saved' : '💾 Save Decision Record'}
+                        className={'px-5 py-2.5 rounded-xl text-sm font-bold transition-all ' +
+                          (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
+                        {recordSaving ? 'Saving…' : savedRecordId ? '✔ Decision Record Saved' : '💾 Save Decision Record'}
                       </button>
                       <button onClick={saveResults} className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-bold rounded-xl">
                         Save to Scenario
@@ -892,7 +1055,8 @@ export default function RateBuydownCalculator() {
                             <td className="px-5 py-4">
                               <div className="flex items-center gap-2">
                                 <div className="w-8 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                  <div className={'h-full rounded-full ' + (o.benefitScore >= 70 ? 'bg-emerald-500' : o.benefitScore >= 40 ? 'bg-amber-500' : 'bg-red-400')} style={{ width: Math.max(o.benefitScore, 0) + '%' }} />
+                                  <div className={'h-full rounded-full ' + (o.benefitScore >= 70 ? 'bg-emerald-500' : o.benefitScore >= 40 ? 'bg-amber-500' : 'bg-red-400')}
+                                    style={{ width: Math.max(o.benefitScore, 0) + '%' }} />
                                 </div>
                                 <span className={'text-xs font-black ' + (o.benefitScore >= 70 ? 'text-emerald-600' : o.benefitScore >= 40 ? 'text-amber-600' : 'text-red-500')}>
                                   {Math.round(o.benefitScore)}
@@ -917,31 +1081,18 @@ export default function RateBuydownCalculator() {
                       <div key={o.index}>
                         <div className="flex justify-between text-xs text-slate-600 mb-1">
                           <span className="font-bold">Option {o.index + 1} — {o.rate.toFixed(3)}%</span>
-                          <span>{o.breakEvenMonths < planningHorizon ? 'Breaks even in ' + o.breakEvenMonths + ' months' : 'Does not break even in ' + planningHorizon + ' months'}</span>
+                          <span>{o.breakEvenMonths < planningHorizon
+                            ? 'Breaks even in ' + o.breakEvenMonths + ' months'
+                            : 'Does not break even in ' + planningHorizon + ' months'}</span>
                         </div>
                         <BreakEvenBar breakEvenMonths={o.breakEvenMonths} planningHorizon={planningHorizon} />
                       </div>
                     ))}
                   </div>
 
-                  {/* Loan product notes */}
-                  <div className="mx-6 mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-5">
-                    <div className="font-bold text-amber-800 text-sm mb-3">⚠️ Important — Results Vary by Loan Product</div>
-                    <div className="grid grid-cols-2 gap-x-8 gap-y-2">
-                      {[
-                        ['FHA', 'Seller concessions capped at 6%. MIP is unaffected by rate buydown.'],
-                        ['VA', 'Seller concessions capped at 4%. No PMI — pure rate savings, very efficient.'],
-                        ['USDA', 'Seller concessions up to 6%. Annual guarantee fee (0.35%) unaffected.'],
-                        ['Conventional', 'Concessions 3-9% based on LTV. PMI threshold unaffected by buydown.'],
-                        ['2-1 Buydown', 'Temporary buydown (2% year 1, 1% year 2) — not modeled here. Use Rate Intel.'],
-                        ['Lender Credit', 'Negative price = lender pays costs. Borrower accepts higher rate permanently.'],
-                      ].map(([label, note]) => (
-                        <div key={label} className="flex gap-2 text-xs text-amber-800">
-                          <span className="font-black shrink-0">{label}:</span>
-                          <span className="opacity-80">{note}</span>
-                        </div>
-                      ))}
-                    </div>
+                  {/* Key Rules */}
+                  <div className="mx-6 mb-6">
+                    <KeyRulesCard />
                   </div>
                 </div>
 
@@ -954,12 +1105,16 @@ export default function RateBuydownCalculator() {
                   planningHorizon={planningHorizon}
                   computedOptions={computedOptions}
                 />
+
+                {/* ── Next Step Intelligence™ ── */}
+                {primarySuggestion && (
+                  <NextStepCard suggestion={primarySuggestion} onFollow={logFollow} />
+                )}
               </div>
             )}
           </>
         )}
       </div>
-
-       </div>
+    </div>
   );
 }

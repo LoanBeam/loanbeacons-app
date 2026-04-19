@@ -1,13 +1,12 @@
 import { useState, useEffect } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { db } from "../firebase/config";
-import { collection, addDoc, serverTimestamp, getDocs, doc, getDoc } from "firebase/firestore";
-import DecisionRecordBanner from "../components/DecisionRecordBanner";
+import { collection, doc, getDoc, serverTimestamp } from "firebase/firestore";
 import { useDecisionRecord } from "../hooks/useDecisionRecord";
+import DecisionRecordBanner from "../components/DecisionRecordBanner";
 import { useNextStepIntelligence } from "../hooks/useNextStepIntelligence";
 import NextStepCard from "../components/NextStepCard";
 import ModuleNav from "../components/ModuleNav";
-import ScenarioHeader from "../components/ScenarioHeader";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const GUARANTEE_FEE_PCT = 1.00;
@@ -18,7 +17,6 @@ const DTI_BACK_EXTENDED = 0.44;
 const FHA_UPFRONT_MIP = 0.0175;
 const FHA_ANNUAL_MIP = 0.0055;
 
-// 2024 USDA Income Limits — national baseline (verify county-specific at rd.usda.gov)
 const USDA_BASE_LIMITS = { 1: 110650, 2: 110650, 3: 110650, 4: 110650, 5: 146050, 6: 146050, 7: 146050, 8: 146050 };
 
 const STEPS = [
@@ -96,13 +94,13 @@ const fmtPct = (v) => `${(v * 100).toFixed(1)}%`;
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
 const Chip = ({ status, children }) => {
-  const cls = { pass: "bg-green-100 border-green-300 text-green-700", fail: "bg-red-100 border-red-300 text-red-700", warn: "bg-yellow-100 border-yellow-300 text-yellow-700", info: "bg-blue-100 border-blue-300 text-blue-700", neutral: "bg-slate-100 border-slate-300 text-slate-600" };
+  const cls = { pass: "bg-green-50 border-green-300 text-green-700", fail: "bg-red-50 border-red-300 text-red-700", warn: "bg-amber-50 border-amber-300 text-amber-700", info: "bg-blue-50 border-blue-300 text-blue-700", neutral: "bg-slate-100/40 border-slate-200 text-slate-600" };
   return <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${cls[status] || cls.neutral}`}>{children}</span>;
 };
 
 const Input = ({ label, value, onChange, note, prefix = "$", type = "number" }) => (
   <div>
-    <label className="block text-xs font-semibold text-slate-600 mb-1">{label}</label>
+    <label className="block text-xs font-semibold text-slate-400 mb-1">{label}</label>
     {note && <p className="text-xs text-slate-400 mb-1">{note}</p>}
     <div className="relative">
       {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">{prefix}</span>}
@@ -111,7 +109,7 @@ const Input = ({ label, value, onChange, note, prefix = "$", type = "number" }) 
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder="0"
-        className={`w-full bg-white border border-slate-200 rounded-xl ${prefix ? "pl-7" : "px-4"} pr-4 py-3 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-green-500`}
+        className={`w-full bg-slate-100 border border-slate-200 rounded-xl ${prefix ? "pl-7" : "px-4"} pr-4 py-3 text-slate-800 placeholder-slate-500 focus:outline-none focus:border-green-500`}
       />
     </div>
   </div>
@@ -125,74 +123,24 @@ const NavRow = ({ onBack, onNext, nextLabel = "Next →" }) => (
 );
 
 const InfoBox = ({ children, color = "blue" }) => {
-  const cls = { blue: "bg-blue-50 border-blue-200 text-blue-800", yellow: "bg-yellow-50 border-yellow-200 text-yellow-800", green: "bg-green-50 border-green-200 text-green-800", red: "bg-red-50 border-red-200 text-red-800" };
+  const cls = { blue: "bg-blue-50 border-blue-200 text-blue-700", yellow: "bg-amber-50 border-amber-200 text-amber-700", green: "bg-green-50 border-green-200 text-green-700", red: "bg-red-50 border-red-200 text-red-700" };
   return <div className={`rounded-xl border p-4 text-sm leading-relaxed ${cls[color]}`}>{children}</div>;
 };
 
 const Card = ({ children, className = "" }) => (
-  <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm p-6 ${className}`}>{children}</div>
+  <div className={`bg-white rounded-2xl border border-slate-200 p-6 ${className}`}>{children}</div>
 );
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function USDAIntelligence() {
-  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const scenarioId = searchParams.get("scenarioId");
+
+  const { reportFindings, savedRecordId, setSavedRecordId } = useDecisionRecord("USDA_INTELLIGENCE", scenarioId);
+
   const [step, setStep] = useState(1);
-  const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-
-  const [sp] = useSearchParams();
-  const scenarioIdParam = sp.get("scenarioId");
-  const { reportFindings } = useDecisionRecord(scenarioIdParam);
-  const [savedRecordId, setSavedRecordId] = useState(null);
-  const [recordSaving, setRecordSaving] = useState(false);
-  const [scenarios,    setScenarios]    = useState([]);
-  const [scenariosLoading, setScenariosLoading] = useState(!scenarioIdParam);
-  const [search,       setSearch]       = useState('');
-  const [showAll,      setShowAll]      = useState(false);
-
-  useEffect(() => {
-    if (scenarioIdParam) return;
-    getDocs(collection(db, 'scenarios'))
-      .then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
-      .catch(console.error)
-      .finally(() => setScenariosLoading(false));
-  }, [scenarioIdParam]);
-
-  // localStorage autosave
-  const LS_KEY = scenarioIdParam ? `lb_usdaintelligence_${scenarioIdParam}` : "lb_usdaintelligence_default";
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(LS_KEY) || "null");
-      if (saved) {
-        if (saved.address) setAddress(saved.address);
-        if (saved.ruralStatus) setRuralStatus(saved.ruralStatus);
-        if (saved.interestRate) setInterestRate(saved.interestRate);
-        if (saved.baseLoan) setBaseLoan(saved.baseLoan);
-      }
-    } catch {}
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => {
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ address, ruralStatus, interestRate, baseLoan })); } catch {}
-  }, [LS_KEY, address, ruralStatus, interestRate, baseLoan]);
-
-  const handleSaveToRecord = async () => {
-    setRecordSaving(true);
-    try {
-      const writtenId = await reportFindings("USDA_INTELLIGENCE", {
-        address, ruralStatus, verdict, gus,
-        adjustedHHIncome, effectiveLimit, incomeRatio,
-        frontDTI, backDTI, dtiStatus,
-        gfAmt, totalLoan, annualFeeMonthly, piti,
-        compFactors: Object.keys(compFactors).filter(k => compFactors[k]),
-        hardFlags: hardFlags.map(f => f.label),
-        warnFlags: warnFlags.map(f => f.label),
-        timestamp: new Date().toISOString(),
-      });
-      if (writtenId) setSavedRecordId(writtenId);
-    } catch (e) { console.error("Decision Record save failed:", e); }
-    finally { setRecordSaving(false); }
-  };
+  const [saved, setSaved] = useState(false);
 
   // Step 1
   const [address, setAddress] = useState("");
@@ -238,11 +186,37 @@ export default function USDAIntelligence() {
   // Step 9
   const [loNotes, setLoNotes] = useState("");
 
+  // ─── Scenario Pre-load ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!scenarioId) return;
+    const load = async () => {
+      try {
+        const snap = await getDoc(doc(db, "scenarios", scenarioId));
+        if (!snap.exists()) return;
+        const d = snap.data();
+        if (d.propertyAddress) setAddress(d.propertyAddress);
+        if (d.purchasePrice) setPurchasePrice(String(d.purchasePrice));
+        if (d.loanAmount) setBaseLoan(String(d.loanAmount));
+        if (d.interestRate) setInterestRate(String(d.interestRate));
+        if (d.grossMonthlyIncome) setBorrowerInc(String(d.grossMonthlyIncome));
+        if (d.coBorrowerIncome) setCoBorrowerInc(String(d.coBorrowerIncome));
+        if (d.monthlyDebts) setOtherDebts(String(d.monthlyDebts));
+        if (d.creditScore) setCreditScore(String(d.creditScore));
+        if (d.annualTaxes) setTaxesAnnual(String(d.annualTaxes));
+        if (d.annualInsurance) setInsuranceAnnual(String(d.annualInsurance));
+        if (d.hoaMonthly) setHoaMonthly(String(d.hoaMonthly));
+        if (d.householdSize) setHhSize(Number(d.householdSize));
+      } catch (err) {
+        console.error("Scenario load error:", err);
+      }
+    };
+    load();
+  }, [scenarioId]);
+
   // ─── Derived ──────────────────────────────────────────────────────────────
   const grossMonthly = n(borrowerInc) + n(coBorrowerInc);
   const grossAnnual = grossMonthly * 12;
 
-  // USDA Household Income deductions
   const depDeduction = numDependents * 480;
   const elderlyDed = elderlyMember ? 400 : 0;
   const childcareDed = n(childcareCosts);
@@ -253,13 +227,11 @@ export default function USDAIntelligence() {
   const totalDeductions = depDeduction + elderlyDed + childcareDed + medicalDed + studentExclusion;
   const adjustedHHIncome = Math.max(0, grossAnnual + nonBorrowerAnnual + assetImputed - totalDeductions);
 
-  // Income limit
   const effectiveLimit = useDefaultLimit
     ? (USDA_BASE_LIMITS[Math.min(hhSize, 8)] || 110650)
     : n(countyLimit);
   const incomeRatio = effectiveLimit > 0 ? adjustedHHIncome / effectiveLimit : 0;
 
-  // Loan math
   const baseLoanNum = n(baseLoan);
   const gfAmt = baseLoanNum * GUARANTEE_FEE_PCT / 100;
   const totalLoan = financeGF ? baseLoanNum + gfAmt : baseLoanNum;
@@ -271,16 +243,15 @@ export default function USDAIntelligence() {
   const hoaMo = n(hoaMonthly);
   const piti = pi + taxMo + insMo + hoaMo + annualFeeMonthly;
 
-  // DTI
   const frontDTI = grossMonthly > 0 ? piti / grossMonthly : 0;
   const backDTI = grossMonthly > 0 ? (piti + n(otherDebts)) / grossMonthly : 0;
   const cfCount = Object.values(compFactors).filter(Boolean).length;
   const hasCompFactors = cfCount >= 1;
+  const dtiBackLimit = hasCompFactors ? DTI_BACK_EXTENDED : DTI_BACK_LIMIT;
   const dtiStatus = frontDTI <= DTI_FRONT_LIMIT && backDTI <= DTI_BACK_LIMIT ? "PASS"
     : frontDTI <= DTI_FRONT_LIMIT && backDTI <= DTI_BACK_EXTENDED && hasCompFactors ? "BORDERLINE"
     : "FAIL";
 
-  // GUS simulation
   const cs = parseInt(creditScore) || 0;
   const gus = (() => {
     if (ruralStatus !== "eligible") return { verdict: "REFER", reason: "Property eligibility not confirmed" };
@@ -291,11 +262,9 @@ export default function USDAIntelligence() {
     return { verdict: "REFER WITH CAUTION", reason: "Multiple risk factors present — manual underwrite required" };
   })();
 
-  // Property issues
   const hardFlags = PROPERTY_FLAGS.filter(f => propFlags[f.id] && f.severity === "fail");
   const warnFlags = PROPERTY_FLAGS.filter(f => propFlags[f.id] && f.severity === "warn");
 
-  // Overall verdict
   const verdict = (() => {
     if (ruralStatus === "ineligible" || hardFlags.length > 0) return "NOT_ELIGIBLE";
     if (incomeRatio > 1.15) return "NOT_ELIGIBLE";
@@ -313,11 +282,10 @@ export default function USDAIntelligence() {
       decisionRecordFindings:  { USDA_INTEL: { ruralEligible: ruralStatus === 'eligible', eligible: verdict === 'ELIGIBLE', propertyPass: ruralStatus === 'eligible', incomePass: incomeRatio <= 1.0 } },
       scenarioData:            {},
       completedModules:        [],
-      scenarioId:              scenarioIdParam,
+      scenarioId,
       onWriteToDecisionRecord: null,
     });
 
-  // Comparison
   const pp = n(purchasePrice);
   const usdaMonthly = piti;
   const usdaCash = financeGF ? 0 : gfAmt;
@@ -341,162 +309,107 @@ export default function USDAIntelligence() {
   const convCash = convDown;
   const convTotal = convMonthly * 360;
 
-  const saveDecisionRecord = async () => {
+  // ─── Save Decision Record ─────────────────────────────────────────────────
+  const handleSave = async () => {
     setSaving(true);
     try {
-      await addDoc(collection(db, "decisionRecords"), {
-        module: "USDA Intelligence™",
-        timestamp: serverTimestamp(),
-        address, ruralStatus, verdict, gus,
-        adjustedHHIncome, effectiveLimit, incomeRatio,
-        frontDTI, backDTI, dtiStatus,
-        gfAmt, totalLoan, annualFeeMonthly, piti,
-        compFactors: Object.keys(compFactors).filter(k => compFactors[k]),
-        hardFlags: hardFlags.map(f => f.label),
-        warnFlags: warnFlags.map(f => f.label),
-        comparison: { usda: { monthly: usdaMonthly, cash: usdaCash, total: usdaTotal }, fha: { monthly: fhaMonthly, cash: fhaCash, total: fhaTotal }, conv: { monthly: convMonthly, cash: convCash, total: convTotal } },
-        loNotes,
+      const riskFlags = [];
+      if (hardFlags.length > 0) riskFlags.push(...hardFlags.map(f => ({ field: f.id, message: f.label, severity: "HIGH" })));
+      if (warnFlags.length > 0) riskFlags.push(...warnFlags.map(f => ({ field: f.id, message: f.label, severity: "MEDIUM" })));
+      if (incomeRatio > 1.0) riskFlags.push({ field: "incomeRatio", message: `Household income at ${(incomeRatio * 100).toFixed(1)}% of USDA limit`, severity: incomeRatio > 1.15 ? "HIGH" : "MEDIUM" });
+      if (dtiStatus === "FAIL") riskFlags.push({ field: "dti", message: `Back-end DTI ${fmtPct(backDTI)} exceeds USDA limit`, severity: "HIGH" });
+      if (dtiStatus === "BORDERLINE") riskFlags.push({ field: "dti", message: `Back-end DTI ${fmtPct(backDTI)} — borderline, requires comp factors`, severity: "MEDIUM" });
+      if (donutHole) riskFlags.push({ field: "ruralEligibility", message: "Potential ineligible donut hole — parcel-level verification required", severity: "MEDIUM" });
+      if (ruralStatus === "unknown") riskFlags.push({ field: "ruralEligibility", message: "Rural eligibility not yet verified", severity: "MEDIUM" });
+      if (manualUW) riskFlags.push({ field: "underwrite", message: "Manual underwrite pathway — compile compensating factor file", severity: "LOW" });
+
+      const writtenId = await reportFindings({
+        verdict,
+        summary: `USDA Intelligence — ${verdict}. GUS Simulation: ${gus.verdict}. DTI: Front ${fmtPct(frontDTI)} / Back ${fmtPct(backDTI)} (${dtiStatus}). Income ratio: ${(incomeRatio * 100).toFixed(1)}% of limit.`,
+        riskFlags,
+        findings: {
+          address,
+          ruralStatus,
+          verdict,
+          gusVerdict: gus.verdict,
+          gusReason: gus.reason,
+          adjustedHHIncome,
+          effectiveLimit,
+          incomeRatio,
+          totalDeductions,
+          frontDTI,
+          backDTI,
+          dtiStatus,
+          creditScore: cs,
+          gfAmt,
+          totalLoan,
+          annualFeeMonthly,
+          piti,
+          financeGF,
+          compFactors: Object.keys(compFactors).filter(k => compFactors[k]),
+          compFactorCount: cfCount,
+          manualUW,
+          hardFlags: hardFlags.map(f => f.label),
+          warnFlags: warnFlags.map(f => f.label),
+          donutHole,
+          comparison: {
+            usda: { monthly: usdaMonthly, cash: usdaCash, total: usdaTotal },
+            fha: { monthly: fhaMonthly, cash: fhaCash, total: fhaTotal },
+            conv: { monthly: convMonthly, cash: convCash, total: convTotal },
+          },
+          loNotes,
+        },
+        completeness: {
+          propertyAddress: !!address,
+          ruralStatusSet: !!ruralStatus,
+          incomeEntered: grossMonthly > 0,
+          loanSetup: baseLoanNum > 0 && rate > 0,
+          verdictReached: !!verdict,
+        },
       });
+      if (writtenId) setSavedRecordId(writtenId);
       setSaved(true);
     } catch (err) {
-      console.error(err);
+      console.error("Decision Record save error:", err);
       alert("Save failed — check Firestore connection.");
     } finally {
       setSaving(false);
     }
   };
 
-  // ─── Picker Page ─────────────────────────────────────────────────────────────
-  if (!scenarioIdParam) {
-    if (scenariosLoading) return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><div className="text-slate-400 text-sm">Loading…</div></div>;
-    const q        = search.toLowerCase().trim();
-    const sorted   = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
-    const filtered = q ? sorted.filter(s => (s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim()).toLowerCase().includes(q)) : sorted;
-    const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
-    const hasMore   = !q && !showAll && filtered.length > 5;
-    return (
-      <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
-        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
-        <div className="bg-gradient-to-br from-slate-900 to-green-950 px-6 py-10">
-          <div className="max-w-2xl mx-auto">
-            <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-green-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-green-600 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-green-900/40">13</div>
-              <div>
-                <span className="text-xs font-bold tracking-widest text-green-400 uppercase">Stage 2 — Programs</span>
-                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">USDA Intelligence™</h1>
-              </div>
-            </div>
-            <p className="text-green-300 text-sm leading-relaxed mb-5">Analyze USDA Rural Development eligibility, income limits, GUS scoring, and guarantee fee calculations for Section 502 loans.</p>
-            <div className="flex flex-wrap gap-2">
-              {['Rural Eligibility', 'Income Limits', 'GUS Scoring', 'Guarantee Fee', 'DTI Analysis', 'Decision Record'].map(tag => (
-                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-green-200 px-3 py-1 rounded-full font-medium">{tag}</span>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="max-w-2xl mx-auto px-6 py-8">
-          <div className="mb-5">
-            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">Select a Scenario</h2>
-            <p className="text-xs text-slate-400">Search by name or pick from your most recent files.</p>
-          </div>
-          <div className="relative mb-4">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
-            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
-              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-300 transition-all" />
-            {search && <button onClick={() => setSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>}
-          </div>
-          {scenarios.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
-              <p className="text-3xl mb-3">📂</p><p className="text-sm font-semibold text-slate-600">No scenarios found</p>
-              <button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-green-600 hover:text-green-800 underline">→ Go to Scenario Creator</button>
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
-              <p className="text-2xl mb-2">🔍</p><p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p>
-              <button onClick={() => setSearch('')} className="mt-2 text-xs text-green-500 hover:underline">Clear search</button>
-            </div>
-          ) : (
-            <div className="space-y-2.5">
-              {!q && !showAll && <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-1">Recently Updated</p>}
-              {displayed.map(s => {
-                const sName  = s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || 'Unnamed Scenario';
-                const amount = parseFloat(s.loanAmount || 0);
-                return (
-                  <button key={s.id} onClick={() => navigate('/usda-intelligence?scenarioId=' + s.id)}
-                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-green-300 hover:shadow-md hover:bg-green-50/30 transition-all group">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-green-700">{sName}</div>
-                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                          {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
-                          {s.loanType    && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
-                          {s.creditScore && <span className="text-xs bg-green-50 text-green-700 border border-green-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
-                        </div>
-                      </div>
-                      <span className="text-slate-300 group-hover:text-green-400 text-lg shrink-0">→</span>
-                    </div>
-                  </button>
-                );
-              })}
-              {hasMore && <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-green-500 hover:text-green-700 py-3 border border-dashed border-green-200 rounded-2xl hover:bg-green-50 transition-all">View all {filtered.length} scenarios</button>}
-              {showAll && filtered.length > 5 && <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2">↑ Show less</button>}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ fontFamily: "'DM Sans', sans-serif" }} className="min-h-screen bg-slate-50 text-slate-800">
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+    <div style={{ fontFamily: "'DM Sans', sans-serif" }} className="min-h-screen bg-slate-50">
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
-      {/* 1. DecisionRecordBanner FIRST */}
-      <div className="max-w-5xl mx-auto px-6 pt-4">
-        <DecisionRecordBanner
-          recordId={savedRecordId}
-          moduleName="USDA Intelligence™"
-          moduleKey="USDA_INTELLIGENCE"
-          onSave={handleSaveToRecord}
-          saving={recordSaving}
-        />
-      </div>
+      {/* ① DecisionRecordBanner */}
+      <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="USDA_INTELLIGENCE" />
 
-      {/* 2. ModuleNav SECOND */}
+      {/* ② ModuleNav */}
       <ModuleNav moduleNumber={13} />
 
-      {/* 3. Hero */}
-      <div className="max-w-5xl mx-auto px-6 mb-4">
-        <div className="bg-gradient-to-br from-slate-900 to-green-950 text-white rounded-3xl px-6 py-5">
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-            <div style={{ flex: 1 }}>
-              <h1 className="text-2xl font-bold text-white" style={{ fontFamily: "DM Serif Display, serif", margin: 0 }}>
-                USDA Intelligence™
-              </h1>
-              <p className="text-sm mt-1" style={{ color: "#86efac" }}>Rural Development Guaranteed Loan · Income Limits · GUS Simulation · 7 CFR Part 3555</p>
-            </div>
-            <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10, marginLeft: 24 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <span className="text-xs font-bold tracking-widest uppercase bg-green-500/20 px-3 py-1 rounded-full border border-green-400/30 text-green-700">Stage 2 — Lender Fit</span>
-                <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">Module 13</span>
-                <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-400/30 font-semibold">● LIVE</span>
-              </div>
-              {verdict && (
-                <div className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right" style={{ minWidth: 190 }}>
-                  <p className="text-xs font-medium" style={{ color: "#86efac" }}>GUS Verdict</p>
-                  <p className="text-lg font-black text-white">{gus.verdict}</p>
-                  <p className="text-xs" style={{ color: "#94a3b8" }}>{verdict === "ELIGIBLE" ? "✓ Eligible" : verdict === "BORDERLINE" ? "⚠ Borderline" : "✗ Not Eligible"}</p>
-                </div>
-              )}
-            </div>
+      {/* ③ Hero */}
+      <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl mx-4 mt-4 mb-6 p-8 print:hidden">
+        <div className="flex items-start justify-between gap-6 flex-wrap">
+          <div>
+            <p className="text-orange-400 text-xs font-bold uppercase tracking-widest mb-1.5">
+              Module 13 · Stage 2: Lender Fit
+            </p>
+            <h1 className="text-white font-bold text-3xl mb-2" style={{ fontFamily: "'DM Serif Display', Georgia, serif" }}>
+              USDA Intelligence™
+            </h1>
+            <p className="text-slate-400 text-sm max-w-lg leading-relaxed">
+              Rural Development Guaranteed Loan · 7 CFR Part 3555 · Full eligibility analysis across property, household, income, loan setup, guarantee fee, and qualifying.
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-2 flex-shrink-0">
+            <span className="bg-green-500 text-white text-xs font-bold px-3 py-1 rounded-full">LIVE</span>
+            {verdict && (
+              <Chip status={verdict === "ELIGIBLE" ? "pass" : verdict === "BORDERLINE" ? "warn" : "fail"}>
+                {verdict === "ELIGIBLE" ? "✓ ELIGIBLE" : verdict === "BORDERLINE" ? "⚠ BORDERLINE" : "✗ NOT ELIGIBLE"}
+              </Chip>
+            )}
           </div>
         </div>
-      </div>
-
-      {/* 4. ScenarioHeader */}
-      <div className="max-w-5xl mx-auto px-6">
-        <ScenarioHeader scenario={address ? { streetAddress: address } : null} moduleNumber={13} scenarioId={scenarioIdParam} />
       </div>
 
       {/* Step tabs */}
@@ -504,8 +417,8 @@ export default function USDAIntelligence() {
         <div className="max-w-5xl mx-auto flex overflow-x-auto">
           {STEPS.map(s => (
             <button key={s.id} onClick={() => setStep(s.id)}
-              className={`flex flex-col items-center px-4 py-3 text-xs font-semibold border-b-2 whitespace-nowrap transition-all ${step === s.id ? "border-green-500 text-green-700" : step > s.id ? "border-green-300 text-green-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}>
-              <span className={`w-6 h-6 rounded-full flex items-center justify-center mb-1 text-xs ${step >= s.id ? "bg-green-600 text-white" : "bg-slate-200 text-slate-500"}`}>{s.id}</span>
+              className={`flex flex-col items-center px-4 py-3 text-xs font-semibold border-b-2 whitespace-nowrap transition-all ${step === s.id ? "border-orange-500 text-orange-600" : step > s.id ? "border-green-400 text-green-600" : "border-transparent text-slate-400 hover:text-slate-600"}`}>
+              <span className={`w-6 h-6 rounded-full flex items-center justify-center mb-1 text-xs ${step >= s.id ? "bg-orange-500 text-white" : "bg-slate-100 text-slate-400"}`}>{s.id}</span>
               {s.label}
             </button>
           ))}
@@ -530,17 +443,17 @@ export default function USDAIntelligence() {
                 <div className="flex flex-wrap gap-3">
                   {[["eligible", "✅ USDA Eligible", "green"], ["ineligible", "❌ Not Eligible", "red"], ["unknown", "🔍 Not Verified", "blue"]].map(([v, l, c]) => (
                     <button key={v} onClick={() => setRuralStatus(v)}
-                      className={`px-5 py-2.5 rounded-xl font-semibold text-sm border-2 transition-all ${ruralStatus === v ? c === "green" ? "bg-green-100 border-green-500 text-green-700" : c === "red" ? "bg-red-100 border-red-500 text-red-700" : "bg-blue-100 border-blue-500 text-blue-700" : "bg-slate-100 border-slate-200 text-slate-400 hover:border-slate-400"}`}>
+                      className={`px-5 py-2.5 rounded-xl font-semibold text-sm border-2 transition-all ${ruralStatus === v ? c === "green" ? "bg-green-100 border-green-500 text-green-700" : c === "red" ? "bg-red-100 border-red-500 text-red-700" : "bg-blue-100 border-blue-500 text-blue-700" : "bg-slate-100 border-slate-200 text-slate-400 hover:border-slate-500"}`}>
                       {l}
                     </button>
                   ))}
                 </div>
-                <p className="text-xs text-slate-500 mt-2">Verify at <a href="https://eligibility.sc.egov.usda.gov" target="_blank" rel="noreferrer" className="text-green-600 hover:underline">eligibility.sc.egov.usda.gov</a> — always use parcel-level search.</p>
+                <p className="text-xs text-slate-400 mt-2">Verify at <a href="https://eligibility.sc.egov.usda.gov" target="_blank" rel="noreferrer" className="text-green-600 hover:underline">eligibility.sc.egov.usda.gov</a> — always use parcel-level search.</p>
               </div>
 
-              <label className="flex items-center gap-3 p-4 bg-yellow-900/10 border border-yellow-700/30 rounded-xl cursor-pointer">
+              <label className="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl cursor-pointer">
                 <input type="checkbox" checked={donutHole} onChange={e => setDonutHole(e.target.checked)} className="w-4 h-4 accent-yellow-500" />
-                <span className="text-sm text-yellow-200"><strong>Ineligible "Donut Hole"</strong> — property appears to be in an ineligible pocket within an otherwise eligible county. Requires parcel-level verification.</span>
+                <span className="text-sm text-amber-600"><strong>Ineligible "Donut Hole"</strong> — property appears to be in an ineligible pocket within an otherwise eligible county. Requires parcel-level verification.</span>
               </label>
             </Card>
 
@@ -551,13 +464,13 @@ export default function USDAIntelligence() {
               </div>
               <div className="space-y-3">
                 {PROPERTY_FLAGS.map(flag => (
-                  <div key={flag.id} className={`rounded-xl border p-4 transition-all ${propFlags[flag.id] ? flag.severity === "fail" ? "bg-red-50 border-red-200" : "bg-yellow-50 border-yellow-200" : "bg-slate-50 border-slate-200 hover:border-slate-400"}`}>
+                  <div key={flag.id} className={`rounded-xl border p-4 transition-all ${propFlags[flag.id] ? flag.severity === "fail" ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200" : "bg-slate-50 border-slate-200 hover:border-slate-400"}`}>
                     <label className="flex items-start gap-3 cursor-pointer">
                       <input type="checkbox" checked={!!propFlags[flag.id]} onChange={e => setPropFlags(p => ({ ...p, [flag.id]: e.target.checked }))} className="w-4 h-4 mt-0.5 accent-green-500" />
                       <div>
                         <div className="text-sm font-semibold text-slate-700 flex items-center gap-2">
                           {flag.label}
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${flag.severity === "fail" ? "bg-red-900/50 text-red-700" : "bg-yellow-900/50 text-yellow-700"}`}>{flag.severity === "fail" ? "Disqualifying" : "Condition"}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${flag.severity === "fail" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>{flag.severity === "fail" ? "Disqualifying" : "Condition"}</span>
                         </div>
                         {propFlags[flag.id] && <p className="text-xs text-slate-400 mt-1">{flag.note}</p>}
                       </div>
@@ -588,18 +501,18 @@ export default function USDAIntelligence() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-2">Total Household Size</label>
-                  <select value={hhSize} onChange={e => setHhSize(parseInt(e.target.value))} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-slate-800">
+                  <select value={hhSize} onChange={e => setHhSize(parseInt(e.target.value))} className="w-full bg-slate-100 border border-slate-200 rounded-xl px-4 py-3 text-slate-800">
                     {[1,2,3,4,5,6,7,8].map(n => <option key={n} value={n}>{n} person{n > 1 ? "s" : ""}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-2">Dependents Under 18</label>
-                  <select value={numDependents} onChange={e => setNumDependents(parseInt(e.target.value))} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-slate-800">
+                  <select value={numDependents} onChange={e => setNumDependents(parseInt(e.target.value))} className="w-full bg-slate-100 border border-slate-200 rounded-xl px-4 py-3 text-slate-800">
                     {[0,1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
                   </select>
                 </div>
               </div>
-              <label className="flex items-center gap-3 p-4 bg-slate-100 rounded-xl cursor-pointer">
+              <label className="flex items-center gap-3 p-4 bg-slate-100/40 rounded-xl cursor-pointer">
                 <input type="checkbox" checked={elderlyMember} onChange={e => setElderlyMember(e.target.checked)} className="w-4 h-4 accent-green-500" />
                 <span className="text-sm text-slate-700">Household member age 62+ or disabled — unlocks <strong className="text-green-600">$400 elderly deduction</strong></span>
               </label>
@@ -624,14 +537,13 @@ export default function USDAIntelligence() {
               </div>
             </Card>
 
-            {/* Income Summary */}
             <Card className="border-green-200">
               <h3 className="font-bold text-green-600 mb-4">Household Income Transformer™ — Summary</h3>
               <div className="space-y-2 text-sm">
                 {[
                   ["Borrower + Co-Borrower (Annual)", fmt(grossAnnual)],
                   ["Non-Borrower Adult Income (Annual)", fmt(nonBorrowerAnnual)],
-                  ["Asset Imputed Income", fmt(assetImputed), assetImputed > 0 ? "text-yellow-700" : ""],
+                  ["Asset Imputed Income", fmt(assetImputed), assetImputed > 0 ? "text-amber-600" : ""],
                   ["— Dependent Deductions", `−${fmt(depDeduction)}`, "text-green-600"],
                   ["— Elderly Deduction", `−${fmt(elderlyDed)}`, "text-green-600"],
                   ["— Childcare Deduction", `−${fmt(childcareDed)}`, "text-green-600"],
@@ -647,7 +559,7 @@ export default function USDAIntelligence() {
                   <span className="text-slate-800">Adjusted Annual Household Income</span>
                   <span className="text-green-600">{fmt(adjustedHHIncome)}</span>
                 </div>
-                <p className="text-xs text-slate-500">Total deductions applied: {fmt(totalDeductions)}</p>
+                <p className="text-xs text-slate-400">Total deductions applied: {fmt(totalDeductions)}</p>
               </div>
             </Card>
 
@@ -668,7 +580,7 @@ export default function USDAIntelligence() {
                 <input type="checkbox" checked={useDefaultLimit} onChange={e => setUseDefaultLimit(e.target.checked)} className="w-4 h-4 accent-green-500" />
                 <span className="text-sm text-slate-700">
                   Use 2024 national baseline limit — <strong>{hhSize <= 4 ? "$110,650" : "$146,050"}</strong> for {hhSize}-person household
-                  <span className="text-slate-500 ml-2">(uncheck to enter county-specific limit)</span>
+                  <span className="text-slate-400 ml-2">(uncheck to enter county-specific limit)</span>
                 </span>
               </label>
               {!useDefaultLimit && (
@@ -679,8 +591,8 @@ export default function USDAIntelligence() {
             <Card className="space-y-5">
               <h3 className="font-bold text-slate-800">Income Limit Analysis</h3>
               <div className="grid grid-cols-3 gap-4 text-center">
-                {[["Adjusted HH Income", fmt(adjustedHHIncome), ""], ["USDA Limit", fmt(effectiveLimit), ""], ["Income Ratio", `${(incomeRatio * 100).toFixed(1)}%`, incomeRatio <= 1.0 ? "text-green-600" : incomeRatio <= 1.15 ? "text-yellow-400" : "text-red-400"]].map(([l, v, c]) => (
-                  <div key={l} className="bg-slate-100 rounded-xl p-4">
+                {[["Adjusted HH Income", fmt(adjustedHHIncome), ""], ["USDA Limit", fmt(effectiveLimit), ""], ["Income Ratio", `${(incomeRatio * 100).toFixed(1)}%`, incomeRatio <= 1.0 ? "text-green-600" : incomeRatio <= 1.15 ? "text-amber-600" : "text-red-600"]].map(([l, v, c]) => (
+                  <div key={l} className="bg-slate-100/40 rounded-xl p-4">
                     <div className="text-xs text-slate-400 mb-1">{l}</div>
                     <div className={`text-xl font-bold ${c || "text-slate-800"}`}>{v}</div>
                   </div>
@@ -689,7 +601,7 @@ export default function USDAIntelligence() {
 
               {effectiveLimit > 0 && (
                 <div>
-                  <div className="flex justify-between text-xs text-slate-500 mb-1">
+                  <div className="flex justify-between text-xs text-slate-400 mb-1">
                     <span>$0</span>
                     <span>100% — {fmt(effectiveLimit)}</span>
                     <span>115% — {fmt(effectiveLimit * 1.15)}</span>
@@ -701,8 +613,8 @@ export default function USDAIntelligence() {
                   </div>
                   <div className="flex gap-4 mt-2 text-xs">
                     <span className="text-green-600">✓ PASS ≤100%</span>
-                    <span className="text-yellow-400">⚠ BORDERLINE 100–115%</span>
-                    <span className="text-red-400">✗ FAIL &gt;115%</span>
+                    <span className="text-amber-600">⚠ BORDERLINE 100–115%</span>
+                    <span className="text-red-600">✗ FAIL &gt;115%</span>
                   </div>
                 </div>
               )}
@@ -735,7 +647,7 @@ export default function USDAIntelligence() {
                 <Input label="Interest Rate (%)" value={interestRate} onChange={setInterestRate} prefix="" />
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-2">Loan Term</label>
-                  <select value={termMonths} onChange={e => setTermMonths(parseInt(e.target.value))} className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-slate-800">
+                  <select value={termMonths} onChange={e => setTermMonths(parseInt(e.target.value))} className="w-full bg-slate-100 border border-slate-200 rounded-xl px-4 py-3 text-slate-800">
                     <option value={360}>30-Year Fixed</option>
                     <option value={240}>20-Year Fixed</option>
                   </select>
@@ -762,7 +674,7 @@ export default function USDAIntelligence() {
                   ["Condos", "Rarely approved — USDA project approval required"],
                   ["Manufactured", "Special rules — new only, permanently affixed"],
                 ].map(([l, v]) => (
-                  <div key={l} className="flex justify-between bg-slate-100 rounded-xl p-3">
+                  <div key={l} className="flex justify-between bg-slate-50 rounded-xl p-3">
                     <span className="text-slate-400">{l}</span>
                     <span className="text-slate-700 text-right">{v}</span>
                   </div>
@@ -786,7 +698,7 @@ export default function USDAIntelligence() {
               <h3 className="font-bold text-slate-800">Upfront Guarantee Fee</h3>
               <div className="grid grid-cols-3 gap-4 text-center">
                 {[["Base Loan", fmt(baseLoanNum), ""], ["1.00% Guarantee Fee", fmt(gfAmt), "text-green-600"], ["Total Loan (if financed)", fmt(baseLoanNum + gfAmt), ""]].map(([l, v, c]) => (
-                  <div key={l} className="bg-slate-100 rounded-xl p-4">
+                  <div key={l} className="bg-slate-100/40 rounded-xl p-4">
                     <div className="text-xs text-slate-400 mb-1">{l}</div>
                     <div className={`text-xl font-bold ${c || "text-slate-800"}`}>{v}</div>
                   </div>
@@ -796,7 +708,7 @@ export default function USDAIntelligence() {
               <div className="grid grid-cols-2 gap-4">
                 {[[true, "Finance into Loan", `Adds ${fmt(gfAmt)} to loan. Zero cash required for GF. Slightly higher monthly payment.`], [false, "Pay Upfront at Closing", `${fmt(gfAmt)} cash required at closing. Lower loan balance and monthly P&I.`]].map(([val, label, desc]) => (
                   <button key={label} onClick={() => setFinanceGF(val)}
-                    className={`p-4 rounded-xl border-2 text-left transition-all ${financeGF === val ? "bg-green-50 border-green-500" : "bg-slate-50 border-slate-200 hover:border-slate-400"}`}>
+                    className={`p-4 rounded-xl border-2 text-left transition-all ${financeGF === val ? "bg-green-900/20 border-green-500" : "bg-slate-100/20 border-slate-200 hover:border-slate-500"}`}>
                     <div className="font-bold text-sm text-slate-800 mb-1">{label}</div>
                     <div className="text-xs text-slate-400">{desc}</div>
                   </button>
@@ -827,14 +739,14 @@ export default function USDAIntelligence() {
                       <div className="font-bold text-slate-800 mb-3">{prog}</div>
                       <div className="text-sm space-y-1">
                         <div className="text-slate-600">{up} upfront (financeable)</div>
-                        <div className={`font-bold ${c === "green" ? "text-green-600" : "text-blue-400"}`}>{mo}/mo</div>
-                        <div className="text-xs text-slate-500 mt-2">{note}</div>
+                        <div className={`font-bold ${c === "green" ? "text-green-600" : "text-blue-600"}`}>{mo}/mo</div>
+                        <div className="text-xs text-slate-400 mt-2">{note}</div>
                       </div>
                     </div>
                   ))}
                 </div>
                 {fhaMIPMo > annualFeeMonthly && (
-                  <div className="mt-4 bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-200">
+                  <div className="mt-4 bg-green-900/15 border border-green-200 rounded-xl p-4 text-sm text-green-600">
                     <strong>USDA Monthly Savings vs FHA:</strong> {fmtD(fhaMIPMo - annualFeeMonthly)}/mo · {fmt((fhaMIPMo - annualFeeMonthly) * 360)} over 30 years
                   </div>
                 )}
@@ -860,17 +772,17 @@ export default function USDAIntelligence() {
                   const pass = val <= limit;
                   const borderline = i === 1 && val > DTI_BACK_LIMIT && val <= DTI_BACK_EXTENDED && hasCompFactors;
                   return (
-                    <div key={label} className={`rounded-xl border p-5 text-center ${pass ? "bg-green-50 border-green-200" : borderline ? "bg-yellow-50 border-yellow-700/40" : "bg-red-50 border-red-700/40"}`}>
+                    <div key={label} className={`rounded-xl border p-5 text-center ${pass ? "bg-green-900/15 border-green-700/40" : borderline ? "bg-yellow-900/15 border-yellow-700/40" : "bg-red-900/15 border-red-700/40"}`}>
                       <div className="text-xs text-slate-400 mb-2">{label}</div>
-                      <div className={`text-4xl font-black mb-2 ${pass ? "text-green-600" : borderline ? "text-yellow-400" : "text-red-400"}`}>{fmtPct(val)}</div>
-                      <div className="text-xs text-slate-500 mb-2">{sublabel}</div>
+                      <div className={`text-4xl font-black mb-2 ${pass ? "text-green-600" : borderline ? "text-amber-600" : "text-red-600"}`}>{fmtPct(val)}</div>
+                      <div className="text-xs text-slate-400 mb-2">{sublabel}</div>
                       <Chip status={pass ? "pass" : borderline ? "warn" : "fail"}>{pass ? "PASS" : borderline ? "BORDERLINE" : "FAIL"}</Chip>
                     </div>
                   );
                 })}
               </div>
 
-              <div className="bg-slate-100 rounded-xl p-4 space-y-2 text-sm">
+              <div className="bg-slate-50 rounded-xl p-4 space-y-2 text-sm">
                 <div className="font-semibold text-slate-700 mb-2">Payment Breakdown</div>
                 {[["P&I", fmtD(pi)], ["Property Taxes", fmtD(taxMo)], ["Homeowners Insurance", fmtD(insMo)], ["HOA", fmtD(hoaMo)], ["USDA Annual Fee", fmtD(annualFeeMonthly)]].map(([l, v]) => (
                   <div key={l} className="flex justify-between text-slate-400"><span>{l}</span><span className="text-slate-700">{v}</span></div>
@@ -890,7 +802,7 @@ export default function USDAIntelligence() {
                   const auto = cf.autoFn ? cf.autoFn(creditScore) : false;
                   const checked = auto || !!compFactors[cf.id];
                   return (
-                    <label key={cf.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${checked ? "bg-green-50 border-green-200" : "bg-slate-50 border-slate-200 hover:border-slate-400"}`}>
+                    <label key={cf.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer ${checked ? "bg-green-900/15 border-green-700/40" : "bg-slate-50 border-slate-200 hover:border-slate-400"}`}>
                       <input type="checkbox" checked={checked} disabled={auto} onChange={e => setCompFactors(p => ({ ...p, [cf.id]: e.target.checked }))} className="w-4 h-4 accent-green-500" />
                       <span className="text-sm text-slate-700 flex items-center gap-2">
                         {cf.label}
@@ -902,17 +814,17 @@ export default function USDAIntelligence() {
               </div>
               <label className="flex items-center gap-3 p-4 bg-blue-900/10 border border-blue-700/30 rounded-xl cursor-pointer">
                 <input type="checkbox" checked={manualUW} onChange={e => setManualUW(e.target.checked)} className="w-4 h-4 accent-blue-500" />
-                <span className="text-sm text-blue-200"><strong>Manual Underwrite Pathway</strong> — GUS likely to return Refer; this file will be manually underwritten</span>
+                <span className="text-sm text-blue-600"><strong>Manual Underwrite Pathway</strong> — GUS likely to return Refer; this file will be manually underwritten</span>
               </label>
             </Card>
 
-            <div className={`rounded-2xl border p-6 space-y-3 ${gus.verdict === "ACCEPT" ? "bg-green-50 border-green-200" : gus.verdict === "REFER" ? "bg-yellow-50 border-yellow-700/40" : "bg-red-50 border-red-700/40"}`}>
+            <div className={`rounded-2xl border p-6 space-y-3 ${gus.verdict === "ACCEPT" ? "bg-green-900/15 border-green-700/40" : gus.verdict === "REFER" ? "bg-yellow-900/15 border-yellow-700/40" : "bg-red-900/15 border-red-700/40"}`}>
               <h3 className="font-bold text-slate-800">GUS Simulation™</h3>
               <div className="flex items-center gap-4">
-                <div className={`text-2xl font-black ${gus.verdict === "ACCEPT" ? "text-green-600" : gus.verdict === "REFER" ? "text-yellow-400" : "text-red-400"}`}>{gus.verdict}</div>
+                <div className={`text-2xl font-black ${gus.verdict === "ACCEPT" ? "text-green-600" : gus.verdict === "REFER" ? "text-amber-600" : "text-red-600"}`}>{gus.verdict}</div>
                 <div className="text-sm text-slate-600">{gus.reason}</div>
               </div>
-              <p className="text-xs text-slate-500">This simulation is based on primary USDA criteria. Actual GUS results depend on full credit file, employment history, and lender overlays.</p>
+              <p className="text-xs text-slate-400">This simulation is based on primary USDA criteria. Actual GUS results depend on full credit file, employment history, and lender overlays.</p>
             </div>
 
             <NavRow onBack={() => setStep(5)} onNext={() => setStep(7)} nextLabel="Next: Comparison →" />
@@ -935,20 +847,20 @@ export default function USDAIntelligence() {
                     { name: "🏦 FHA", down: `3.5% / ${fmt(fhaDown)}`, monthly: fhaMonthly, cash: fhaCash, total: fhaTotal, mi: `${fmtD(fhaMIPMo)}/mo MIP (life of loan)`, note: "Best for non-rural areas or borrowers who don't qualify for USDA. Higher cash requirement.", eligible: true, highlight: false },
                     { name: "📊 Conventional", down: `5% / ${fmt(convDown)}`, monthly: convMonthly, cash: convCash, total: convTotal, mi: `${fmtD(convPMIMo)}/mo PMI (removable)`, note: "PMI can be removed at 80% LTV. Best for borrowers with stronger credit and down payment.", eligible: true, highlight: false },
                   ].map(prog => (
-                    <div key={prog.name} className={`rounded-2xl border p-5 space-y-4 ${prog.highlight ? "bg-green-50 border-green-200" : "bg-white border-slate-200"}`}>
+                    <div key={prog.name} className={`rounded-2xl border p-5 space-y-4 ${prog.highlight ? "bg-green-900/15 border-green-500/50" : "bg-white border-slate-200"}`}>
                       <div className="flex items-center justify-between">
                         <h3 className="font-bold text-slate-800 text-sm">{prog.name}</h3>
-                        {prog.highlight && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Zero Down</span>}
+                        {prog.highlight && <span className="text-xs bg-green-700/40 text-green-600 px-2 py-0.5 rounded-full">Zero Down</span>}
                         {!prog.eligible && <Chip status="fail">Not Eligible</Chip>}
                       </div>
                       <div className="space-y-2 text-sm">
-                        <div className="flex justify-between"><span className="text-slate-500">Down</span><span className="text-slate-700">{prog.down}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Monthly</span><span className={`font-bold ${prog.highlight ? "text-green-600" : "text-slate-700"}`}>{fmtD(prog.monthly)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">Cash to Close</span><span className="text-slate-700">{fmt(prog.cash)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-400">Down</span><span className="text-slate-700">{prog.down}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-400">Monthly</span><span className={`font-bold ${prog.highlight ? "text-green-600" : "text-slate-700"}`}>{fmtD(prog.monthly)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-400">Cash to Close</span><span className="text-slate-700">{fmt(prog.cash)}</span></div>
                         <div className="flex justify-between"><span className="text-slate-400">MI / Fee</span><span className="text-slate-600 text-xs text-right">{prog.mi}</span></div>
-                        <div className="flex justify-between border-t border-slate-200 pt-2"><span className="text-slate-500">30yr Total</span><span className="text-slate-700">{fmt(prog.total)}</span></div>
+                        <div className="flex justify-between border-t border-slate-200 pt-2"><span className="text-slate-400">30yr Total</span><span className="text-slate-700">{fmt(prog.total)}</span></div>
                       </div>
-                      <p className="text-xs text-slate-500">{prog.note}</p>
+                      <p className="text-xs text-slate-400">{prog.note}</p>
                     </div>
                   ))}
                 </div>
@@ -987,10 +899,10 @@ export default function USDAIntelligence() {
               <>
                 {incomeRatio > 1.0 && (
                   <Card className="border-yellow-700/40 space-y-4">
-                    <h3 className="font-bold text-yellow-700">⚠ Income Reduction Strategies</h3>
+                    <h3 className="font-bold text-amber-600">⚠ Income Reduction Strategies</h3>
                     <div className="space-y-3">
                       {RESCUE_INCOME.map(s => (
-                        <div key={s.title} className="bg-slate-100 rounded-xl p-4">
+                        <div key={s.title} className="bg-slate-50 rounded-xl p-4">
                           <div className="font-semibold text-slate-800 text-sm mb-1">{s.title}</div>
                           <div className="text-xs text-slate-400">{s.detail}</div>
                         </div>
@@ -1001,10 +913,10 @@ export default function USDAIntelligence() {
 
                 {dtiStatus !== "PASS" && (
                   <Card className="border-red-700/40 space-y-4">
-                    <h3 className="font-bold text-red-700">🔧 DTI Rescue Strategies</h3>
+                    <h3 className="font-bold text-red-600">🔧 DTI Rescue Strategies</h3>
                     <div className="space-y-3">
                       {RESCUE_DTI.map(s => (
-                        <div key={s.title} className="bg-slate-100 rounded-xl p-4">
+                        <div key={s.title} className="bg-slate-50 rounded-xl p-4">
                           <div className="font-semibold text-slate-800 text-sm mb-1">{s.title}</div>
                           <div className="text-xs text-slate-400">{s.detail}</div>
                         </div>
@@ -1014,11 +926,11 @@ export default function USDAIntelligence() {
                 )}
 
                 {(ruralStatus !== "eligible" || hardFlags.length > 0 || warnFlags.length > 0 || donutHole) && (
-                  <Card className="border-blue-200 space-y-4">
-                    <h3 className="font-bold text-blue-700">🏠 Property Issue Strategies</h3>
+                  <Card className="border-blue-700/40 space-y-4">
+                    <h3 className="font-bold text-blue-300">🏠 Property Issue Strategies</h3>
                     <div className="space-y-3">
                       {RESCUE_PROPERTY.map(s => (
-                        <div key={s.title} className="bg-slate-100 rounded-xl p-4">
+                        <div key={s.title} className="bg-slate-50 rounded-xl p-4">
                           <div className="font-semibold text-slate-800 text-sm mb-1">{s.title}</div>
                           <div className="text-xs text-slate-400">{s.detail}</div>
                         </div>
@@ -1038,12 +950,12 @@ export default function USDAIntelligence() {
           <div className="space-y-6">
             <div>
               <h2 className="text-xl font-bold">Step 9 — Results & USDA Decision Record™</h2>
-              <p className="text-sm text-slate-400 mt-1">Full eligibility summary, red flags, and Firestore Decision Record save.</p>
+              <p className="text-sm text-slate-400 mt-1">Full eligibility summary, red flags, and Decision Record save.</p>
             </div>
 
             {/* Verdict banner */}
-            <div className={`rounded-2xl border p-8 text-center ${verdict === "ELIGIBLE" ? "bg-green-50 border-green-600/50" : verdict === "BORDERLINE" ? "bg-yellow-900/20 border-yellow-600/50" : "bg-red-900/20 border-red-600/50"}`}>
-              <div className={`text-5xl font-black mb-3 ${verdict === "ELIGIBLE" ? "text-green-600" : verdict === "BORDERLINE" ? "text-yellow-400" : "text-red-400"}`}>
+            <div className={`rounded-2xl border p-8 text-center ${verdict === "ELIGIBLE" ? "bg-green-900/20 border-green-600/50" : verdict === "BORDERLINE" ? "bg-yellow-900/20 border-yellow-600/50" : "bg-red-900/20 border-red-600/50"}`}>
+              <div className={`text-5xl font-black mb-3 ${verdict === "ELIGIBLE" ? "text-green-600" : verdict === "BORDERLINE" ? "text-amber-600" : "text-red-600"}`}>
                 {verdict === "ELIGIBLE" ? "✅ ELIGIBLE" : verdict === "BORDERLINE" ? "⚠ BORDERLINE" : "⛔ NOT ELIGIBLE"}
               </div>
               <p className="text-slate-600 text-sm">
@@ -1057,9 +969,8 @@ export default function USDAIntelligence() {
             <Card className="space-y-6">
               <h3 className="font-bold text-slate-800">Decision Record™ — Full Summary</h3>
 
-              {/* Property */}
               <div>
-                <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Property</div>
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Property</div>
                 <div className="flex flex-wrap gap-2">
                   <Chip status={ruralStatus === "eligible" ? "pass" : ruralStatus === "ineligible" ? "fail" : "warn"}>Rural: {ruralStatus === "eligible" ? "Confirmed" : ruralStatus === "ineligible" ? "Ineligible" : "Not Verified"}</Chip>
                   {hardFlags.map(f => <Chip key={f.id} status="fail">⛔ {f.label}</Chip>)}
@@ -1069,12 +980,11 @@ export default function USDAIntelligence() {
                 </div>
               </div>
 
-              {/* Income */}
               <div>
-                <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Household Income</div>
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Household Income</div>
                 <div className="grid grid-cols-4 gap-3 text-sm">
                   {[["Adj. HH Income", fmt(adjustedHHIncome)], ["USDA Limit", fmt(effectiveLimit)], ["Income Ratio", `${(incomeRatio*100).toFixed(1)}%`], ["Total Deductions", fmt(totalDeductions)]].map(([l, v]) => (
-                    <div key={l} className="bg-slate-100 rounded-xl p-3"><div className="text-xs text-slate-400">{l}</div><div className="font-bold text-slate-800">{v}</div></div>
+                    <div key={l} className="bg-slate-50 rounded-xl p-3"><div className="text-xs text-slate-400">{l}</div><div className="font-bold text-slate-800">{v}</div></div>
                   ))}
                 </div>
                 <div className="mt-2">
@@ -1082,22 +992,20 @@ export default function USDAIntelligence() {
                 </div>
               </div>
 
-              {/* Loan */}
               <div>
-                <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Loan Structure</div>
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Loan Structure</div>
                 <div className="grid grid-cols-4 gap-3 text-sm">
                   {[["Base Loan", fmt(baseLoanNum)], ["Guarantee Fee", `${fmt(gfAmt)} (${financeGF ? "financed" : "upfront"})`], ["Total Loan", fmt(totalLoan)], ["Annual Fee/mo", fmtD(annualFeeMonthly)]].map(([l, v]) => (
-                    <div key={l} className="bg-slate-100 rounded-xl p-3"><div className="text-xs text-slate-400">{l}</div><div className="font-bold text-slate-800">{v}</div></div>
+                    <div key={l} className="bg-slate-50 rounded-xl p-3"><div className="text-xs text-slate-400">{l}</div><div className="font-bold text-slate-800">{v}</div></div>
                   ))}
                 </div>
               </div>
 
-              {/* DTI */}
               <div>
-                <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">DTI & Qualifying</div>
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">DTI & Qualifying</div>
                 <div className="grid grid-cols-4 gap-3 text-sm">
                   {[["Total PITI", fmtD(piti)], ["Front-End DTI", fmtPct(frontDTI)], ["Back-End DTI", fmtPct(backDTI)], ["GUS Simulation", gus.verdict]].map(([l, v]) => (
-                    <div key={l} className="bg-slate-100 rounded-xl p-3"><div className="text-xs text-slate-400">{l}</div><div className="font-bold text-slate-800">{v}</div></div>
+                    <div key={l} className="bg-slate-50 rounded-xl p-3"><div className="text-xs text-slate-400">{l}</div><div className="font-bold text-slate-800">{v}</div></div>
                   ))}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -1107,13 +1015,12 @@ export default function USDAIntelligence() {
                 </div>
               </div>
 
-              {/* Comparison */}
               {pp > 0 && rate > 0 && (
                 <div>
-                  <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Program Comparison</div>
+                  <div className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Program Comparison</div>
                   <div className="grid grid-cols-3 gap-3 text-sm">
                     {[["🌾 USDA", fmtD(usdaMonthly), fmt(usdaCash)], ["🏦 FHA", fmtD(fhaMonthly), fmt(fhaCash)], ["📊 Conv", fmtD(convMonthly), fmt(convCash)]].map(([p, m, c]) => (
-                      <div key={p} className="bg-slate-100 rounded-xl p-3"><div className="text-xs text-slate-400 mb-1">{p}</div><div className="font-bold text-slate-800">{m}/mo</div><div className="text-xs text-slate-400">{c} CTC</div></div>
+                      <div key={p} className="bg-slate-50 rounded-xl p-3"><div className="text-xs text-slate-400 mb-1">{p}</div><div className="font-bold text-slate-800">{m}/mo</div><div className="text-xs text-slate-400">{c} CTC</div></div>
                     ))}
                   </div>
                 </div>
@@ -1125,13 +1032,13 @@ export default function USDAIntelligence() {
               <label className="block text-sm font-semibold text-slate-600 mb-2">LO Notes for Decision Record</label>
               <textarea value={loNotes} onChange={e => setLoNotes(e.target.value)} rows={4}
                 placeholder="Document manual verifications needed, lender overlays, compensating factor details, borrower-specific considerations..."
-                className="w-full bg-white border border-slate-200 rounded-xl px-4 py-3 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-green-500 text-sm" />
+                className="w-full bg-slate-100 border border-slate-200 rounded-xl px-4 py-3 text-slate-800 placeholder-slate-500 focus:outline-none focus:border-green-500 text-sm" />
             </Card>
 
             {/* Red Flags */}
             {(warnFlags.length > 0 || manualUW || incomeRatio > 1.0 || donutHole) && (
               <div className="bg-red-900/10 border border-red-700/30 rounded-2xl p-5">
-                <h3 className="text-sm font-bold text-red-700 mb-3">🚩 Red Flags Requiring LO Verification</h3>
+                <h3 className="text-sm font-bold text-red-600 mb-3">🚩 Red Flags Requiring LO Verification</h3>
                 <ul className="space-y-2 text-sm text-red-200">
                   {warnFlags.map(f => <li key={f.id}>• <strong>{f.label}:</strong> {f.note}</li>)}
                   {donutHole && <li>• <strong>Donut Hole Risk:</strong> Verify parcel eligibility at USDA map — address-level check may be incorrect</li>}
@@ -1141,11 +1048,28 @@ export default function USDAIntelligence() {
               </div>
             )}
 
+            {/* Next Step Intelligence™ */}
+            {savedRecordId && primarySuggestion && (
+              <div className="mb-5">
+                <NextStepCard
+                  suggestion={primarySuggestion}
+                  secondarySuggestions={secondarySuggestions}
+                  onFollow={logFollow}
+                  onOverride={logOverride}
+                  loanPurpose="purchase"
+                  scenarioId={scenarioId}
+                />
+              </div>
+            )}
+
             {/* Actions */}
             <div className="flex gap-4 print:hidden">
-              <button onClick={saveDecisionRecord} disabled={saving || saved}
-                className="flex-1 py-3 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white font-bold rounded-xl text-sm transition-all">
-                {saving ? "Saving..." : saved ? "✓ Saved to Decision Record" : "💾 Save Decision Record™"}
+              <button
+                onClick={handleSave}
+                disabled={saving || saved}
+                className="flex-1 py-3 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white font-bold rounded-xl text-sm transition-all"
+              >
+                {saving ? "Saving..." : saved ? "✓ Saved to Decision Record™" : "💾 Save Decision Record™"}
               </button>
               <button onClick={() => window.print()}
                 className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-sm">

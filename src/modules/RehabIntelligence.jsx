@@ -1,5 +1,5 @@
 // src/modules/RehabIntelligence.jsx
-// LoanBeacons™ — Module 18 | Stage 2: Lender Fit
+// LoanBeacons™ — Module 17 | Stage 2: Lender Fit
 // Rehab Intelligence™ — Agency renovation · Hard Money · Non-QM · DSCR Fix & Hold
 
 import { useState, useEffect, useCallback } from 'react';
@@ -10,6 +10,8 @@ import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import ScenarioHeader from '../components/ScenarioHeader';
 import ModuleNav from '../components/ModuleNav';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import NextStepCard from '../components/NextStepCard';
 // ─── Cost Ranges ──────────────────────────────────────────────────────────────
 const COST_RANGES = {
   ROOF_REPLACEMENT:  { low: 8000,   high: 20000,  label: 'Roof Replacement' },
@@ -429,6 +431,26 @@ export default function RehabIntelligence() {
   const [savedRecordId, setSavedRecordId] = useState(null);
   const { reportFindings } = useDecisionRecord(scenarioId);
 
+  // NSI — Next Step Intelligence™
+  const rawPurpose = (form.loanPurpose || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('refi') ? 'rate_term_refi' : 'purchase';
+
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
+    useNextStepIntelligence({
+      currentModuleKey:       'REHAB_INTEL',
+      loanPurpose,
+      decisionRecordFindings: {
+        REHAB_INTEL: {
+          productSelected: !!selectedProductId,
+          scenarioLoaded:  !!scenarioId,
+        },
+      },
+      scenarioData:            form || {},
+      completedModules:        [],
+      scenarioId:              scenarioId,
+      onWriteToDecisionRecord: null,
+    });
+
   const lsKey = scenarioId ? `lb_rehab_${scenarioId}` : null;
 
   useEffect(() => {
@@ -603,7 +625,7 @@ export default function RehabIntelligence() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-6', max_tokens: 1500,
+          model: 'claude-sonnet-4-20250514', max_tokens: 1500,
           messages: [{ role: 'user', content: `You are a senior renovation and hard money mortgage specialist. Analyze this deal.
 
 SCENARIO:
@@ -638,21 +660,18 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
     if (!rehabCost) return;
     setRecordSaving(true);
     try {
-      const flags = [];
-      if (eligibleProducts.length === 0) flags.push({ flagCode: 'NO_ELIGIBLE_PRODUCTS', sourceModule: 'REHAB_INTELLIGENCE', severity: 'HIGH', detail: 'No renovation products eligible for this scenario' });
-      if (hasStructural && selectedProduct && !selectedProduct.allowsStructural) flags.push({ flagCode: 'STRUCTURAL_CONFLICT', sourceModule: 'REHAB_INTELLIGENCE', severity: 'HIGH', detail: 'Structural work present — selected product does not allow it' });
-      if (selectedProduct?.lenderType === 'hardmoney' && profitMarginPct < 15) flags.push({ flagCode: 'THIN_MARGIN', sourceModule: 'REHAB_INTELLIGENCE', severity: 'MEDIUM', detail: `Profit margin ${fmtPct(profitMarginPct)} is below 15% threshold` });
-      if (dscr > 0 && dscr < 1.0) flags.push({ flagCode: 'DSCR_BELOW_MIN', sourceModule: 'REHAB_INTELLIGENCE', severity: 'HIGH', detail: `DSCR ${dscr.toFixed(2)} is below 1.0 minimum` });
-
-      const findings = {
-        verdict: eligibleProducts.length > 0 ? (aiAnalysis?.verdict || 'ACCEPTABLE') : 'NEEDS_REVIEW',
-        summary: `Rehab Intelligence — ${form.loanPurpose?.replace(/_/g, ' ')} · Reno: ${fmt0(rehabCost)} · ARV: ${fmt0(arv)} · ${eligibleProducts.length} product(s) eligible · ${selectedProduct?.label || 'No product selected'}`,
-        loanPurpose: form.loanPurpose, rehabCost, arv, totalCost, hasStructural,
-        selectedProduct: selectedProduct?.id, eligibleProducts, creditScore: form.creditScore,
-        exitStrategy: form.exitStrategy, flipExperience: form.flipExperience, loNotes,
-      };
-
-      const writtenId = await reportFindings('REHAB_INTELLIGENCE', findings, [], flags, '1.0.0');
+      const riskFlags = [];
+      if (eligibleProducts.length === 0) riskFlags.push({ field: 'eligibility', message: 'No products eligible', severity: 'HIGH' });
+      if (hasStructural && selectedProduct && !selectedProduct.allowsStructural) riskFlags.push({ field: 'structural', message: 'Structural work — product conflict', severity: 'HIGH' });
+      if (selectedProduct?.lenderType === 'hardmoney' && profitMarginPct < 15) riskFlags.push({ field: 'margin', message: 'Profit margin <15% — thin deal', severity: 'MEDIUM' });
+      if (dscr > 0 && dscr < 1.0) riskFlags.push({ field: 'dscr', message: 'DSCR below 1.0 — may not qualify', severity: 'HIGH' });
+      const writtenId = await reportFindings({
+        verdict: eligibleProducts.length > 0 ? (aiAnalysis?.verdict || 'ACCEPTABLE') : 'NEEDS REVIEW',
+        summary: `Rehab Intelligence — ${form.loanPurpose?.replace(/_/g, ' ')} · Reno: ${fmt0(rehabCost)} · ARV: ${fmt0(arv)} · ${eligibleProducts.length} product(s) eligible · ${selectedProduct?.label || 'No product'}`,
+        riskFlags,
+        findings: { loanPurpose: form.loanPurpose, rehabCost, arv, totalCost, hasStructural, selectedProduct: selectedProduct?.id, eligibleProducts, creditScore: form.creditScore, exitStrategy: form.exitStrategy, flipExperience: form.flipExperience, loNotes },
+        completeness: { purposeSet: !!form.loanPurpose, rehabEntered: !!rehabCost, productSelected: !!selectedProductId, aiRun: !!aiAnalysis },
+      });
       if (writtenId) setSavedRecordId(writtenId);
     } catch (e) { console.error(e); }
     setRecordSaving(false);
@@ -687,8 +706,8 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
             <div className="flex items-center gap-3 mb-4">
               <div className="w-11 h-11 bg-orange-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-orange-900/40">18</div>
               <div>
-                <span className="text-xs font-bold tracking-widest text-orange-400 uppercase">Stage 2 — Lender Fit</span>
-                <h1 className="text-2xl font-bold text-white mt-0.5">Rehab Intelligence™</h1>
+                <span className="text-xs font-bold tracking-widest text-orange-400 uppercase">Stage 2 — Programs</span>
+                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">Rehab Intelligence™</h1>
               </div>
             </div>
             <p className="text-orange-200 text-sm leading-relaxed mb-5">Structure renovation loans across Agency, Hard Money, Non-QM, and DSCR Fix & Hold products. AI-powered contractor bid analysis, product eligibility screening, and AIV calculation.</p>
@@ -767,39 +786,37 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
-      {/* Decision Record Banner — always first */}
+      {/* 1. DecisionRecordBanner FIRST */}
       <DecisionRecordBanner
         recordId={savedRecordId}
         moduleName="Rehab Intelligence™"
-        moduleKey="REHAB_INTELLIGENCE"
+        moduleKey="REHAB_INTEL"
         onSave={handleSaveToRecord}
       />
 
-      {/* Canonical Sequence Nav */}
+      {/* 2. ModuleNav SECOND */}
       <ModuleNav moduleNumber={18} />
 
       {/* Hero */}
-      <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
-        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #f97316 0%, transparent 50%), radial-gradient(circle at 80% 20%, #f59e0b 0%, transparent 40%)' }} />
-        <div className="relative max-w-7xl mx-auto px-6 py-8">
-          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
+      <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl mx-4 mt-4 mb-6">
+        <div className="relative p-8">
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 18</div>
-              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Rehab Intelligence™</h1>
-              <p className="text-slate-400 text-base max-w-xl">Agency renovation · Fix & Flip · Bridge · DSCR Fix & Hold · Non-QM · AI bid analysis</p>
+              <p className="text-orange-400 text-xs font-bold uppercase tracking-widest mb-1.5">Module 18 · Stage 3: Optimization</p>
+              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-3xl font-bold text-white mb-2">Rehab Intelligence™</h1>
+              <p className="text-slate-400 text-sm max-w-xl leading-relaxed">Agency renovation · Fix &amp; Flip · Bridge · DSCR Fix &amp; Hold · Non-QM · AI bid analysis</p>
               <div className="flex gap-2 mt-3">
                 {['Agency', 'Hard Money', 'Non-QM / DSCR'].map(t => (
-                  <span key={t} className="text-xs px-2.5 py-1 rounded-full bg-slate-700 text-slate-300 font-semibold">{t}</span>
+                  <span key={t} className="text-xs px-2.5 py-1 rounded-full bg-white/10 text-slate-300 font-semibold">{t}</span>
                 ))}
               </div>
             </div>
-            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '260px' }}>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4 flex-shrink-0" style={{ minWidth: '260px' }}>
               {scenario ? (
                 <>
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
                   <div className="text-white font-bold">{form.borrowerName || scenario.scenarioName}</div>
-                  <div className="text-slate-400 text-sm mt-1">{form.propertyAddress || 'No address'}</div>
+                  <div className="text-slate-500 text-sm mt-1">{form.propertyAddress || 'No address'}</div>
                   <div className={'text-sm font-bold mt-1 ' + (eligibleProducts.length > 0 ? 'text-emerald-400' : 'text-amber-400')}>
                     {eligibleProducts.length > 0 ? eligibleProducts.length + ' of ' + REHAB_PRODUCTS.length + ' products eligible' : 'No products matched yet'}
                   </div>
@@ -813,7 +830,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
 
       {/* Borrower Bar */}
       {scenarioId && form.borrowerName && (
-        <div className="bg-[#1B3A6B] px-6 py-3">
+        <div className="bg-slate-800 px-6 py-3 mx-4 rounded-2xl mb-4">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-1">
             <span className="text-white font-bold text-sm">{form.borrowerName}</span>
             {form.propertyAddress && <span className="text-blue-200 text-xs">{form.propertyAddress}</span>}
@@ -827,6 +844,20 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
       )}
 
       <ScenarioHeader moduleTitle="Rehab Intelligence™" moduleNumber="18" scenarioId={scenarioId} />
+
+      {/* ── Next Step Intelligence™ ── */}
+      {primarySuggestion && (
+        <div className="max-w-7xl mx-auto px-6 pt-6">
+          <NextStepCard
+            suggestion={primarySuggestion}
+            secondarySuggestions={secondarySuggestions}
+            onFollow={logFollow}
+            onOverride={logOverride}
+            loanPurpose={loanPurpose}
+            scenarioId={scenarioId}
+          />
+        </div>
+      )}
 
       {/* Tab Bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
@@ -853,9 +884,9 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
             {activeTab === 0 && (
               <>
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">Loan Purpose</h2>
-                    <p className="text-slate-400 text-sm mt-1">Determines product eligibility and maximum renovation amounts.</p>
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5">
+                    <h2 className="text-xl font-bold text-slate-800">Loan Purpose</h2>
+                    <p className="text-slate-500 text-sm mt-1">Determines product eligibility and maximum renovation amounts.</p>
                   </div>
                   <div className="p-8">
                     <div className="grid grid-cols-3 gap-4">
@@ -872,9 +903,9 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
                 </div>
 
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">Borrower Profile</h2>
-                    <p className="text-slate-400 text-sm mt-1">Credit score and eligibility flags drive product matching across all 9 products.</p>
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5">
+                    <h2 className="text-xl font-bold text-slate-800">Borrower Profile</h2>
+                    <p className="text-slate-500 text-sm mt-1">Credit score and eligibility flags drive product matching across all 9 products.</p>
                   </div>
                   <div className="p-8 space-y-5">
                     <div className="grid grid-cols-2 gap-5">
@@ -916,9 +947,9 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
                 </div>
 
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">Property & Valuation</h2>
-                    <p className="text-slate-400 text-sm mt-1">ARV is the most critical number for hard money and Non-QM — enter appraiser's ARV when available.</p>
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5">
+                    <h2 className="text-xl font-bold text-slate-800">Property & Valuation</h2>
+                    <p className="text-slate-500 text-sm mt-1">ARV is the most critical number for hard money and Non-QM — enter appraiser's ARV when available.</p>
                   </div>
                   <div className="p-8 space-y-5">
                     <div>
@@ -965,9 +996,9 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
             {activeTab === 1 && (
               <>
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">AI Contractor Bid Upload</h2>
-                    <p className="text-slate-400 text-sm mt-1">Upload contractor bid PDF — Haiku extracts line items and auto-fills the renovation budget</p>
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5">
+                    <h2 className="text-xl font-bold text-slate-800">AI Contractor Bid Upload</h2>
+                    <p className="text-slate-500 text-sm mt-1">Upload contractor bid PDF — Haiku extracts line items and auto-fills the renovation budget</p>
                   </div>
                   <div className="p-8">
                     <label className={'block border-2 border-dashed rounded-3xl p-8 text-center cursor-pointer transition-all ' + (uploading ? 'border-orange-300 bg-orange-50' : 'border-slate-300 hover:border-orange-400 hover:bg-orange-50')}>
@@ -994,9 +1025,9 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
                 </div>
 
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">Scope of Work</h2>
-                    <p className="text-slate-400 text-sm mt-1">Select all applicable items — structural flags eliminate certain products automatically</p>
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5">
+                    <h2 className="text-xl font-bold text-slate-800">Scope of Work</h2>
+                    <p className="text-slate-500 text-sm mt-1">Select all applicable items — structural flags eliminate certain products automatically</p>
                   </div>
                   <div className="p-8 space-y-6">
                     {WORK_CATEGORIES.map(cat => (
@@ -1030,7 +1061,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
                 </div>
 
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5"><h2 className="text-xl font-bold text-white">Renovation Budget</h2></div>
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5"><h2 className="text-xl font-bold text-slate-800">Renovation Budget</h2></div>
                   <div className="p-8">
                     <div className="grid grid-cols-2 gap-6">
                       <div>
@@ -1210,9 +1241,9 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
               <>
                 {/* Appraisal Upload */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">🏠 Appraisal Upload — AI Data Extraction</h2>
-                    <p className="text-slate-400 text-sm mt-1">Upload the appraisal or BPO — Haiku extracts ARV, as-is value, condition, repairs, rent schedule, and comps. Auto-populates all key fields.</p>
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5">
+                    <h2 className="text-xl font-bold text-slate-800">🏠 Appraisal Upload — AI Data Extraction</h2>
+                    <p className="text-slate-500 text-sm mt-1">Upload the appraisal or BPO — Haiku extracts ARV, as-is value, condition, repairs, rent schedule, and comps. Auto-populates all key fields.</p>
                   </div>
                   <div className="p-8">
                     <div className="grid grid-cols-3 gap-4 mb-6">
@@ -1329,9 +1360,9 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
 
                 {/* Hard Money Deal Analysis */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-amber-800 to-amber-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">💰 Hard Money Deal Metrics</h2>
-                    <p className="text-amber-200 text-sm mt-1">LTC, LTV on ARV, cost of money, and profit margin — what every hard money lender evaluates first</p>
+                  <div className="bg-amber-50 border-b border-amber-200 px-8 py-5">
+                    <h2 className="text-xl font-bold text-slate-800">💰 Hard Money Deal Metrics</h2>
+                    <p className="text-amber-700 text-sm mt-1">LTC, LTV on ARV, cost of money, and profit margin — what every hard money lender evaluates first</p>
                   </div>
                   <div className="p-8 space-y-6">
                     {/* Key metrics grid */}
@@ -1445,9 +1476,9 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
 
                 {/* DSCR / Non-QM Fields */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-purple-800 to-purple-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">🏦 Non-QM / DSCR Analysis</h2>
-                    <p className="text-purple-200 text-sm mt-1">For Fix & Hold and bank statement renovation scenarios — income qualification without tax returns</p>
+                  <div className="bg-purple-50 border-b border-purple-200 px-8 py-5">
+                    <h2 className="text-xl font-bold text-slate-800">🏦 Non-QM / DSCR Analysis</h2>
+                    <p className="text-purple-700 text-sm mt-1">For Fix & Hold and bank statement renovation scenarios — income qualification without tax returns</p>
                   </div>
                   <div className="p-8 space-y-6">
                     <div className="grid grid-cols-2 gap-5">
@@ -1489,9 +1520,9 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
 
                 {/* Pre-Approval Checklist */}
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">📋 Lender Pre-Approval Checklist</h2>
-                    <p className="text-slate-400 text-sm mt-1">
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5">
+                    <h2 className="text-xl font-bold text-slate-800">📋 Lender Pre-Approval Checklist</h2>
+                    <p className="text-slate-500 text-sm mt-1">
                       {selectedProduct ? 'Requirements for ' + selectedProduct.label + ' — what the lender needs before they can approve this deal' : 'Select a product in Product Match to see the checklist'}
                     </p>
                   </div>
@@ -1550,7 +1581,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
               <>
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
                   <div className="bg-gradient-to-r from-orange-800 to-orange-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">ARV / AIV & Loan Calculations</h2>
+                    <h2 className="text-xl font-bold text-slate-800">ARV / AIV & Loan Calculations</h2>
                     <p className="text-orange-200 text-sm mt-1">After-repair value is the foundation of every renovation loan max</p>
                   </div>
                   <div className="divide-y divide-slate-100">
@@ -1568,9 +1599,9 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
                 </div>
 
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">Max Loan by Product — All 9 Products</h2>
-                    <p className="text-slate-400 text-sm mt-1">Sorted by lender type. Max loan = ARV × max LTV (hard money: lesser of LTV or LTC)</p>
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5">
+                    <h2 className="text-xl font-bold text-slate-800">Max Loan by Product — All 9 Products</h2>
+                    <p className="text-slate-500 text-sm mt-1">Sorted by lender type. Max loan = ARV × max LTV (hard money: lesser of LTV or LTC)</p>
                   </div>
                   <div>
                     {['agency','hardmoney','nonqm'].map(type => (
@@ -1605,9 +1636,9 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
             {activeTab === 5 && (
               <>
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                    <h2 className="text-xl font-bold text-white">AI Scenario Assessment</h2>
-                    <p className="text-slate-400 text-sm mt-1">Sonnet evaluates the full deal and generates product-specific talking points and lender flags</p>
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5">
+                    <h2 className="text-xl font-bold text-slate-800">AI Scenario Assessment</h2>
+                    <p className="text-slate-500 text-sm mt-1">Sonnet evaluates the full deal and generates product-specific talking points and lender flags</p>
                   </div>
                   <div className="p-8">
                     {!aiAnalysis ? (
@@ -1652,7 +1683,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
                 </div>
 
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5"><h2 className="text-xl font-bold text-white">LO Notes</h2></div>
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5"><h2 className="text-xl font-bold text-slate-800">LO Notes</h2></div>
                   <div className="p-8">
                     <textarea value={loNotes} onChange={e => setLoNotes(e.target.value)} rows={4}
                       placeholder="Product rationale, contractor notes, exit strategy details, lender overlays, compensating factors..."
@@ -1667,7 +1698,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
                 </div>
 
                 <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5"><h2 className="text-xl font-bold text-white">Letters</h2></div>
+                  <div className="bg-slate-50 border-b border-slate-200 px-8 py-5"><h2 className="text-xl font-bold text-slate-800">Letters</h2></div>
                   <div className="p-8">
                     <div className="flex gap-2 mb-6">
                       {[['borrower','👤 Borrower Letter'],['lender','📋 Lender Package']].map(([v,l]) => (
@@ -1689,14 +1720,14 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
               <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5">Deal Summary</div>
               <div className="space-y-3">
                 {[
-                  ['Purpose', form.loanPurpose?.replace(/_/g, ' ') || '--', 'text-white'],
-                  ['Base Value', base > 0 ? fmt0(base) : '--', 'text-slate-300'],
+                  ['Purpose', form.loanPurpose?.replace(/_/g, ' ') || '--', 'text-slate-800'],
+                  ['Base Value', base > 0 ? fmt0(base) : '--', 'text-slate-700'],
                   ['Renovation', rehabCost > 0 ? fmt0(rehabCost) : '--', 'text-orange-300'],
-                  ['ARV', arv > 0 ? fmt0(arv) : '--', 'text-white'],
+                  ['ARV', arv > 0 ? fmt0(arv) : '--', 'text-slate-800'],
                   ['FICO', form.creditScore || '--', parseFloat(form.creditScore) >= 620 ? 'text-emerald-400' : parseFloat(form.creditScore) >= 580 ? 'text-amber-400' : 'text-red-400'],
                   ['Structural', hasStructural ? 'Yes' : 'No', hasStructural ? 'text-red-400' : 'text-slate-400'],
                 ].map(([l, v, c]) => (
-                  <div key={l} className="flex justify-between items-center py-2 border-b border-slate-800">
+                  <div key={l} className="flex justify-between items-center py-2 border-b border-slate-700">
                     <span className="text-slate-400 text-sm">{l}</span><span className={'font-bold text-sm ' + c}>{v}</span>
                   </div>
                 ))}
@@ -1735,7 +1766,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
               {aiAnalysis?.verdict && (
                 <div className={'mt-3 rounded-2xl p-3 border text-center ' + (aiAnalysis.verdict === 'STRONG' ? 'bg-emerald-900/30 border-emerald-700/50' : aiAnalysis.verdict === 'ACCEPTABLE' ? 'bg-blue-900/30 border-blue-700/50' : 'bg-amber-900/30 border-amber-700/50')}>
                   <div className="text-xs font-bold text-slate-400 uppercase mb-0.5">AI Assessment</div>
-                  <div className="font-black text-white">{aiAnalysis.verdict}</div>
+                  <div className="font-black text-slate-800">{aiAnalysis.verdict}</div>
                 </div>
               )}
             </div>

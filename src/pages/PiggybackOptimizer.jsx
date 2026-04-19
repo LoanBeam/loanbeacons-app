@@ -1,15 +1,19 @@
 // src/pages/PiggybackOptimizer.jsx
-// LoanBeacons™ — Module 19 | Stage 1: Pre-Structure
-// Piggyback 2nd Optimizer™ — 80/10/10 · 80/15/5 · Single Loan + PMI comparison
+// Piggyback 2nd Optimizer™ — Module 22
+// Stage 3 — Property & Closing
+// Layout: DecisionRecordBanner → ModuleNav → hero → ScenarioHeader
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
+import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
-import ScenarioHeader from '../components/ScenarioHeader';
 import ModuleNav from '../components/ModuleNav';
+import ScenarioHeader from '../components/ScenarioHeader';
+import NextStepCard from '../components/NextStepCard';
+
 // ─── Math Engine ──────────────────────────────────────────────────────────────
 function monthlyPayment(principal, annualRate, termMonths) {
   if (!principal || !annualRate || !termMonths) return 0;
@@ -30,9 +34,9 @@ function estimatePMI(loanAmount, ltv) {
 
 function pmiDropOffMonth(principal, annualRate, termMonths, homeValue) {
   const target = homeValue * 0.80;
-  const r = annualRate / 100 / 12;
-  let balance = principal;
-  const pmt = monthlyPayment(principal, annualRate, termMonths);
+  const r      = annualRate / 100 / 12;
+  let balance  = principal;
+  const pmt    = monthlyPayment(principal, annualRate, termMonths);
   for (let m = 1; m <= termMonths; m++) {
     balance = balance - (pmt - balance * r);
     if (balance <= target) return m;
@@ -41,11 +45,11 @@ function pmiDropOffMonth(principal, annualRate, termMonths, homeValue) {
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
-const fmt0  = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
-const fmtD  = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
+const fmt0   = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
+const fmtD   = (n) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
 const fmtPct = (n) => isNaN(n) ? '--' : Number(n).toFixed(3) + '%';
 
-// ─── Glossary ─────────────────────────────────────────────────────────────────
+// ─── Data ─────────────────────────────────────────────────────────────────────
 const GLOSSARY = [
   { term: 'Piggyback Loan',  icon: '🏗️', definition: 'A second mortgage taken simultaneously with the first — "piggybacks" on top. Used to avoid PMI by keeping the first lien at 80% LTV.', highlight: true },
   { term: '80/10/10',        icon: '📊', definition: '80% first lien · 10% second lien · 10% down payment. The classic piggyback. First lien is 30yr fixed; second is typically a 10–15yr fixed or HELOC.', highlight: false },
@@ -56,15 +60,15 @@ const GLOSSARY = [
 ];
 
 const WHEN_TO_USE = [
-  { scenario: 'Avoid PMI — 10–15% Down',  icon: '🚫', color: 'blue',   tip: 'Classic use case. Borrower has 10–15% down but wants to avoid PMI. Piggyback keeps 1st lien at 80% and eliminates the insurance cost entirely.' },
-  { scenario: 'Maximize Purchasing Power', icon: '💪', color: 'violet', tip: '80/15/5 drops required cash to close to just 5% while still avoiding PMI — gives the borrower more flexibility on a tighter down payment.' },
+  { scenario: 'Avoid PMI — 10–15% Down',  icon: '🚫', color: 'blue',    tip: 'Classic use case. Borrower has 10–15% down but wants to avoid PMI. Piggyback keeps 1st lien at 80% and eliminates the insurance cost entirely.' },
+  { scenario: 'Maximize Purchasing Power', icon: '💪', color: 'violet',  tip: '80/15/5 drops required cash to close to just 5% while still avoiding PMI — gives the borrower more flexibility on a tighter down payment.' },
   { scenario: 'Jumbo Avoidance',           icon: '📉', color: 'emerald', tip: 'Purchase price just above conforming limit? A piggyback can keep the first lien at the conforming limit, avoiding jumbo pricing on the full balance.' },
-  { scenario: 'Short Hold Period',         icon: '⏱️', color: 'amber',  tip: 'Planning to sell or refi within 2–3 years? Single + PMI may beat the piggyback — less setup complexity and the PMI cost may not accumulate long enough to matter.' },
+  { scenario: 'Short Hold Period',         icon: '⏱️', color: 'amber',   tip: 'Planning to sell or refi within 2–3 years? Single + PMI may beat the piggyback — less setup complexity and the PMI cost may not accumulate long enough to matter.' },
 ];
 
 // ─── Letter Builders ──────────────────────────────────────────────────────────
 function buildBorrowerLetter({ borrowerName, purchasePrice, bestScenario, calc, firstRate, secondRate8010, secondRate8015, singleRate, termYears, downPct, loNotes, aiSummary }) {
-  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const today     = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const bestLabel = bestScenario === 'piggyback_8010' ? '80/10/10 Piggyback' : bestScenario === 'piggyback_8015' ? '80/15/5 Piggyback' : 'Single Loan + PMI';
   const lines = [];
   lines.push(today); lines.push('');
@@ -107,7 +111,7 @@ function buildBorrowerLetter({ borrowerName, purchasePrice, bestScenario, calc, 
 }
 
 function buildLOLetter({ borrowerName, purchasePrice, bestScenario, calc, firstRate, secondRate8010, secondRate8015, singleRate, termYears, secondTerm, downPct, loNotes }) {
-  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const today     = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const bestLabel = bestScenario === 'piggyback_8010' ? '80/10/10' : bestScenario === 'piggyback_8015' ? '80/15/5' : 'Single + PMI';
   const lines = [];
   lines.push(today); lines.push('');
@@ -160,45 +164,44 @@ function LetterCard({ title, icon, body, color = 'violet' }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function PiggybackOptimizer() {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const scenarioId = searchParams.get('scenarioId');
+  const navigate       = useNavigate();
+  const scenarioId     = searchParams.get('scenarioId');
 
-  const [scenario, setScenario]   = useState(null);
-  const [scenarios, setScenarios] = useState([]);
-  const [search,   setSearch]   = useState('');
-  const [showAll,  setShowAll]  = useState(false);
-  const [loading, setLoading]     = useState(true);
+  // ─── Scenario state
+  const [scenario,     setScenario]     = useState(null);
+  const [scenarios,    setScenarios]    = useState([]);
+  const [search,       setSearch]       = useState('');
+  const [showAll,      setShowAll]      = useState(false);
+  const [loading,      setLoading]      = useState(true);
   const [borrowerName, setBorrowerName] = useState('');
+  const [activeTab,    setActiveTab]    = useState(0);
 
-  const [activeTab, setActiveTab] = useState(0);
-
-  // Inputs
-  const [purchasePrice, setPurchasePrice]     = useState('');
-  const [downPct, setDownPct]                 = useState('10');
-  const [firstRate, setFirstRate]             = useState('');
-  const [secondRate8010, setSecondRate8010]   = useState('');
-  const [secondRate8015, setSecondRate8015]   = useState('');
-  const [singleRate, setSingleRate]           = useState('');
-  const [termYears, setTermYears]             = useState('30');
-  const [secondTerm, setSecondTerm]           = useState('15');
-  const [taxesMonthly, setTaxesMonthly]       = useState('');
+  // ─── Inputs
+  const [purchasePrice,    setPurchasePrice]    = useState('');
+  const [downPct,          setDownPct]          = useState('10');
+  const [firstRate,        setFirstRate]        = useState('');
+  const [secondRate8010,   setSecondRate8010]   = useState('');
+  const [secondRate8015,   setSecondRate8015]   = useState('');
+  const [singleRate,       setSingleRate]       = useState('');
+  const [termYears,        setTermYears]        = useState('30');
+  const [secondTerm,       setSecondTerm]       = useState('15');
+  const [taxesMonthly,     setTaxesMonthly]     = useState('');
   const [insuranceMonthly, setInsuranceMonthly] = useState('');
-  const [bestScenario, setBestScenario]       = useState(null);
+  const [bestScenario,     setBestScenario]     = useState(null);
 
-  // AI
-  const [aiAnalysis, setAiAnalysis]   = useState(null);
+  // ─── AI
+  const [aiAnalysis,  setAiAnalysis]  = useState(null);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
 
-  // Notes & letters
-  const [loNotes, setLoNotes]               = useState('');
+  // ─── Notes & letters
+  const [loNotes,         setLoNotes]         = useState('');
   const [activeLetterTab, setActiveLetterTab] = useState('borrower');
 
-  // Decision Record
-  const [recordSaving, setRecordSaving]   = useState(false);
-  const [savedRecordId, setSavedRecordId] = useState(null);
-  const { reportFindings } = useDecisionRecord(scenarioId);
+  // ─── Decision Record
+  const { reportFindings, savedRecordId, setSavedRecordId } = useDecisionRecord('PIGGYBACK_OPTIMIZER', scenarioId);
+  const [recordSaving, setRecordSaving] = useState(false);
 
-  // ─── localStorage ────────────────────────────────────────────────────────────
+  // ─── localStorage
   const lsKey = scenarioId ? `lb_piggyback_${scenarioId}` : null;
 
   const saveToStorage = useCallback(() => {
@@ -212,29 +215,32 @@ export default function PiggybackOptimizer() {
 
   useEffect(() => { saveToStorage(); }, [saveToStorage]);
 
-  // ─── Load scenario ────────────────────────────────────────────────────────────
+  // ─── Load scenarios / scenario data
   useEffect(() => {
     if (!scenarioId) {
-      getDocs(collection(db, 'scenarios')).then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(console.error).finally(() => setLoading(false));
+      getDocs(collection(db, 'scenarios'))
+        .then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+        .catch(console.error)
+        .finally(() => setLoading(false));
       return;
     }
     if (lsKey) {
       try {
         const saved = JSON.parse(localStorage.getItem(lsKey) || 'null');
         if (saved) {
-          if (saved.purchasePrice)   setPurchasePrice(saved.purchasePrice);
-          if (saved.downPct)         setDownPct(saved.downPct);
-          if (saved.firstRate)       setFirstRate(saved.firstRate);
-          if (saved.secondRate8010)  setSecondRate8010(saved.secondRate8010);
-          if (saved.secondRate8015)  setSecondRate8015(saved.secondRate8015);
-          if (saved.singleRate)      setSingleRate(saved.singleRate);
-          if (saved.termYears)       setTermYears(saved.termYears);
-          if (saved.secondTerm)      setSecondTerm(saved.secondTerm);
-          if (saved.taxesMonthly)    setTaxesMonthly(saved.taxesMonthly);
+          if (saved.purchasePrice)    setPurchasePrice(saved.purchasePrice);
+          if (saved.downPct)          setDownPct(saved.downPct);
+          if (saved.firstRate)        setFirstRate(saved.firstRate);
+          if (saved.secondRate8010)   setSecondRate8010(saved.secondRate8010);
+          if (saved.secondRate8015)   setSecondRate8015(saved.secondRate8015);
+          if (saved.singleRate)       setSingleRate(saved.singleRate);
+          if (saved.termYears)        setTermYears(saved.termYears);
+          if (saved.secondTerm)       setSecondTerm(saved.secondTerm);
+          if (saved.taxesMonthly)     setTaxesMonthly(saved.taxesMonthly);
           if (saved.insuranceMonthly) setInsuranceMonthly(saved.insuranceMonthly);
-          if (saved.loNotes)         setLoNotes(saved.loNotes);
-          if (saved.aiAnalysis)      setAiAnalysis(saved.aiAnalysis);
-          if (saved.savedRecordId)   setSavedRecordId(saved.savedRecordId);
+          if (saved.loNotes)          setLoNotes(saved.loNotes);
+          if (saved.aiAnalysis)       setAiAnalysis(saved.aiAnalysis);
+          if (saved.savedRecordId)    setSavedRecordId(saved.savedRecordId);
         }
       } catch (_) {}
     }
@@ -244,7 +250,7 @@ export default function PiggybackOptimizer() {
         setScenario(d);
         const name = [d.firstName, d.lastName].filter(Boolean).join(' ');
         if (name) setBorrowerName(name.trim());
-        if (d.propertyValue) setPurchasePrice(prev => prev || String(d.propertyValue));
+        if (d.propertyValue)    setPurchasePrice(prev => prev || String(d.propertyValue));
         if (d.interestRate) {
           const r = parseFloat(d.interestRate).toFixed(3);
           setFirstRate(prev => prev || r);
@@ -256,59 +262,49 @@ export default function PiggybackOptimizer() {
     }).catch(console.error).finally(() => setLoading(false));
   }, [scenarioId, lsKey]);
 
-  // ─── Core Calculations ────────────────────────────────────────────────────────
+  // ─── Core Calculations
   const calc = useMemo(() => {
-    const pp  = parseFloat(purchasePrice) || 0;
-    const dp  = parseFloat(downPct) / 100;
-    const taxes = parseFloat(taxesMonthly) || 0;
-    const ins   = parseFloat(insuranceMonthly) || 0;
-    const term  = parseInt(termYears) * 12;
-    const term2 = parseInt(secondTerm) * 12;
-    const r1    = parseFloat(firstRate) || 0;
-    const r2_8010 = parseFloat(secondRate8010) || 0;
-    const r2_8015 = parseFloat(secondRate8015) || 0;
-    const rSingle = parseFloat(singleRate) || 0;
-
+    const pp     = parseFloat(purchasePrice) || 0;
+    const dp     = parseFloat(downPct) / 100;
+    const taxes  = parseFloat(taxesMonthly) || 0;
+    const ins    = parseFloat(insuranceMonthly) || 0;
+    const term   = parseInt(termYears) * 12;
+    const term2  = parseInt(secondTerm) * 12;
+    const r1     = parseFloat(firstRate) || 0;
+    const r2_8010  = parseFloat(secondRate8010) || 0;
+    const r2_8015  = parseFloat(secondRate8015) || 0;
+    const rSingle  = parseFloat(singleRate) || 0;
     if (!pp || !r1) return null;
 
-    const downAmount = pp * dp;
-
-    // 80/10/10
-    const loan1_8010 = pp * 0.80;
-    const loan2_8010 = pp * 0.10;
-    const down_8010  = pp * 0.10;
-    const pmt1_8010  = monthlyPayment(loan1_8010, r1, term);
-    const pmt2_8010  = r2_8010 ? monthlyPayment(loan2_8010, r2_8010, term2) : 0;
+    const downAmount  = pp * dp;
+    const loan1_8010  = pp * 0.80;
+    const loan2_8010  = pp * 0.10;
+    const down_8010   = pp * 0.10;
+    const pmt1_8010   = monthlyPayment(loan1_8010, r1, term);
+    const pmt2_8010   = r2_8010 ? monthlyPayment(loan2_8010, r2_8010, term2) : 0;
     const totalPI_8010   = pmt1_8010 + pmt2_8010;
     const totalPITI_8010 = totalPI_8010 + taxes + ins;
 
-    // 80/15/5
-    const loan1_8015 = pp * 0.80;
-    const loan2_8015 = pp * 0.15;
-    const down_8015  = pp * 0.05;
-    const pmt1_8015  = monthlyPayment(loan1_8015, r1, term);
-    const pmt2_8015  = r2_8015 ? monthlyPayment(loan2_8015, r2_8015, term2) : 0;
+    const loan1_8015  = pp * 0.80;
+    const loan2_8015  = pp * 0.15;
+    const down_8015   = pp * 0.05;
+    const pmt1_8015   = monthlyPayment(loan1_8015, r1, term);
+    const pmt2_8015   = r2_8015 ? monthlyPayment(loan2_8015, r2_8015, term2) : 0;
     const totalPI_8015   = pmt1_8015 + pmt2_8015;
     const totalPITI_8015 = totalPI_8015 + taxes + ins;
 
-    // Single + PMI
     const ltvSingle   = (1 - dp) * 100;
     const loanSingle  = pp * (1 - dp);
     const pmtSingle   = monthlyPayment(loanSingle, rSingle || r1, term);
     const pmiMonthly  = estimatePMI(loanSingle, ltvSingle);
     const totalPI_single   = pmtSingle + pmiMonthly;
     const totalPITI_single = totalPI_single + taxes + ins;
-    const pmiDropMonth = ltvSingle > 80 ? pmiDropOffMonth(loanSingle, rSingle || r1, term, pp) : 0;
-    const pmiTotalCost = pmiMonthly * pmiDropMonth;
+    const pmiDropMonth  = ltvSingle > 80 ? pmiDropOffMonth(loanSingle, rSingle || r1, term, pp) : 0;
+    const pmiTotalCost  = pmiMonthly * pmiDropMonth;
 
-    // 5-year costs
     const cost5yr_8010   = totalPITI_8010 * 60;
     const cost5yr_8015   = totalPITI_8015 * 60;
     const cost5yr_single = totalPITI_single * 60;
-
-    // Monthly deltas
-    const diff_8010_vs_single = totalPITI_8010 - totalPITI_single;
-    const diff_8015_vs_single = totalPITI_8015 - totalPITI_single;
 
     return {
       pp, downAmount,
@@ -316,7 +312,8 @@ export default function PiggybackOptimizer() {
       loan1_8015, loan2_8015, down_8015, pmt1_8015, pmt2_8015, totalPI_8015, totalPITI_8015, cost5yr_8015,
       ltvSingle, loanSingle, pmtSingle, pmiMonthly, pmiTotalCost, pmiDropMonth,
       totalPI_single, totalPITI_single, cost5yr_single,
-      diff_8010_vs_single, diff_8015_vs_single,
+      diff_8010_vs_single: totalPITI_8010 - totalPITI_single,
+      diff_8015_vs_single: totalPITI_8015 - totalPITI_single,
     };
   }, [purchasePrice, downPct, firstRate, secondRate8010, secondRate8015, singleRate, termYears, secondTerm, taxesMonthly, insuranceMonthly]);
 
@@ -324,14 +321,53 @@ export default function PiggybackOptimizer() {
   useEffect(() => {
     if (!calc) return;
     const costs = [
-      { id: 'piggyback_8010', cost: calc.cost5yr_8010 },
-      { id: 'piggyback_8015', cost: calc.cost5yr_8015 },
+      { id: 'piggyback_8010', cost: calc.cost5yr_8010   },
+      { id: 'piggyback_8015', cost: calc.cost5yr_8015   },
       { id: 'single_pmi',     cost: calc.cost5yr_single },
     ];
     setBestScenario(costs.sort((a, b) => a.cost - b.cost)[0].id);
   }, [calc]);
 
-  // ─── AI Analysis ─────────────────────────────────────────────────────────────
+  // ─── NSI — Next Step Intelligence™
+  const { primarySuggestion, logFollow } = useNextStepIntelligence({
+    currentModuleKey:       'PIGGYBACK_OPTIMIZER',
+    loanPurpose:            scenario?.loanPurpose || 'PURCHASE',
+    scenarioId,
+    decisionRecordFindings: {
+      PIGGYBACK_OPTIMIZER: {
+        analyzed:     !!calc,
+        bestScenario: bestScenario || null,
+        pmiMonthly:   calc?.pmiMonthly || null,
+        pmiDropMonth: calc?.pmiDropMonth || null,
+      },
+    },
+    suggestions: [
+      {
+        moduleKey:           'CLOSING_COST',
+        moduleLabel:         'Closing Cost Calculator™',
+        route:               '/closing-cost-calc',
+        urgency:             'MEDIUM',
+        stage:               3,
+        canSkip:             true,
+        loanPurposeRelevant: true,
+        reason:              bestScenario && bestScenario !== 'single_pmi'
+          ? `${bestScenario === 'piggyback_8010' ? '80/10/10' : '80/15/5'} selected — include both lien origination fees in the full cash-to-close picture via Closing Cost Calculator™.`
+          : 'Piggyback analysis complete. Include closing costs for both liens in the cash-to-close via Closing Cost Calculator™.',
+      },
+      {
+        moduleKey:           'RATE_INTEL',
+        moduleLabel:         'Rate Intelligence™',
+        route:               '/rate-intel',
+        urgency:             'LOW',
+        stage:               3,
+        canSkip:             true,
+        loanPurposeRelevant: true,
+        reason:              'Confirm rate lock strategy for both first and second lien before disclosures are issued.',
+      },
+    ],
+  });
+
+  // ─── AI Analysis
   const handleAIAnalysis = async () => {
     if (!calc) return;
     setAiAnalyzing(true);
@@ -340,7 +376,7 @@ export default function PiggybackOptimizer() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514', max_tokens: 1200,
+          model: 'claude-sonnet-4-6', max_tokens: 1200,
           messages: [{ role: 'user', content: `You are a senior mortgage loan officer analyzing piggyback loan structures. Provide a recommendation for this borrower.
 
 SCENARIO:
@@ -362,15 +398,15 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
         }),
       });
       if (!resp.ok) throw new Error('Status ' + resp.status);
-      const data = await resp.json();
-      const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      const data  = await resp.json();
+      const text  = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
       const match = text.match(/\{[\s\S]*\}/);
       if (match) setAiAnalysis(JSON.parse(match[0]));
     } catch (err) { console.error('AI analysis failed:', err); }
     setAiAnalyzing(false);
   };
 
-  // ─── Decision Record ──────────────────────────────────────────────────────────
+  // ─── Decision Record (positional signature)
   const handleSaveToRecord = async () => {
     if (!calc) return;
     setRecordSaving(true);
@@ -380,11 +416,16 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
         {
           verdict: bestScenario === 'single_pmi' ? 'Single + PMI recommended' : bestScenario === 'piggyback_8010' ? '80/10/10 recommended' : '80/15/5 recommended',
           summary: `Piggyback Optimizer — Purchase ${fmt0(calc.pp)} · ${downPct}% down · Best structure: ${bestScenario?.replace('_', ' ')} · 5yr cost: ${fmt0(bestScenario === 'piggyback_8010' ? calc.cost5yr_8010 : bestScenario === 'piggyback_8015' ? calc.cost5yr_8015 : calc.cost5yr_single)}`,
-          purchasePrice: calc.pp, downPct: parseFloat(downPct), firstRate: parseFloat(firstRate),
-          secondRate8010: parseFloat(secondRate8010) || null, secondRate8015: parseFloat(secondRate8015) || null,
-          singleRate: parseFloat(singleRate) || null, termYears: parseInt(termYears), secondTerm: parseInt(secondTerm),
-          bestScenario, cost5yr_8010: calc.cost5yr_8010, cost5yr_8015: calc.cost5yr_8015, cost5yr_single: calc.cost5yr_single,
-          pmiMonthly: calc.pmiMonthly, pmiDropMonth: calc.pmiDropMonth, pmiTotalCost: calc.pmiTotalCost, loNotes,
+          purchasePrice: calc.pp, downPct: parseFloat(downPct),
+          firstRate: parseFloat(firstRate),
+          secondRate8010: parseFloat(secondRate8010) || null,
+          secondRate8015: parseFloat(secondRate8015) || null,
+          singleRate: parseFloat(singleRate) || null,
+          termYears: parseInt(termYears), secondTerm: parseInt(secondTerm),
+          bestScenario,
+          cost5yr_8010: calc.cost5yr_8010, cost5yr_8015: calc.cost5yr_8015, cost5yr_single: calc.cost5yr_single,
+          pmiMonthly: calc.pmiMonthly, pmiDropMonth: calc.pmiDropMonth, pmiTotalCost: calc.pmiTotalCost,
+          loNotes,
         },
         [],
         [],
@@ -396,30 +437,34 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
   };
 
   const TABS = [
-    { id: 0, label: 'Loan Inputs',      icon: '⚙️' },
-    { id: 1, label: 'Comparison',        icon: '📊' },
+    { id: 0, label: 'Loan Inputs',       icon: '⚙️' },
+    { id: 1, label: 'Comparison',         icon: '📊' },
     { id: 2, label: 'Analysis & Letters', icon: '📝' },
-    { id: 3, label: 'Education',         icon: '📚' },
+    { id: 3, label: 'Education',          icon: '📚' },
   ];
 
   const bestLabel   = bestScenario === 'piggyback_8010' ? '80/10/10' : bestScenario === 'piggyback_8015' ? '80/15/5' : 'Single + PMI';
   const bestCost    = bestScenario === 'piggyback_8010' ? calc?.cost5yr_8010 : bestScenario === 'piggyback_8015' ? calc?.cost5yr_8015 : calc?.cost5yr_single;
   const bestMonthly = bestScenario === 'piggyback_8010' ? calc?.totalPI_8010 : bestScenario === 'piggyback_8015' ? calc?.totalPI_8015 : calc?.totalPI_single;
 
+  // ─── Loading
   if (loading) return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
       <div className="text-center"><div className="text-5xl mb-4">🏗️</div><div className="text-slate-500">Loading...</div></div>
     </div>
   );
 
+  // ─── Picker Page ──────────────────────────────────────────────────────────
   if (!scenarioId) {
-    const q = search.toLowerCase().trim();
-    const sorted = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
-    const filtered = q ? sorted.filter(s => (s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim()).toLowerCase().includes(q)) : sorted;
+    const q         = search.toLowerCase().trim();
+    const sorted    = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
+    const filtered  = q ? sorted.filter(s => (s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim()).toLowerCase().includes(q)) : sorted;
     const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
-    const hasMore = !q && !showAll && filtered.length > 5;
+    const hasMore   = !q && !showAll && filtered.length > 5;
     return (
-      <div className="min-h-screen bg-slate-50">
+      <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
         <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-10">
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
@@ -446,27 +491,26 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
           <div className="relative mb-4">
             <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
             <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
-              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition-all" />
+              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 transition-all" />
             {search && <button onClick={() => setSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>}
           </div>
           {scenarios.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
               <p className="text-3xl mb-3">📂</p>
               <p className="text-sm font-semibold text-slate-600">No scenarios found</p>
-              <p className="text-xs text-slate-400 mt-1">Create one in Scenario Creator first.</p>
               <button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline">→ Go to Scenario Creator</button>
             </div>
           ) : filtered.length === 0 ? (
             <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
               <p className="text-2xl mb-2">🔍</p>
               <p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p>
-              <button onClick={() => setSearch('')} className="mt-2 text-xs indigo-500 hover:underline">Clear search</button>
+              <button onClick={() => setSearch('')} className="mt-2 text-xs text-indigo-500 hover:underline">Clear search</button>
             </div>
           ) : (
             <div className="space-y-2.5">
               {!q && !showAll && <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-1">Recently Updated</p>}
               {displayed.map(s => {
-                const sName = s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim() || 'Unnamed Scenario';
+                const sName  = s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim() || 'Unnamed Scenario';
                 const amount = parseFloat(s.loanAmount || 0);
                 return (
                   <button key={s.id} onClick={() => navigate('/piggyback-optimizer?scenarioId=' + s.id)}
@@ -475,10 +519,10 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-indigo-700 transition-colors">{sName}</div>
                         <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                          {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
-                          {s.loanType && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
-                          {s.creditScore && <span className="text-xs bg-indigo-50 text-indigo-600 border-indigo-100 border px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
-                          {s.stage && <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full font-medium">{s.stage}</span>}
+                          {amount > 0    && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
+                          {s.loanType    && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
+                          {s.creditScore && <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
+                          {s.stage       && <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full font-medium">{s.stage}</span>}
                         </div>
                       </div>
                       <span className="text-slate-300 group-hover:text-indigo-400 text-lg transition-colors shrink-0">→</span>
@@ -486,14 +530,8 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                   </button>
                 );
               })}
-              {hasMore && (
-                <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-indigo-500 hover:text-indigo-700 border-indigo-200 hover:bg-indigo-50 py-3 border border-dashed rounded-2xl transition-all">
-                  View all {filtered.length} scenarios
-                </button>
-              )}
-              {showAll && filtered.length > 5 && (
-                <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>
-              )}
+              {hasMore && <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-indigo-500 hover:text-indigo-700 py-3 border border-dashed border-indigo-200 rounded-2xl hover:bg-indigo-50 transition-all">View all {filtered.length} scenarios</button>}
+              {showAll && filtered.length > 5 && <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>}
             </div>
           )}
         </div>
@@ -501,28 +539,32 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
     );
   }
 
+  // ─── Module Page ──────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
-      <DecisionRecordBanner
-        recordId={savedRecordId}
-        moduleName="Piggyback 2nd Optimizer™"
-        moduleKey="PIGGYBACK_OPTIMIZER"
-        onSave={handleSaveToRecord}
-      />
+      {/* 1 — Decision Record Banner */}
+      <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="PIGGYBACK_OPTIMIZER" />
+
+      {/* 2 — Module Nav */}
       <ModuleNav moduleNumber={22} />
 
-      {/* Hero */}
+      {/* 3 — Hero */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #3b82f6 0%, transparent 50%), radial-gradient(circle at 80% 20%, #8b5cf6 0%, transparent 40%)' }} />
         <div className="relative max-w-7xl mx-auto px-6 py-8">
-          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
+          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2 transition-colors">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 22</div>
-              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Piggyback 2nd Optimizer™</h1>
-              <p className="text-slate-400 text-base max-w-xl">80/10/10 · 80/15/5 · Single Loan + PMI · Side-by-side payment & 5-year cost comparison</p>
+              <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 3 — Property &amp; Closing</span>
+              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2 mt-0.5">Piggyback 2nd Optimizer™</h1>
+              <p className="text-slate-400 text-base max-w-xl">80/10/10 · 80/15/5 · Single Loan + PMI · Side-by-side payment &amp; 5-year cost comparison</p>
+              <div className="flex flex-wrap gap-2 mt-4">
+                {['80/10/10 Structure', 'MI Elimination', 'Rate Blending', 'Payment Comparison', 'LTV Optimization'].map(tag => (
+                  <span key={tag} className="text-xs bg-white/10 border border-white/10 text-indigo-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+                ))}
+              </div>
             </div>
             <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px', flexShrink: 0 }}>
               {scenario ? (
@@ -535,6 +577,7 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                       Best: {bestLabel} · {fmt0(bestMonthly)}/mo
                     </div>
                   )}
+                  <button onClick={() => navigate('/piggyback-optimizer')} className="text-xs text-blue-400 hover:text-blue-300 mt-2 block transition-colors">Change scenario →</button>
                 </>
               ) : <div className="text-slate-400 text-sm">No scenario loaded</div>}
             </div>
@@ -550,13 +593,14 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
             {scenario?.streetAddress && <span className="text-blue-200 text-xs">{[scenario.streetAddress, scenario.city, scenario.state].filter(Boolean).join(', ')}</span>}
             <div className="flex flex-wrap gap-x-4 text-xs text-blue-200">
               {purchasePrice && <span>Price <strong className="text-white">{fmt0(parseFloat(purchasePrice))}</strong></span>}
-              {firstRate && <span>1st Rate <strong className="text-white">{firstRate}%</strong></span>}
-              {bestScenario && <span>Best <strong className="text-white">{bestLabel}</strong></span>}
+              {firstRate     && <span>1st Rate <strong className="text-white">{firstRate}%</strong></span>}
+              {bestScenario  && <span>Best <strong className="text-white">{bestLabel}</strong></span>}
             </div>
           </div>
         </div>
       )}
 
+      {/* 4 — Scenario Header */}
       <ScenarioHeader moduleTitle="Piggyback 2nd Optimizer™" moduleNumber="22" scenarioId={scenarioId} />
 
       {/* Tab Bar */}
@@ -643,7 +687,7 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                       </div>
                     </div>
 
-                    {/* Single + 2nd term */}
+                    {/* Single rate + 2nd term */}
                     <div className="grid grid-cols-2 gap-5">
                       <div>
                         <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Single Loan Rate (%) <span className="text-slate-400 normal-case font-normal">optional — defaults to 1st rate</span></label>
@@ -711,7 +755,7 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                     {/* Three comparison cards */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                       {[
-                        { id: 'piggyback_8010', label: '80/10/10', color: 'blue', icon: '🏗️', sub: '10% 2nd + 10% down',
+                        { id: 'piggyback_8010', label: '80/10/10', color: 'blue',   icon: '🏗️', sub: '10% 2nd + 10% down',
                           rows: [
                             ['Down Payment', fmt0(calc.down_8010), ''],
                             ['1st Lien', fmt0(calc.loan1_8010), fmtD(calc.pmt1_8010) + '/mo'],
@@ -742,42 +786,37 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                           bottom: [['5-Year Cost', fmt0(calc.cost5yr_single)], ['PMI Drops', 'Month ' + calc.pmiDropMonth + ' (~' + Math.floor(calc.pmiDropMonth / 12) + 'y ' + (calc.pmiDropMonth % 12) + 'm)']],
                         },
                       ].map(card => {
-                        const isBest = bestScenario === card.id;
+                        const isBest      = bestScenario === card.id;
                         const colorBorder = { blue: 'border-blue-500', violet: 'border-violet-500', orange: 'border-orange-500' };
-                        const colorBg    = { blue: 'bg-blue-600', violet: 'bg-violet-600', orange: 'bg-orange-600' };
-                        const colorText  = { blue: 'text-blue-300', violet: 'text-violet-300', orange: 'text-orange-300' };
-                        const colorHL   = { blue: 'bg-blue-900/20 border-blue-500/30', violet: 'bg-violet-900/20 border-violet-500/30', orange: 'bg-orange-900/20 border-orange-500/30' };
+                        const colorBg     = { blue: 'bg-blue-600', violet: 'bg-violet-600', orange: 'bg-orange-600' };
+                        const colorText   = { blue: 'text-blue-300', violet: 'text-violet-300', orange: 'text-orange-300' };
+                        const colorHL     = { blue: 'bg-blue-900/20 border-blue-500/30', violet: 'bg-violet-900/20 border-violet-500/30', orange: 'bg-orange-900/20 border-orange-500/30' };
                         return (
                           <div key={card.id} className={'bg-white rounded-3xl border-2 overflow-hidden ' + (isBest ? colorBorder[card.color] + ' shadow-lg' : 'border-slate-200')}>
-                            <div className={colorBg[card.color] + ' px-5 py-4'}>
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xl">{card.icon}</span>
-                                  <span className="font-black text-white">{card.label}</span>
-                                </div>
-                                {isBest && <span className="text-xs bg-white/20 text-white px-2 py-0.5 rounded-full font-bold">BEST</span>}
+                            <div className={'px-5 py-4 flex items-center gap-3 ' + colorBg[card.color]}>
+                              <span className="text-2xl">{card.icon}</span>
+                              <div>
+                                <div className="font-black text-white text-base">{card.label}</div>
+                                <div className="text-xs text-white/70">{card.sub}</div>
                               </div>
-                              <div className="text-xs text-white/70 mt-0.5">{card.sub}</div>
+                              {isBest && <span className="ml-auto text-xs bg-white/20 text-white px-2 py-1 rounded-lg font-bold">Best</span>}
                             </div>
                             <div className="p-5 space-y-2">
-                              {card.rows.map(([label, val, sub]) => (
-                                <div key={label} className="flex justify-between items-start text-sm border-b border-slate-100 pb-2">
+                              {card.rows.map(([label, val, unit]) => (
+                                <div key={label} className="flex justify-between items-center text-sm py-1 border-b border-slate-100 last:border-0">
                                   <span className="text-slate-500">{label}</span>
-                                  <div className="text-right">
-                                    <div className={'font-semibold ' + (label === 'PMI' && val === 'None ✓' ? 'text-emerald-600' : label === 'PMI' ? 'text-red-500' : 'text-slate-800')}>{val}</div>
-                                    {sub && <div className="text-xs text-slate-400">{sub}</div>}
-                                  </div>
+                                  <span className="font-semibold text-slate-800 text-right">{val} <span className="text-slate-400 text-xs">{unit}</span></span>
                                 </div>
                               ))}
-                              <div className={'rounded-2xl border p-3 ' + colorHL[card.color]}>
-                                <div className="flex justify-between items-center">
-                                  <span className="text-sm font-bold text-slate-600">{card.highlight.label}</span>
-                                  <span className={'text-base font-black ' + colorText[card.color]}>{card.highlight.value}</span>
-                                </div>
-                              </div>
+                            </div>
+                            <div className={'mx-4 mb-4 rounded-2xl border p-3 text-center ' + colorHL[card.color]}>
+                              <div className={'text-xs font-bold mb-0.5 ' + colorText[card.color]}>{card.highlight.label}</div>
+                              <div className={'text-xl font-black ' + colorText[card.color]}>{card.highlight.value}</div>
+                            </div>
+                            <div className="px-5 pb-5 space-y-1">
                               {card.bottom.map(([l, v]) => (
                                 <div key={l} className="flex justify-between text-xs text-slate-500">
-                                  <span>{l}</span><span className="font-semibold text-slate-700">{v}</span>
+                                  <span>{l}</span><span className="font-bold text-slate-700">{v}</span>
                                 </div>
                               ))}
                             </div>
@@ -786,67 +825,42 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                       })}
                     </div>
 
-                    {/* Summary table */}
-                    <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                      <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
-                        <h2 className="text-xl font-bold text-white">Side-by-Side Summary</h2>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b border-slate-100">
-                              <th className="text-left px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wide">Metric</th>
-                              <th className="text-right px-4 py-4 text-xs font-bold text-blue-600 uppercase">80/10/10</th>
-                              <th className="text-right px-4 py-4 text-xs font-bold text-violet-600 uppercase">80/15/5</th>
-                              <th className="text-right px-4 py-4 text-xs font-bold text-orange-600 uppercase">Single + PMI</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {[
-                              { label: 'Down Payment',    v1: fmt0(calc.down_8010),       v2: fmt0(calc.down_8015),       v3: fmt0(calc.downAmount) },
-                              { label: '1st Lien Amount', v1: fmt0(calc.loan1_8010),      v2: fmt0(calc.loan1_8015),      v3: fmt0(calc.loanSingle) },
-                              { label: '2nd Lien Amount', v1: fmt0(calc.loan2_8010),      v2: fmt0(calc.loan2_8015),      v3: '—' },
-                              { label: 'Monthly P&I',     v1: fmtD(calc.totalPI_8010),    v2: fmtD(calc.totalPI_8015),    v3: fmtD(calc.totalPI_single) },
-                              { label: 'Monthly PMI',     v1: 'None', v2: 'None',         v3: fmtD(calc.pmiMonthly), highlight3: true },
-                              { label: '5-Year Total',    v1: fmt0(calc.cost5yr_8010),    v2: fmt0(calc.cost5yr_8015),    v3: fmt0(calc.cost5yr_single), isCost: true },
-                              { label: 'PMI Duration',    v1: 'N/A', v2: 'N/A',           v3: calc.pmiDropMonth > 0 ? '~' + Math.floor(calc.pmiDropMonth / 12) + 'y ' + (calc.pmiDropMonth % 12) + 'm' : 'N/A' },
-                              { label: 'Total PMI Cost',  v1: '—', v2: '—',               v3: fmt0(calc.pmiTotalCost), highlight3: true },
-                            ].map(row => {
-                              const bestV = row.isCost ? Math.min(calc.cost5yr_8010, calc.cost5yr_8015, calc.cost5yr_single) : null;
-                              return (
-                                <tr key={row.label} className="hover:bg-slate-50">
-                                  <td className="px-6 py-3 text-slate-600 font-medium">{row.label}</td>
-                                  <td className={'px-4 py-3 text-right font-semibold ' + (row.isCost && calc.cost5yr_8010 === bestV ? 'text-emerald-600 font-black' : 'text-blue-600')}>{row.v1}</td>
-                                  <td className={'px-4 py-3 text-right font-semibold ' + (row.isCost && calc.cost5yr_8015 === bestV ? 'text-emerald-600 font-black' : 'text-violet-600')}>{row.v2}</td>
-                                  <td className={'px-4 py-3 text-right font-semibold ' + (row.highlight3 ? 'text-red-500' : row.isCost && calc.cost5yr_single === bestV ? 'text-emerald-600 font-black' : 'text-orange-600')}>{row.v3}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    {/* Break-even bar */}
-                    {calc.pmiDropMonth > 0 && (
-                      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
-                        <h3 className="text-lg font-bold text-slate-800 mb-2">PMI Drop-Off Timeline</h3>
-                        <p className="text-sm text-slate-500 mb-5">When the single loan balance reaches 80% of the original value, PMI cancels automatically.</p>
-                        <div className="space-y-3">
-                          {[['PMI drops at month', calc.pmiDropMonth, 'mo', 360], ['Years until PMI gone', (calc.pmiDropMonth / 12).toFixed(1), 'years', 30]].map(([label, val, unit, max]) => (
-                            <div key={label}>
-                              <div className="flex justify-between text-sm mb-1.5">
-                                <span className="text-slate-600 font-semibold">{label}</span>
-                                <span className="font-bold text-slate-800">{val} {unit}</span>
-                              </div>
-                              <div className="bg-slate-100 rounded-full h-3 overflow-hidden">
-                                <div className="h-full bg-orange-400 rounded-full transition-all" style={{ width: Math.min(100, (val / max) * 100) + '%' }} />
-                              </div>
-                            </div>
-                          ))}
+                    {/* PMI comparison bars */}
+                    {calc.pmiMonthly > 0 && (
+                      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-5">
+                          <h3 className="text-lg font-bold text-white">Monthly Payment Comparison</h3>
+                          <p className="text-slate-400 text-sm mt-1">How each structure compares vs Single + PMI baseline</p>
                         </div>
-                        <div className="mt-4 text-xs text-slate-400">💡 If the borrower plans to sell or refi before month {calc.pmiDropMonth}, the total PMI cost ({fmt0(calc.pmiTotalCost)}) may be less than the extra 2nd lien interest paid.</div>
+                        <div className="p-8 space-y-5">
+                          {[
+                            { label: '80/10/10', val: calc.totalPITI_8010, color: 'blue' },
+                            { label: '80/15/5',  val: calc.totalPITI_8015, color: 'violet' },
+                            { label: 'Single+PMI', val: calc.totalPITI_single, color: 'orange' },
+                          ].map(({ label, val, color }) => {
+                            const max  = Math.max(calc.totalPITI_8010, calc.totalPITI_8015, calc.totalPITI_single);
+                            const unit = '/mo';
+                            return (
+                              <div key={label}>
+                                <div className="flex justify-between text-sm mb-2">
+                                  <span className="font-semibold text-slate-700">{label}</span>
+                                  <span className="font-bold text-slate-800">{fmtD(val)} {unit}</span>
+                                </div>
+                                <div className="bg-slate-100 rounded-full h-3 overflow-hidden">
+                                  <div className={'h-full rounded-full transition-all ' + (color === 'blue' ? 'bg-blue-500' : color === 'violet' ? 'bg-violet-500' : 'bg-orange-400')}
+                                    style={{ width: Math.min(100, (val / max) * 100) + '%' }} />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="px-8 pb-6 text-xs text-slate-400">💡 If the borrower plans to sell or refi before month {calc.pmiDropMonth}, the total PMI cost ({fmt0(calc.pmiTotalCost)}) may be less than the extra 2nd lien interest paid.</div>
                       </div>
+                    )}
+
+                    {/* NSI — shown on Comparison tab after results */}
+                    {primarySuggestion && (
+                      <NextStepCard suggestion={primarySuggestion} onFollow={logFollow} />
                     )}
                   </>
                 )}
@@ -898,7 +912,13 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                             {aiAnalysis.watchOuts.map((w, i) => <div key={i} className="flex gap-2 text-sm text-amber-800 mb-1.5"><span className="shrink-0">•</span><span>{w}</span></div>)}
                           </div>
                         )}
-                        <button onClick={handleAIAnalysis} disabled={aiAnalyzing} className="text-xs text-blue-600 hover:text-blue-500 font-semibold">{aiAnalyzing ? 'Re-analyzing...' : '↺ Re-run'}</button>
+                        <div className="flex items-center gap-4">
+                          <button onClick={handleAIAnalysis} disabled={aiAnalyzing} className="text-xs text-blue-600 hover:text-blue-500 font-semibold">{aiAnalyzing ? 'Re-analyzing...' : '↺ Re-run'}</button>
+                          <button onClick={handleSaveToRecord} disabled={recordSaving}
+                            className={'px-5 py-2.5 rounded-xl text-sm font-bold transition-all ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50')}>
+                            {recordSaving ? 'Saving…' : savedRecordId ? '✔ Decision Record Saved' : '💾 Save Decision Record'}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -928,7 +948,7 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                         ))}
                       </div>
                       {activeLetterTab === 'borrower' && <LetterCard title="Borrower Comparison Letter" icon="👤" color="violet" body={buildBorrowerLetter({ borrowerName, purchasePrice: calc.pp, bestScenario, calc, firstRate, secondRate8010, secondRate8015, singleRate, termYears, downPct, loNotes, aiSummary: aiAnalysis?.summary })} />}
-                      {activeLetterTab === 'lo' && <LetterCard title="LO / Processor Summary" icon="📋" color="blue" body={buildLOLetter({ borrowerName, purchasePrice: calc.pp, bestScenario, calc, firstRate, secondRate8010, secondRate8015, singleRate, termYears, secondTerm, downPct, loNotes })} />}
+                      {activeLetterTab === 'lo'       && <LetterCard title="LO / Processor Summary"    icon="📋" color="blue"   body={buildLOLetter({ borrowerName, purchasePrice: calc.pp, bestScenario, calc, firstRate, secondRate8010, secondRate8015, singleRate, termYears, secondTerm, downPct, loNotes })} />}
                     </div>
                   </div>
                 )}
@@ -978,7 +998,7 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
             )}
           </div>
 
-          {/* Sidebar */}
+          {/* ── Sidebar ── */}
           <div className="space-y-5">
             <div className="bg-slate-900 rounded-3xl p-6 sticky top-6">
               <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5">Comparison Summary</div>
@@ -986,20 +1006,21 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                 <>
                   <div className="space-y-3">
                     {[
-                      ['Purchase Price', fmt0(calc.pp), 'text-white'],
-                      ['Down Payment', downPct + '% (' + fmt0(calc.downAmount) + ')', 'text-slate-300'],
-                      ['1st Lien Rate', firstRate ? firstRate + '%' : '--', 'text-white'],
-                      ['1st Lien Term', termYears + ' years', 'text-slate-300'],
+                      ['Purchase Price', fmt0(calc.pp),         'text-white'],
+                      ['Down Payment',   downPct + '% (' + fmt0(calc.downAmount) + ')', 'text-slate-300'],
+                      ['1st Lien Rate',  firstRate ? firstRate + '%' : '--', 'text-white'],
+                      ['1st Lien Term',  termYears + ' years',  'text-slate-300'],
                     ].map(([l, v, c]) => (
                       <div key={l} className="flex justify-between items-center py-2 border-b border-slate-800">
-                        <span className="text-slate-400 text-sm">{l}</span><span className={'font-bold text-sm ' + c}>{v}</span>
+                        <span className="text-slate-400 text-sm">{l}</span>
+                        <span className={'font-bold text-sm ' + c}>{v}</span>
                       </div>
                     ))}
                   </div>
                   <div className="mt-5 space-y-2">
                     {[
-                      { label: '80/10/10', monthly: calc.totalPI_8010, cost: calc.cost5yr_8010, color: 'blue' },
-                      { label: '80/15/5', monthly: calc.totalPI_8015, cost: calc.cost5yr_8015, color: 'violet' },
+                      { label: '80/10/10',   monthly: calc.totalPI_8010,   cost: calc.cost5yr_8010,   color: 'blue' },
+                      { label: '80/15/5',    monthly: calc.totalPI_8015,   cost: calc.cost5yr_8015,   color: 'violet' },
                       { label: 'Single+PMI', monthly: calc.totalPI_single, cost: calc.cost5yr_single, color: 'orange' },
                     ].map(s => {
                       const isBest = bestScenario === (s.label === '80/10/10' ? 'piggyback_8010' : s.label === '80/15/5' ? 'piggyback_8015' : 'single_pmi');
@@ -1020,6 +1041,10 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
                       <div className="font-black text-blue-300 text-sm">{aiAnalysis.recommendation === 'piggyback_8010' ? '80/10/10' : aiAnalysis.recommendation === 'piggyback_8015' ? '80/15/5' : 'Single + PMI'}</div>
                     </div>
                   )}
+                  <button onClick={handleSaveToRecord} disabled={recordSaving}
+                    className={'mt-4 w-full py-2.5 rounded-xl text-xs font-bold transition-all ' + (savedRecordId ? 'bg-emerald-600 text-white' : 'bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-50')}>
+                    {recordSaving ? 'Saving…' : savedRecordId ? '✔ Record Saved' : '💾 Save Decision Record'}
+                  </button>
                 </>
               ) : (
                 <div className="text-slate-500 text-sm text-center py-4">Enter loan inputs to see comparison</div>
@@ -1044,7 +1069,6 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
           </div>
         </div>
       </div>
-
-</div>
+    </div>
   );
 }
