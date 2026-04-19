@@ -319,9 +319,9 @@ STOP: any critical issue making closing impossible today. HIGH_RISK: 2+ HIGH ite
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg">10</div>
+              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg">23</div>
               <div>
-                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 2 — Lender Fit</span>
+                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 3 — Property &amp; Closing</span>
                 <h1 className="text-2xl font-bold text-white mt-0.5" style={{ fontFamily: '"DM Serif Display", serif' }}>Title Intelligence™</h1>
               </div>
             </div>
@@ -389,7 +389,7 @@ STOP: any critical issue making closing impossible today. HIGH_RISK: 2+ HIGH ite
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-3 mb-1">
-                <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase">Stage 2 — Lender Fit</span>
+                <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase">Stage 3 — Property &amp; Closing</span>
                 <span className="bg-indigo-500/30 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-400/30">Module 23</span>
                 {loanType && <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full">{loanType}</span>}
               </div>

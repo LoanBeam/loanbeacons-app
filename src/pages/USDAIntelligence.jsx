@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { db } from "../firebase/config";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, getDocs, doc, getDoc } from "firebase/firestore";
 import DecisionRecordBanner from "../components/DecisionRecordBanner";
 import { useDecisionRecord } from "../hooks/useDecisionRecord";
 import { useNextStepIntelligence } from "../hooks/useNextStepIntelligence";
@@ -135,6 +135,7 @@ const Card = ({ children, className = "" }) => (
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function USDAIntelligence() {
+  const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -144,6 +145,18 @@ export default function USDAIntelligence() {
   const { reportFindings } = useDecisionRecord(scenarioIdParam);
   const [savedRecordId, setSavedRecordId] = useState(null);
   const [recordSaving, setRecordSaving] = useState(false);
+  const [scenarios,    setScenarios]    = useState([]);
+  const [scenariosLoading, setScenariosLoading] = useState(!scenarioIdParam);
+  const [search,       setSearch]       = useState('');
+  const [showAll,      setShowAll]      = useState(false);
+
+  useEffect(() => {
+    if (scenarioIdParam) return;
+    getDocs(collection(db, 'scenarios'))
+      .then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+      .catch(console.error)
+      .finally(() => setScenariosLoading(false));
+  }, [scenarioIdParam]);
 
   // localStorage autosave
   const LS_KEY = scenarioIdParam ? `lb_usdaintelligence_${scenarioIdParam}` : "lb_usdaintelligence_default";
@@ -352,6 +365,88 @@ export default function USDAIntelligence() {
       setSaving(false);
     }
   };
+
+  // ─── Picker Page ─────────────────────────────────────────────────────────────
+  if (!scenarioIdParam) {
+    if (scenariosLoading) return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><div className="text-slate-400 text-sm">Loading…</div></div>;
+    const q        = search.toLowerCase().trim();
+    const sorted   = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
+    const filtered = q ? sorted.filter(s => (s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim()).toLowerCase().includes(q)) : sorted;
+    const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
+    const hasMore   = !q && !showAll && filtered.length > 5;
+    return (
+      <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+        <div className="bg-gradient-to-br from-slate-900 to-green-950 px-6 py-10">
+          <div className="max-w-2xl mx-auto">
+            <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-green-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-11 h-11 bg-green-600 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-green-900/40">13</div>
+              <div>
+                <span className="text-xs font-bold tracking-widest text-green-400 uppercase">Stage 2 — Programs</span>
+                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">USDA Intelligence™</h1>
+              </div>
+            </div>
+            <p className="text-green-300 text-sm leading-relaxed mb-5">Analyze USDA Rural Development eligibility, income limits, GUS scoring, and guarantee fee calculations for Section 502 loans.</p>
+            <div className="flex flex-wrap gap-2">
+              {['Rural Eligibility', 'Income Limits', 'GUS Scoring', 'Guarantee Fee', 'DTI Analysis', 'Decision Record'].map(tag => (
+                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-green-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="max-w-2xl mx-auto px-6 py-8">
+          <div className="mb-5">
+            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">Select a Scenario</h2>
+            <p className="text-xs text-slate-400">Search by name or pick from your most recent files.</p>
+          </div>
+          <div className="relative mb-4">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
+              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-green-300 focus:border-green-300 transition-all" />
+            {search && <button onClick={() => setSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>}
+          </div>
+          {scenarios.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-3xl mb-3">📂</p><p className="text-sm font-semibold text-slate-600">No scenarios found</p>
+              <button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-green-600 hover:text-green-800 underline">→ Go to Scenario Creator</button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-2xl mb-2">🔍</p><p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p>
+              <button onClick={() => setSearch('')} className="mt-2 text-xs text-green-500 hover:underline">Clear search</button>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {!q && !showAll && <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-1">Recently Updated</p>}
+              {displayed.map(s => {
+                const sName  = s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || 'Unnamed Scenario';
+                const amount = parseFloat(s.loanAmount || 0);
+                return (
+                  <button key={s.id} onClick={() => navigate('/usda-intelligence?scenarioId=' + s.id)}
+                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-green-300 hover:shadow-md hover:bg-green-50/30 transition-all group">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-green-700">{sName}</div>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                          {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
+                          {s.loanType    && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
+                          {s.creditScore && <span className="text-xs bg-green-50 text-green-700 border border-green-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
+                        </div>
+                      </div>
+                      <span className="text-slate-300 group-hover:text-green-400 text-lg shrink-0">→</span>
+                    </div>
+                  </button>
+                );
+              })}
+              {hasMore && <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-green-500 hover:text-green-700 py-3 border border-dashed border-green-200 rounded-2xl hover:bg-green-50 transition-all">View all {filtered.length} scenarios</button>}
+              {showAll && filtered.length > 5 && <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2">↑ Show less</button>}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ fontFamily: "'DM Sans', sans-serif" }} className="min-h-screen bg-slate-50 text-slate-800">

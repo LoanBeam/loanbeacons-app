@@ -294,6 +294,8 @@ export default function RateBuydownCalculator() {
   const [planningHorizon, setPlanningHorizon] = useState(60);
   const [computedOptions, setComputedOptions] = useState([]);
   const [showResults, setShowResults] = useState(false);
+  const [search, setSearch] = useState('');
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => { loadScenarios(); }, []);
   useEffect(() => { if (scenarioIdFromUrl) loadScenarioData(scenarioIdFromUrl); }, [scenarioIdFromUrl]);
@@ -430,9 +432,107 @@ export default function RateBuydownCalculator() {
     </div>
   );
 
+  // ─── Picker Page ──────────────────────────────────────────────────────────────
+  if (!scenarioIdFromUrl) {
+    const q        = search.toLowerCase().trim();
+    const sorted   = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
+    const filtered = q ? sorted.filter(s => (s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim()).toLowerCase().includes(q)) : sorted;
+    const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
+    const hasMore   = !q && !showAll && filtered.length > 5;
+    return (
+      <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+        <div className="bg-gradient-to-br from-slate-900 to-blue-950 px-6 py-10">
+          <div className="max-w-2xl mx-auto">
+            <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-blue-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-11 h-11 bg-blue-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-blue-900/40">15</div>
+              <div>
+                <span className="text-xs font-bold tracking-widest text-blue-400 uppercase">Stage 3 — Property &amp; Closing</span>
+                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">Rate Buydown Calculator™</h1>
+              </div>
+            </div>
+            <p className="text-blue-300 text-sm leading-relaxed mb-5">Compare every rate option on your pricing sheet. Find the break-even, score the tradeoff, and generate a client-ready explanation in seconds.</p>
+            <div className="flex flex-wrap gap-2">
+              {['Break-Even Analysis', 'Points vs Credits', 'Seller Concessions', 'Planning Horizon', 'Borrower Letter', 'Realtor Letter'].map(tag => (
+                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-blue-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="max-w-2xl mx-auto px-6 py-8">
+          <div className="mb-5">
+            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">Select a Scenario</h2>
+            <p className="text-xs text-slate-400">Search by name or pick from your most recent files.</p>
+          </div>
+          <div className="relative mb-4">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
+              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-300 transition-all" />
+            {search && <button onClick={() => setSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>}
+          </div>
+          {scenarios.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-3xl mb-3">📂</p>
+              <p className="text-sm font-semibold text-slate-600">No scenarios found</p>
+              <p className="text-xs text-slate-400 mt-1">Create one in Scenario Creator first.</p>
+              <button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-blue-600 hover:text-blue-800 underline">→ Go to Scenario Creator</button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-2xl mb-2">🔍</p>
+              <p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p>
+              <button onClick={() => setSearch('')} className="mt-2 text-xs text-blue-500 hover:underline">Clear search</button>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {!q && !showAll && <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-1">Recently Updated</p>}
+              {displayed.map(s => {
+                const sName  = s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || 'Unnamed Scenario';
+                const amount = parseFloat(s.loanAmount || 0);
+                return (
+                  <button key={s.id} onClick={() => navigate('/rate-buydown?scenarioId=' + s.id)}
+                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-blue-300 hover:shadow-md hover:bg-blue-50/30 transition-all group">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-blue-700 transition-colors">{sName}</div>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                          {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
+                          {s.loanType   && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
+                          {s.creditScore && <span className="text-xs bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
+                        </div>
+                      </div>
+                      <span className="text-slate-300 group-hover:text-blue-400 text-lg transition-colors shrink-0">→</span>
+                    </div>
+                  </button>
+                );
+              })}
+              {hasMore && (
+                <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-blue-500 hover:text-blue-700 py-3 border border-dashed border-blue-200 rounded-2xl hover:bg-blue-50 transition-all">
+                  View all {filtered.length} scenarios
+                </button>
+              )}
+              {showAll && filtered.length > 5 && (
+                <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="Rate Buydown Calculator™"
+        moduleKey="RATE_BUYDOWN"
+        onSave={handleSaveToRecord}
+      />
+      <ModuleNav moduleNumber={15} />
 
       {/* ── Hero Header ── */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
@@ -443,7 +543,7 @@ export default function RateBuydownCalculator() {
           </button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 09</div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 15</div>
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">
                 Rate Buydown Calculator™
               </h1>
@@ -451,7 +551,7 @@ export default function RateBuydownCalculator() {
                 Compare every rate option on your pricing sheet. Find the break-even, score the tradeoff, and generate a client-ready explanation in seconds.
               </p>
             </div>
-            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4 backdrop-blur-sm" style={{ minWidth: '220px' }}>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4 backdrop-blur-sm" style={{ minWidth: '220px', flexShrink: 0 }}>
               {selectedScenario ? (
                 <>
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
@@ -492,10 +592,6 @@ export default function RateBuydownCalculator() {
       )}
 
       <ScenarioHeader moduleTitle="Rate Buydown Calculator™" moduleNumber="15" scenarioId={scenarioId} />
-
-      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2">
-        <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="RATE_BUYDOWN" />
-      </div>
 
       <div className="max-w-7xl mx-auto px-6 py-6 space-y-8">
 
@@ -564,41 +660,6 @@ export default function RateBuydownCalculator() {
             </div>
           )}
         </div>
-
-        {/* ── Scenario Selector ── */}
-        {!selectedScenario && (
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-8 py-6">
-              <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Step 1</div>
-              <h2 className="text-xl font-bold text-white">Select a Borrower Scenario</h2>
-              <p className="text-slate-400 text-sm mt-1">Loan amount and baseline rate will auto-populate from the scenario.</p>
-            </div>
-            <div className="p-6">
-              {scenarios.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="text-5xl mb-4">📂</div>
-                  <div className="text-slate-500 mb-4">No scenarios found</div>
-                  <button onClick={() => navigate('/scenario-creator')} className="bg-blue-600 text-white px-6 py-3 rounded-xl hover:bg-blue-700 font-semibold">Create New Scenario</button>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {scenarios.map((s) => (
-                    <button key={s.id} onClick={() => loadScenarioData(s.id)}
-                      className="w-full text-left bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 rounded-2xl p-4 transition-all group">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="font-bold text-slate-800 group-hover:text-blue-700">{s.scenarioName || 'Unnamed Scenario'}</div>
-                          <div className="text-sm text-slate-500 mt-0.5">{fmt(s.loanAmount)} · {s.interestRate}% · {s.term === 360 ? '30yr' : '15yr'}</div>
-                        </div>
-                        <span className="text-blue-400 text-xl">→</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
         {selectedScenario && (
           <>

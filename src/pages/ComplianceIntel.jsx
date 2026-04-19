@@ -459,7 +459,7 @@ Return ONLY valid JSON (no markdown, no preamble):
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Compliance Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl">QM · ATR · HPML · HOEPA · HMDA · Fair Lending · AI risk assessment</p>
             </div>
-            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px' }}>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px', flexShrink: 0 }}>
               {scenario ? (
                 <>
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>

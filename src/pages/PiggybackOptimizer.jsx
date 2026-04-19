@@ -424,10 +424,10 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">19</div>
+              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">22</div>
               <div>
-                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 1 — Pre-Structure</span>
-                <h1 className="text-2xl font-bold text-white mt-0.5">Piggyback 2nd Optimizer™</h1>
+                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 3 — Property &amp; Closing</span>
+                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">Piggyback 2nd Optimizer™</h1>
               </div>
             </div>
             <p className="text-indigo-300 text-sm leading-relaxed mb-5">Structure piggyback second mortgages to eliminate MI, reduce LTV, and optimize blended payment. Compares single-loan vs. combined structures side by side.</p>
@@ -524,7 +524,7 @@ Return ONLY valid JSON: {"recommendation":"piggyback_8010|piggyback_8015|single_
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Piggyback 2nd Optimizer™</h1>
               <p className="text-slate-400 text-base max-w-xl">80/10/10 · 80/15/5 · Single Loan + PMI · Side-by-side payment & 5-year cost comparison</p>
             </div>
-            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px' }}>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px', flexShrink: 0 }}>
               {scenario ? (
                 <>
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>

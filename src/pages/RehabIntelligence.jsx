@@ -366,7 +366,6 @@ function LetterCard({ title, icon, body, color = 'violet' }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className={'rounded-3xl border-2 overflow-hidden ' + (color === 'violet' ? 'border-violet-200 bg-violet-50' : 'border-blue-200 bg-blue-50')}>
-      <ModuleNav moduleNumber={18} />
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-200 bg-white">
         <div className="font-bold text-slate-700 flex items-center gap-2">{icon} {title}</div>
         <div className="flex gap-2">
@@ -683,10 +682,10 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-orange-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-orange-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-orange-900/40">17</div>
+              <div className="w-11 h-11 bg-orange-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-orange-900/40">18</div>
               <div>
-                <span className="text-xs font-bold tracking-widest text-orange-400 uppercase">Stage 2 — Lender Fit</span>
-                <h1 className="text-2xl font-bold text-white mt-0.5">Rehab Intelligence™</h1>
+                <span className="text-xs font-bold tracking-widest text-orange-400 uppercase">Stage 2 — Programs</span>
+                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">Rehab Intelligence™</h1>
               </div>
             </div>
             <p className="text-orange-200 text-sm leading-relaxed mb-5">Structure renovation loans across Agency, Hard Money, Non-QM, and DSCR Fix & Hold products. AI-powered contractor bid analysis, product eligibility screening, and AIV calculation.</p>
@@ -765,6 +764,17 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
+      {/* 1. DecisionRecordBanner FIRST */}
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="Rehab Intelligence™"
+        moduleKey="REHAB_INTEL"
+        onSave={handleSaveToRecord}
+      />
+
+      {/* 2. ModuleNav SECOND */}
+      <ModuleNav moduleNumber={18} />
+
       {/* Hero */}
       <div className="bg-slate-900 relative overflow-hidden" style={{ minHeight: '200px' }}>
         <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #f97316 0%, transparent 50%), radial-gradient(circle at 80% 20%, #f59e0b 0%, transparent 40%)' }} />
@@ -772,7 +782,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 17</div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 18</div>
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Rehab Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl">Agency renovation · Fix & Flip · Bridge · DSCR Fix & Hold · Non-QM · AI bid analysis</p>
               <div className="flex gap-2 mt-3">
@@ -781,7 +791,7 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
                 ))}
               </div>
             </div>
-            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '260px' }}>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '260px', flexShrink: 0 }}>
               {scenario ? (
                 <>
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
@@ -814,7 +824,6 @@ Return ONLY valid JSON: {"verdict":"STRONG|ACCEPTABLE|MARGINAL|COMPLEX","summary
       )}
 
       <ScenarioHeader moduleTitle="Rehab Intelligence™" moduleNumber="18" scenarioId={scenarioId} />
-      <div className="max-w-7xl mx-auto px-6 pt-4 pb-2"><DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="REHAB_INTEL" /></div>
 
       {/* Tab Bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">

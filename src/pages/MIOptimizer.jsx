@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import ScenarioHeader from '../components/ScenarioHeader';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import { collection, query, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
@@ -276,11 +277,10 @@ function MIOptimizer() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <ModuleNav moduleNumber={16} />
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
           <div className="text-4xl mb-4">🛡️</div>
-          <div className="text-gray-600">Loading scenarios...</div>
+          <div className="text-slate-500">Loading scenarios...</div>
         </div>
       </div>
     );
@@ -293,15 +293,16 @@ function MIOptimizer() {
     const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
     const hasMore = !q && !showAll && filtered.length > 5;
     return (
-      <div className="min-h-screen bg-slate-50">
+      <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
         <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-10">
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">05</div>
+              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">16</div>
               <div>
-                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 2 — Lender Fit</span>
-                <h1 className="text-2xl font-bold text-white mt-0.5">MI Optimizer™</h1>
+                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 3 — Property &amp; Closing</span>
+                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">MI Optimizer™</h1>
               </div>
             </div>
             <p className="text-indigo-300 text-sm leading-relaxed mb-5">Compare all four MI structures side by side — Monthly, Single, Split, and Lender-Paid. Find the lowest true cost of MI for every LTV and FICO combination.</p>
@@ -342,7 +343,7 @@ function MIOptimizer() {
                 const sName = s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim() || 'Unnamed Scenario';
                 const amount = parseFloat(s.loanAmount || 0);
                 return (
-                  <button key={s.id} onClick={() => loadScenarioData(s.id)}
+                  <button key={s.id} onClick={() => navigate('/mi-optimizer?scenarioId=' + s.id)}
                     className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-indigo-300 hover:shadow-md hover:bg-indigo-50/30 transition-all group">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
@@ -373,63 +374,67 @@ function MIOptimizer() {
     );
   }
 
+  const borrowerName = selectedScenario ? [selectedScenario.firstName, selectedScenario.lastName].filter(Boolean).join(' ') || selectedScenario.scenarioName || '' : '';
+
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-7xl mx-auto px-4">
-        
-        {/* Header */}
-        <div className="mb-8">
-          <button
-            onClick={() => navigate('/')}
-            className="text-blue-600 hover:text-blue-700 mb-4 flex items-center gap-2"
-          >
-            ← Back to Dashboard
-          </button>
-          <div className="flex items-center gap-4">
-            <div className="text-5xl">🛡️</div>
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">
-                MI Optimizer™
-              </h1>
-              <p className="text-gray-600">
-                Compare Monthly, Single, Split, and Lender-Paid MI options
-              </p>
+    <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+
+      {/* 1. DecisionRecordBanner FIRST */}
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="MI Optimizer™"
+        moduleKey="MI_OPTIMIZER"
+        onSave={handleSaveToRecord}
+      />
+
+      {/* 2. ModuleNav SECOND */}
+      <ModuleNav moduleNumber={16} />
+
+      {/* 3. Hero */}
+      <div className="bg-slate-900 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #6366f1 0%, transparent 50%), radial-gradient(circle at 80% 20%, #8b5cf6 0%, transparent 40%)' }} />
+        <div className="relative max-w-7xl mx-auto px-6 py-8">
+          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2 transition-colors">← Dashboard</button>
+          <div className="flex items-start justify-between flex-wrap gap-6">
+            <div style={{ flex: 1 }}>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 16</div>
+              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">MI Optimizer™</h1>
+              <p className="text-slate-400 text-base max-w-xl">Compare Monthly, Single, Split, and Lender-Paid MI · Find the lowest true cost for every LTV and FICO</p>
+            </div>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px', flexShrink: 0 }}>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
+              <div className="text-white font-bold">{borrowerName || selectedScenario?.scenarioName}</div>
+              <div className="text-slate-400 text-sm mt-1">
+                {loanAmount > 0 && `$${loanAmount.toLocaleString()}`}{ltv > 0 && ` · LTV ${ltv}%`}{creditScore > 0 && ` · FICO ${creditScore}`}
+              </div>
+              {ltv < 80 && ltv > 0 && <div className="text-amber-400 text-xs font-bold mt-1">⚠️ MI not required — LTV below 80%</div>}
+              <button onClick={() => { setSelectedScenario(null); setScenarioId(''); setShowResults(false); }}
+                className="text-xs text-indigo-400 hover:text-indigo-300 mt-2 block transition-colors">Change scenario →</button>
             </div>
           </div>
         </div>
+      </div>
 
-
-        {/* Loaded Scenario Banner */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-8">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-green-600 font-bold">✓</span>
-                    <span className="font-semibold text-gray-900">
-                      Working on: {selectedScenario.scenarioName}
-                    </span>
-                  </div>
-                  <div className="text-sm text-gray-600">
-                    ${loanAmount.toLocaleString()} loan • LTV: {ltv}% • FICO: {creditScore} • Rate: {interestRate}%
-                  </div>
-                  {ltv < 80 && (
-                    <div className="text-sm text-orange-600 font-semibold mt-1">
-                      ⚠️ MI not required (LTV below 80%)
-                    </div>
-                  )}
-                </div>
-                <button
-                  onClick={() => {
-                    setSelectedScenario(null);
-                    setScenarioId('');
-                    setShowResults(false);
-                  }}
-                  className="text-sm text-blue-600 hover:text-blue-700"
-                >
-                  Change Scenario
-                </button>
-              </div>
+      {/* Borrower Bar */}
+      {borrowerName && (
+        <div className="bg-[#1B3A6B] px-6 py-3">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-1">
+            <span className="text-white font-bold text-sm">{borrowerName}</span>
+            {selectedScenario?.streetAddress && <span className="text-blue-200 text-xs">{[selectedScenario.streetAddress, selectedScenario.city, selectedScenario.state].filter(Boolean).join(', ')}</span>}
+            <div className="flex flex-wrap gap-x-4 text-xs text-blue-200">
+              {loanAmount > 0 && <span>Loan <strong className="text-white">${loanAmount.toLocaleString()}</strong></span>}
+              {ltv > 0 && <span>LTV <strong className="text-white">{ltv}%</strong></span>}
+              {interestRate > 0 && <span>Rate <strong className="text-white">{interestRate}%</strong></span>}
             </div>
+          </div>
+        </div>
+      )}
+
+      <ScenarioHeader moduleTitle="MI Optimizer™" moduleNumber="16" scenarioId={scenarioId} />
+
+      {/* Content */}
+      <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
 
             {/* Input Section */}
             <div className="bg-white rounded-lg shadow p-8 mb-8">
@@ -553,24 +558,6 @@ function MIOptimizer() {
                     MI Comparison Results
                   </h2>
                   <div className="flex gap-3">
-                    {scenarioId && (
-                      <DecisionRecordBanner
-                        recordId={savedRecordId}
-                        moduleName="MI Optimizer™"
-                        onSave={handleSaveToRecord}
-                        saving={recordSaving}
-                      />
-                    )}
-                    {savedRecordId && primarySuggestion && (
-                      <NextStepCard
-                        suggestion={primarySuggestion}
-                        secondarySuggestions={secondarySuggestions}
-                        onFollow={logFollow}
-                        onOverride={logOverride}
-                        loanPurpose={loanPurpose}
-                        scenarioId={scenarioId}
-                      />
-                    )}
                     <button
                       onClick={saveResults}
                       className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700"
@@ -659,8 +646,8 @@ function MIOptimizer() {
                 </div>
               </div>
             )}
-        </div>
-</div>
+      </div>
+    </div>
   );
 }
 

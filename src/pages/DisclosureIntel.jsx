@@ -661,10 +661,10 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">14</div>
+              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">26</div>
               <div>
-                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 4 — Verification & Submit</span>
-                <h1 className="text-2xl font-bold text-white mt-0.5">Disclosure Intelligence™</h1>
+                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 4 — Verification &amp; Submit</span>
+                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">Disclosure Intelligence™</h1>
               </div>
             </div>
             <p className="text-indigo-300 text-sm leading-relaxed mb-5">Track every TRID and RESPA deadline, generate disclosure packages, monitor re-disclosure triggers, and protect against trigger leads with the built-in Trigger Lead Shield™.</p>
@@ -749,7 +749,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
         moduleKey="DISCLOSURE_INTEL"
         onSave={handleSaveToRecord}
       />
-      <ModuleNav moduleNumber={24} />
+      <ModuleNav moduleNumber={26} />
 
       {/* Hidden print zone for Trigger Lead Shield */}
       <div id="tls-print-zone" ref={tlsPrintRef} style={{ display: 'none' }} />
@@ -761,11 +761,11 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2">← Dashboard</button>
           <div className="flex items-start justify-between flex-wrap gap-6">
             <div>
-              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 24</div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 26</div>
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Disclosure Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl">TRID · RESPA · ECOA · Deadline calculator · Compliance tracking · AI risk assessment</p>
             </div>
-            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px' }}>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px', flexShrink: 0 }}>
               {scenario ? (
                 <>
                   <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
@@ -800,7 +800,7 @@ Return ONLY valid JSON: {"riskLevel":"LOW|MEDIUM|HIGH|CRITICAL","summary":"2-3 s
         </div>
       )}
 
-      <ScenarioHeader moduleTitle="Disclosure Intelligence™" moduleNumber="24" scenarioId={scenarioId} />
+      <ScenarioHeader moduleTitle="Disclosure Intelligence™" moduleNumber="26" scenarioId={scenarioId} />
 
       {/* Tab Bar */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-30">

@@ -436,8 +436,8 @@ export default function CollateralIntel() {
           <div className="max-w-2xl mx-auto">
             <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">09</div>
-              <div><span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 2 — Lender Fit</span><h1 className="text-2xl font-bold text-white mt-0.5">Collateral Intelligence™</h1></div>
+              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">21</div>
+              <div><span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 3 — Property &amp; Closing</span><h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">Collateral Intelligence™</h1></div>
             </div>
             <p className="text-indigo-300 text-sm leading-relaxed mb-5">Evaluate collateral risk before it reaches underwriting. Detects stale comps, condition issues, flip history, and FHA/VA property eligibility concerns.</p>
             <div className="flex flex-wrap gap-2">{['Appraisal Review', 'Stale Listing Detection', 'Comparable Analysis', 'FHA/VA Condition Flags', 'Flip Risk Assessment', 'AI Property Report'].map(tag => (<span key={tag} className="text-xs bg-white/10 border border-white/10 text-indigo-200 px-3 py-1 rounded-full font-medium">{tag}</span>))}</div>
@@ -513,7 +513,7 @@ export default function CollateralIntel() {
               <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Collateral Intelligence™</h1>
               <p className="text-slate-400 text-base max-w-xl leading-relaxed">Property analysis · AI appraisal review · Waiver eligibility · Rebuttal letter generation</p>
             </div>
-            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px' }}>
+            <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px', flexShrink: 0 }}>
               {scenario ? (<>
                 <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
                 <div className="text-white font-bold">{borrowerName || scenario.scenarioName}</div>

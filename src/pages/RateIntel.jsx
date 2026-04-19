@@ -9,6 +9,8 @@ import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import ModuleNav from '../components/ModuleNav';
+import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import ScenarioHeader from '../components/ScenarioHeader';
 import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
 
 const LOCK_PERIODS = [
@@ -507,60 +509,48 @@ export default function RateIntel() {
     </div>
   );
 
-  // ─── STATE A: No scenario — Landing / Selector ────────────────────────────────
   if (!scenarioId) {
     const q = search.toLowerCase().trim();
     const sorted = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
     const filtered = q ? sorted.filter(s => (s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim()).toLowerCase().includes(q)) : sorted;
     const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
     const hasMore = !q && !showAll && filtered.length > 5;
-
     return (
-      <div className="min-h-screen bg-slate-50">
-
-        {/* ── Hero (landing) ── */}
-        <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', padding: '28px 32px 24px' }}>
-          <button onClick={() => navigate('/')}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#818cf8', fontSize: 12, fontWeight: 600, marginBottom: 20, background: 'none', border: 'none', cursor: 'pointer' }}>
-            ← Back to Dashboard
-          </button>
-          <p style={{ fontSize: 10, fontWeight: 600, color: '#64748b', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
-            Stage 3 — Optimization
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, background: '#6366f1', borderRadius: 8, fontSize: 11, fontWeight: 700, color: '#fff' }}>
-              M19
-            </span>
-            <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: '#f8fafc', lineHeight: 1.15 }}>
-              Rate Intelligence™
-            </h1>
-          </div>
-          <p style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.65, maxWidth: 520, marginBottom: 14 }}>
-            Lock strategy · Pricing optimization · Buydown analysis · Float vs lock decisions. Find the optimal pricing structure for each borrower's timeline and risk tolerance.
-          </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {['Rate Comparison', 'Buydown Analysis', 'ARM vs Fixed', 'Break-Even Calculator', 'Pricing Sensitivity', 'Float vs Lock'].map(tag => (
-              <span key={tag} style={{ padding: '3px 11px', borderRadius: 20, border: '1px solid #334155', fontSize: 11, fontWeight: 500, color: '#cbd5e1' }}>{tag}</span>
-            ))}
+      <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-10">
+          <div className="max-w-2xl mx-auto">
+            <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm shadow-lg shadow-indigo-900/40">19</div>
+              <div>
+                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 3 — Optimization</span>
+                <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-2xl font-normal text-white mt-0.5">Rate Intelligence™</h1>
+              </div>
+            </div>
+            <p className="text-indigo-300 text-sm leading-relaxed mb-5">Lock strategy · Pricing optimization · Buydown analysis · Float vs lock decisions. Find the optimal pricing structure for each borrower's timeline and risk tolerance.</p>
+            <div className="flex flex-wrap gap-2">
+              {['Rate Comparison', 'Buydown Analysis', 'Break-Even Calculator', 'Lender Credit Engine', 'Float vs Lock', 'Lock Timeline'].map(tag => (
+                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-indigo-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+              ))}
+            </div>
           </div>
         </div>
-
-        {/* ── Scenario Selector ── */}
-        <div style={{ maxWidth: 640, margin: '0 auto', padding: '28px 24px' }}>
-          <h2 style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 4 }}>Select a Scenario</h2>
-          <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 14 }}>Search by name or pick from your most recent files.</p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1.5px solid #e2e8f0', borderRadius: 10, padding: '9px 14px', marginBottom: 14 }}>
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="5" stroke="#94a3b8" strokeWidth="1.6"/><path d="M10.5 10.5L14 14" stroke="#94a3b8" strokeWidth="1.6" strokeLinecap="round"/></svg>
-            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
-              style={{ border: 'none', outline: 'none', fontSize: 13, color: '#475569', width: '100%', background: 'transparent', fontFamily: 'inherit' }} />
-            {search && <button onClick={() => setSearch('')} style={{ color: '#94a3b8', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>✕</button>}
+        <div className="max-w-2xl mx-auto px-6 py-8">
+          <div className="mb-5">
+            <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">Select a Scenario</h2>
+            <p className="text-xs text-slate-400">Search by name or pick from your most recent files.</p>
           </div>
-
+          <div className="relative mb-4">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
+              className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 transition-all" />
+            {search && <button onClick={() => setSearch('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 text-lg leading-none">✕</button>}
+          </div>
           {scenarios.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
               <p className="text-3xl mb-3">📂</p>
               <p className="text-sm font-semibold text-slate-600">No scenarios found</p>
-              <p className="text-xs text-slate-400 mt-1">Create one in Scenario Creator first.</p>
               <button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline">→ Go to Scenario Creator</button>
             </div>
           ) : filtered.length === 0 ? (
@@ -571,13 +561,13 @@ export default function RateIntel() {
             </div>
           ) : (
             <div className="space-y-2.5">
-              {!q && !showAll && <p style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 7 }}>Recently Updated</p>}
+              {!q && !showAll && <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-1">Recently Updated</p>}
               {displayed.map(s => {
                 const sName  = s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim() || 'Unnamed Scenario';
                 const amount = parseFloat(s.loanAmount || 0);
                 return (
                   <button key={s.id} onClick={() => navigate('/rate-intel?scenarioId=' + s.id)}
-                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-indigo-300 hover:bg-indigo-50/30 hover:shadow-md transition-all group">
+                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-indigo-300 hover:shadow-md hover:bg-indigo-50/30 transition-all group">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-indigo-700 transition-colors">{sName}</div>
@@ -585,7 +575,6 @@ export default function RateIntel() {
                           {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
                           {s.loanType    && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
                           {s.creditScore && <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
-                          {s.stage       && <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full font-medium">{s.stage}</span>}
                         </div>
                       </div>
                       <span className="text-slate-300 group-hover:text-indigo-400 text-lg transition-colors shrink-0">→</span>
@@ -593,14 +582,8 @@ export default function RateIntel() {
                   </button>
                 );
               })}
-              {hasMore && (
-                <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-indigo-500 hover:text-indigo-700 py-3 border border-dashed border-indigo-200 rounded-2xl hover:bg-indigo-50 transition-all">
-                  View all {filtered.length} scenarios
-                </button>
-              )}
-              {showAll && filtered.length > 5 && (
-                <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>
-              )}
+              {hasMore && <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-indigo-500 hover:text-indigo-700 py-3 border border-dashed border-indigo-200 rounded-2xl hover:bg-indigo-50 transition-all">View all {filtered.length} scenarios</button>}
+              {showAll && filtered.length > 5 && <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>}
             </div>
           )}
         </div>
@@ -608,7 +591,6 @@ export default function RateIntel() {
     );
   }
 
-  // ─── STATE B: Scenario loaded — Active Module ─────────────────────────────────
   const propertyAddress = scenario ? [scenario.streetAddress, scenario.city, scenario.state, scenario.zipCode].filter(Boolean).join(', ') : '';
   const coBorrowerNames = scenario?.coBorrowers?.filter(cb => cb.firstName || cb.lastName).map(cb => `${cb.firstName||''} ${cb.lastName||''}`.trim()) || [];
 
@@ -616,76 +598,61 @@ export default function RateIntel() {
     <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans', system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
-      {/* ════════════════════════════════════════════════════════
-          1. HERO
-      ════════════════════════════════════════════════════════ */}
-      <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', padding: '26px 32px 22px', position: 'relative' }}>
-        <p style={{ fontSize: 10, fontWeight: 600, color: '#64748b', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6 }}>
-          LoanBeacons™ — Module 19
-        </p>
-        <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif", fontSize: 26, color: '#f8fafc', lineHeight: 1.15, marginBottom: 8 }}>
-          Rate Intelligence™
-        </h1>
-        <p style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.6, maxWidth: 500, marginBottom: 12 }}>
-          Lock strategy · Pricing optimization · Buydown analysis · Float vs lock decisions
-        </p>
+      {/* 1. DecisionRecordBanner FIRST */}
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="Rate Intelligence™"
+        moduleKey="RATE_INTEL"
+        onSave={handleSaveToRecord}
+      />
 
-        {/* Status pills */}
-        <div style={{ position: 'absolute', top: 22, right: 32, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-          <span style={{ background: 'rgba(34,197,94,0.15)', color: '#86efac', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid rgba(134,239,172,0.3)' }}>● LIVE</span>
-          {trendObj && (
-            <span style={{ background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid rgba(165,180,252,0.3)' }}>
-              {trendObj.rec}
-            </span>
-          )}
-        </div>
+      {/* 2. ModuleNav SECOND */}
+      <ModuleNav moduleNumber={19} />
 
-        {/* Active scenario card */}
-        {scenario && (
-          <div style={{ position: 'absolute', bottom: 20, right: 32, background: 'rgba(255,255,255,0.06)', border: '1px solid #334155', borderRadius: 10, padding: '10px 14px', minWidth: 176, backdropFilter: 'blur(4px)' }}>
-            <p style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>Active Scenario</p>
-            <p style={{ fontSize: 13, fontWeight: 600, color: '#f1f5f9' }}>{borrowerName || scenario.scenarioName || 'Unknown'}</p>
-            <p style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>
-              {loan > 0 ? fmt0(loan) : ''}{rate > 0 ? ` · ${fmtPct(rate)}` : ''}{currentPI > 0 ? ` · ${fmtD(currentPI)}/mo` : ''}
-            </p>
-            <span onClick={() => navigate('/rate-intel')} style={{ fontSize: 10, color: '#818cf8', marginTop: 6, cursor: 'pointer', display: 'inline-block' }}>Change scenario →</span>
+      {/* 3. Hero — flexbox */}
+      <div className="bg-slate-900 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #6366f1 0%, transparent 50%), radial-gradient(circle at 80% 20%, #8b5cf6 0%, transparent 40%)' }} />
+        <div className="relative max-w-7xl mx-auto px-6 py-8">
+          <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-sm mb-6 flex items-center gap-2 transition-colors">← Dashboard</button>
+          <div className="flex items-start justify-between flex-wrap gap-6">
+            <div style={{ flex: 1 }}>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">LOANBEACONS™ — Module 19</div>
+              <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif" }} className="text-4xl font-normal text-white mb-2">Rate Intelligence™</h1>
+              <p className="text-slate-400 text-base max-w-xl">Lock strategy · Pricing optimization · Buydown analysis · Float vs lock decisions</p>
+            </div>
+            {scenario && (
+              <div className="bg-slate-800/60 border border-slate-700 rounded-2xl px-5 py-4" style={{ minWidth: '240px', flexShrink: 0 }}>
+                <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Active Scenario</div>
+                <div className="text-white font-bold">{borrowerName || scenario.scenarioName}</div>
+                <div className="text-slate-400 text-sm mt-1">{loan > 0 ? fmt0(loan) : ''}{rate > 0 ? ` · ${fmtPct(rate)}` : ''}{currentPI > 0 ? ` · ${fmtD(currentPI)}/mo` : ''}</div>
+                {trendObj && <div className="text-indigo-300 text-xs font-bold mt-1">{trendObj.rec}</div>}
+                <button onClick={() => navigate('/rate-intel')} className="text-xs text-indigo-400 hover:text-indigo-300 mt-2 block transition-colors">Change scenario →</button>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
-      {/* ════════════════════════════════════════════════════════
-          2. SCENARIO HEADER BAR
-      ════════════════════════════════════════════════════════ */}
+      {/* 4. Borrower Bar */}
       {scenario && (
-        <div style={{ background: '#1a2744', padding: '8px 32px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', borderBottom: '1px solid #0f172a' }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{borrowerName || 'Unknown Borrower'}</span>
-          {coBorrowerNames.map((n, i) => <span key={i} style={{ fontSize: 11, color: '#64748b' }}>+ {n}</span>)}
-          {propertyAddress && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>{propertyAddress}</span></>}
-          {loan > 0  && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>Loan <span style={{ color: '#cbd5e1', fontWeight: 500 }}>{fmt0(loan)}</span></span></>}
-          {rate > 0  && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>Rate <span style={{ color: '#cbd5e1', fontWeight: 500 }}>{fmtPct(rate)}</span></span></>}
-          {scenario.loanType && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>Type <span style={{ color: '#cbd5e1', fontWeight: 500 }}>{scenario.loanType}</span></span></>}
+        <div className="bg-[#1B3A6B] px-6 py-3">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-x-6 gap-y-1">
+            <span className="text-white font-bold text-sm">{borrowerName || 'Unknown Borrower'}</span>
+            {coBorrowerNames.map((n, i) => <span key={i} className="text-blue-200 text-xs">+ {n}</span>)}
+            {propertyAddress && <span className="text-blue-200 text-xs">{propertyAddress}</span>}
+            <div className="flex flex-wrap gap-x-4 text-xs text-blue-200">
+              {loan > 0 && <span>Loan <strong className="text-white">{fmt0(loan)}</strong></span>}
+              {rate > 0 && <span>Rate <strong className="text-white">{fmtPct(rate)}</strong></span>}
+              {scenario.loanType && <span>Type <strong className="text-white">{scenario.loanType}</strong></span>}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* ════════════════════════════════════════════════════════
-          3. MODULE NAV BAR
-      ════════════════════════════════════════════════════════ */}
-      <ModuleNav moduleNumber={19} />
+      {/* 5. ScenarioHeader */}
+      <ScenarioHeader moduleTitle="Rate Intelligence™" moduleNumber="19" scenarioId={scenarioId} />
 
-      {/* ════════════════════════════════════════════════════════
-          4. DECISION RECORD BANNER — green on save + NSI pill
-      ════════════════════════════════════════════════════════ */}
-      <DRBanner
-        savedRecordId={savedRecordId}
-        saving={recordSaving}
-        onSave={handleSaveToRecord}
-        nsiSuggestion={findingsReported ? primarySuggestion : null}
-        onNsiNavigate={(path) => { logFollow(); navigate(`${path}?scenarioId=${scenarioId}`); }}
-      />
-
-      {/* ════════════════════════════════════════════════════════
-          5. CONTENT
-      ════════════════════════════════════════════════════════ */}
+      {/* Content */}
       <div className="max-w-7xl mx-auto px-6 py-6 space-y-8">
 
         {/* LO Confidence Guide */}
