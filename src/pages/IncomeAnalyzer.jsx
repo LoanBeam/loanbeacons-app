@@ -1,544 +1,1074 @@
 // src/pages/IncomeAnalyzer.jsx
-// LoanBeacons™ — Module 02 | Stage 1: Pre-Structure
-// Income Analyzer™ — Named per-borrower sections, unlimited co-borrowers from scenario
-// v2.0 — ModulePageShell layout standard applied (Apr 2026)
+// LoanBeacons™ — Module 2 | Stage 1: Pre-Structure
+// Income Analyzer™ v4.0 — Smart upload workflow
+// Upload 1040 once → AI auto-detects all income types
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
-import ModuleNav from '../components/ModuleNav';
+import DecisionRecordBanner from '../components/DecisionRecordBanner';
 import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import NextStepCard from '../components/NextStepCard';
+import ScenarioHeader from '../components/ScenarioHeader';
+import ModuleNav from '../components/ModuleNav';
 
-// ─── Income Methods ───────────────────────────────────────────────────────────
-const INCOME_METHODS = {
-  W2: {
-    id: 'W2', label: 'W-2 / Salaried', icon: '💼',
-    fields: ['base_monthly', 'overtime_monthly', 'bonus_monthly', 'commission_monthly'],
-    docs: ['2 years W-2s', '30-day paystub (YTD)', 'VOE if needed'],
-    notes: 'Base salary is stable income. Overtime/bonus requires 2-year history. Commission requires 2-year avg.',
-    calc: (f) => (parseFloat(f.base_monthly)||0) + (parseFloat(f.overtime_monthly)||0) + (parseFloat(f.bonus_monthly)||0) + (parseFloat(f.commission_monthly)||0),
+// ─── Constants ────────────────────────────────────────────────────────────────
+const API = 'https://api.anthropic.com/v1/messages';
+const HDRS = () => ({
+  'Content-Type': 'application/json',
+  'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+  'anthropic-version': '2023-06-01',
+  'anthropic-dangerous-direct-browser-access': 'true',
+});
+const fmt$ = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const uid = () => '_' + Math.random().toString(36).slice(2, 9);
+
+// ─── Income method calc logic ─────────────────────────────────────────────────
+const CALCS = {
+  SELF_EMPLOYED: f => {
+    const y1 = parseFloat(f.yr1_net) || 0, y2 = parseFloat(f.yr2_net) || 0;
+    const add = (parseFloat(f.depreciation) || 0) + (parseFloat(f.depletion) || 0) + (parseFloat(f.home_office) || 0);
+    const a1 = y1 + add, a2 = y2 + add;
+    if (y2 > 0 && a2 < a1 * 0.90) return a2 / 12;
+    if (y1 > 0 && y2 > 0) return ((a1 + a2) / 2) / 12;
+    return (y1 > 0 ? a1 : a2) / 12;
   },
-  SELF_EMPLOYED: {
-    id: 'SELF_EMPLOYED', label: 'Self-Employed (1099/K-1)', icon: '🏢',
-    fields: ['yr1_net_income', 'yr2_net_income', 'addbacks_depreciation', 'addbacks_depletion', 'business_use_of_home'],
-    docs: ['2 years personal tax returns (1040)', '2 years business returns (if applicable)', 'YTD P&L (within 60 days)', 'CPA letter if needed'],
-    notes: 'Qualifying income = 2-year average of (net income + allowable addbacks). Business losses reduce income.',
-    calc: (f) => {
-      const yr1 = parseFloat(f.yr1_net_income)||0;
-      const yr2 = parseFloat(f.yr2_net_income)||0;
-      const addbacks = (parseFloat(f.addbacks_depreciation)||0) + (parseFloat(f.addbacks_depletion)||0) + (parseFloat(f.business_use_of_home)||0);
-      return ((yr1 + yr2) / 2 + addbacks) / 12;
-    },
+  RENTAL: f => {
+    const y1net = parseFloat(f.yr1_net) || 0, y2net = parseFloat(f.yr2_net) || 0;
+    const y1dep = parseFloat(f.yr1_depr) || 0, y2dep = parseFloat(f.yr2_depr) || 0;
+    const y1adj = y1net + y1dep, y2adj = y2net + y2dep;
+    if (y1adj !== 0 || y2adj !== 0) {
+      if (y1adj !== 0 && y2adj !== 0) return ((y1adj + y2adj) / 2) / 12;
+      return (y1adj !== 0 ? y1adj : y2adj) / 12;
+    }
+    return (parseFloat(f.gross_rents) || 0) * (1 - (parseFloat(f.vacancy_pct) || 25) / 100);
   },
-  RENTAL: {
-    id: 'RENTAL', label: 'Rental Income', icon: '🏠',
-    fields: ['gross_rents', 'vacancy_factor_pct', 'mortgage_payment', 'taxes_insurance', 'repairs_maintenance'],
-    docs: ['2 years Schedule E (tax returns)', 'Current signed leases', 'Property management agreement (if applicable)'],
-    notes: 'Net rental income = gross rents × (1 - vacancy%) − PITIA. FHA/Fannie use 75% of gross rents.',
-    calc: (f) => {
-      const gross   = parseFloat(f.gross_rents)||0;
-      const vacancy = parseFloat(f.vacancy_factor_pct)||25;
-      return gross * (1 - vacancy/100);
-    },
+  W2: f => (parseFloat(f.base_monthly) || 0) + (parseFloat(f.overtime_monthly) || 0) + (parseFloat(f.bonus_monthly) || 0) + (parseFloat(f.commission_monthly) || 0),
+  SOCIAL_SECURITY: f => (parseFloat(f.monthly_benefit) || 0) * (f.gross_up === 'yes' ? 1.25 : 1),
+  PENSION: f => (parseFloat(f.monthly_amount) || 0) * (f.taxable === 'no' ? 1.25 : 1),
+  MILITARY: f => (parseFloat(f.base_pay) || 0) + ((parseFloat(f.bah) || 0) * 1.25) + ((parseFloat(f.bas) || 0) * 1.25) + (parseFloat(f.other) || 0),
+  CHILD_SUPPORT: f => (parseFloat(f.months_remaining) || 0) >= 36 ? (parseFloat(f.monthly_amount) || 0) : 0,
+  CAPITAL_GAINS: f => ((parseFloat(f.yr1_gains) || 0) + (parseFloat(f.yr2_gains) || 0)) / 2 / 12,
+  S_CORP: f => {
+    const own = Math.min(1, Math.max(0, (parseFloat(f.ownership_pct) || 100) / 100));
+    return (((parseFloat(f.yr1_k1) || 0) + (parseFloat(f.yr2_k1) || 0)) / 2 * own + (parseFloat(f.w2_from_biz) || 0) + (parseFloat(f.depr_addback) || 0)) / 12;
   },
-  SOCIAL_SECURITY: {
-    id: 'SOCIAL_SECURITY', label: 'Social Security / SSI / Disability', icon: '🏛️',
-    fields: ['monthly_benefit', 'gross_up_eligible'],
-    docs: ['Award letter (current year)', '2 months bank statements showing deposits', 'SSA-1099'],
-    notes: 'Non-taxable SS/SSI can be grossed up 25% for qualifying. Verify continuance for 3+ years.',
-    calc: (f) => {
-      const base = parseFloat(f.monthly_benefit)||0;
-      return f.gross_up_eligible === 'yes' ? base * 1.25 : base;
-    },
-  },
-  PENSION: {
-    id: 'PENSION', label: 'Pension / Retirement', icon: '💰',
-    fields: ['monthly_amount', 'is_taxable'],
-    docs: ['Award/benefit letter', '2 months bank statements', '1099-R if applicable'],
-    notes: 'Non-taxable pension can be grossed up 25%. Must document continuance.',
-    calc: (f) => parseFloat(f.monthly_amount)||0,
-  },
-  MILITARY: {
-    id: 'MILITARY', label: 'Military / BAH / BAS', icon: '🎖️',
-    fields: ['base_pay', 'bah', 'bas', 'other_allotments'],
-    docs: ['Leave & Earnings Statement (LES)', 'Orders if PCS pending'],
-    notes: 'BAH/BAS are non-taxable and can be grossed up 25%. All allotments count as qualifying income.',
-    calc: (f) => {
-      const base  = parseFloat(f.base_pay)||0;
-      const bah   = (parseFloat(f.bah)||0) * 1.25;
-      const bas   = (parseFloat(f.bas)||0) * 1.25;
-      const other = parseFloat(f.other_allotments)||0;
-      return base + bah + bas + other;
-    },
-  },
-  CHILD_SUPPORT: {
-    id: 'CHILD_SUPPORT', label: 'Child Support / Alimony', icon: '👨‍👧',
-    fields: ['monthly_amount', 'months_remaining'],
-    docs: ['Court order or divorce decree', '12 months proof of receipt (bank statements)', 'Payment history'],
-    notes: 'Must have 3+ years continuance remaining. Verify consistent receipt via bank statements.',
-    calc: (f) => {
-      const months = parseFloat(f.months_remaining)||0;
-      return months >= 36 ? (parseFloat(f.monthly_amount)||0) : 0;
-    },
+  CONTRACTOR_1099: f => {
+    const n1 = (parseFloat(f.yr1_income) || 0) - (parseFloat(f.yr1_expenses) || 0);
+    const n2 = (parseFloat(f.yr2_income) || 0) - (parseFloat(f.yr2_expenses) || 0);
+    if (n2 > 0 && n2 < n1 * 0.90 && n1 > 0) return n2 / 12;
+    if (n1 > 0 && n2 > 0) return ((n1 + n2) / 2) / 12;
+    return (n1 > 0 ? n1 : n2) / 12;
   },
 };
 
-const FIELD_LABELS = {
-  base_monthly:          'Base Monthly Salary ($)',
-  overtime_monthly:      'Overtime Monthly (2yr avg, $)',
-  bonus_monthly:         'Bonus Monthly (2yr avg, $)',
-  commission_monthly:    'Commission Monthly (2yr avg, $)',
-  yr1_net_income:        'Year 1 Net Income ($, annual)',
-  yr2_net_income:        'Year 2 Net Income ($, annual)',
-  addbacks_depreciation: 'Depreciation Addback ($, annual)',
-  addbacks_depletion:    'Depletion Addback ($, annual)',
-  business_use_of_home:  'Business Use of Home Addback ($, annual)',
-  gross_rents:           'Gross Monthly Rents ($)',
-  vacancy_factor_pct:    'Vacancy Factor (%, default 25)',
-  mortgage_payment:      'Mortgage Payment ($, mo)',
-  taxes_insurance:       'Taxes + Insurance ($, mo)',
-  repairs_maintenance:   'Repairs / Mgmt ($, mo)',
-  monthly_benefit:       'Monthly Benefit Amount ($)',
-  gross_up_eligible:     'Non-taxable (gross-up eligible)?',
-  monthly_amount:        'Monthly Amount ($)',
-  is_taxable:            'Is this income taxable?',
-  base_pay:              'Base Pay (monthly, $)',
-  bah:                   'BAH (monthly, $)',
-  bas:                   'BAS (monthly, $)',
-  other_allotments:      'Other Allotments (monthly, $)',
-  months_remaining:      'Months of Continuance Remaining',
+const METHOD_META = {
+  SELF_EMPLOYED: { label: 'Self-employed (Schedule C)', icon: '🏢', multiYear: true },
+  RENTAL: { label: 'Rental income (Schedule E)', icon: '🏠', multiYear: true },
+  W2: { label: 'W-2 / Salaried', icon: '💼', multiYear: false },
+  SOCIAL_SECURITY: { label: 'Social Security / SSI', icon: '🛡️', multiYear: false },
+  PENSION: { label: 'Pension / retirement', icon: '💰', multiYear: false },
+  MILITARY: { label: 'Military / BAH / BAS', icon: '🎖️', multiYear: false },
+  CHILD_SUPPORT: { label: 'Child support / alimony', icon: '👨‍👧', multiYear: false },
+  CAPITAL_GAINS: { label: 'Capital gains', icon: '📈', multiYear: true },
+  S_CORP: { label: 'S-Corp / Partnership (K-1)', icon: '🏛️', multiYear: true },
+  CONTRACTOR_1099: { label: '1099 Contractor', icon: '📋', multiYear: true },
 };
 
-const fmt$ = n => n ? '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '$0.00';
+// ─── Extraction prompts ───────────────────────────────────────────────────────
+const TAX_RETURN_PROMPT = `Extract ALL income data from this federal tax return. Return ONLY valid JSON. Schema:
+{"doc_type":"1040","tax_year":0,"taxpayer_name":"","filing_status":"",
+"w2_wages":0,
+"schedule_c_net":0,"schedule_c_gross":0,"schedule_c_depreciation":0,"schedule_c_home_office":0,"schedule_c_meals":0,"schedule_c_mileage":0,"schedule_c_sep_ira":0,"business_name":"",
+"schedule_e_net":0,"schedule_e_gross_rents":0,"schedule_e_depreciation":0,
+"schedule_d_net":0,
+"k1_ordinary":0,"k1_ownership_pct":0,
+"social_security_annual":0,"social_security_monthly":0,"ss_taxable_portion":0,
+"agi":0,"sep_ira_deduction":0,"self_employed_health_ins":0,
+"flags":[]}
+CRITICAL: Put ACTUAL numbers from the return — not 0 unless truly zero. schedule_c_net = Schedule C Line 31. schedule_e_net = Schedule E Part I total. schedule_c_depreciation = Schedule C Line 13. schedule_e_depreciation = Schedule E depreciation column total. social_security_monthly = annual SS / 12. Flag any traps: SEP IRA is NOT an addback, meals are NOT an addback.`;
 
-const ROLE_STYLES = {
-  primary:       { badge: 'bg-indigo-100 text-indigo-700 border-indigo-200', dot: 'bg-indigo-500',  total: 'text-indigo-600', bar: 'bg-indigo-400' },
-  'co-borrower': { badge: 'bg-violet-100 text-violet-700 border-violet-200', dot: 'bg-violet-500',  total: 'text-violet-600', bar: 'bg-violet-400' },
+const W2_PROMPT = `Extract employment income data. Return ONLY valid JSON.
+{"doc_type":"w2_paystub","employer_name":"","employee_name":"","pay_frequency":"biweekly","current_gross":0,"ytd_gross":0,"base_annual":0,"box1_wages":0,"overtime_ytd":0,"bonus_ytd":0,"hire_date":"","prior_employer_contamination":false,"prior_employer_amount":0,"flags":[]}`;
+
+const OTHER_PROMPTS = {
+  SOCIAL_SECURITY: '{"doc_type":"ssa","monthly_benefit":0,"annual_benefit":0,"non_taxable":true,"recipient_name":"","effective_date":"","flags":[]}',
+  PENSION: '{"doc_type":"pension","monthly_amount":0,"annual_amount":0,"non_taxable":false,"pension_name":"","flags":[]}',
+  MILITARY: '{"doc_type":"les","base_pay":0,"bah":0,"bas":0,"special_pay":0,"ets_date":"","branch":"","rank":"","flags":[]}',
+  CHILD_SUPPORT: '{"doc_type":"court_order","monthly_amount":0,"months_remaining":0,"payor_name":"","flags":[]}',
 };
 
-// ─── Source Card — NO ModuleNav inside ───────────────────────────────────────
-function SourceCard({ source, groupId, onUpdate, onRemove }) {
-  const method = INCOME_METHODS[source.method];
-  if (!method) return null;
+// ─── Extract PDF via Haiku ────────────────────────────────────────────────────
+async function extractPDF(file, prompt) {
+  const base64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(',')[1]);
+    r.onerror = () => rej(new Error('Read failed'));
+    r.readAsDataURL(file);
+  });
+  const resp = await fetch(API, {
+    method: 'POST',
+    headers: { ...HDRS(), 'anthropic-beta': 'pdfs-2024-09-25' },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001', max_tokens: 2000,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+        { type: 'text', text: 'Extract income data from this document. Return ONLY valid JSON, no markdown. ' + prompt },
+      ]}],
+    }),
+  });
+  if (!resp.ok) throw new Error('API ' + resp.status);
+  const data = await resp.json();
+  const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+  const clean = text.replace(/```json|```/gi, '').trim();
+  try { return JSON.parse(clean); } catch (_) {
+    const s = clean.indexOf('{'), e = clean.lastIndexOf('}');
+    if (s !== -1 && e > s) return JSON.parse(clean.slice(s, e + 1));
+    return { parse_error: true, raw_text: text };
+  }
+}
+
+// ─── Build income sources from tax return extraction ─────────────────────────
+function buildSourcesFromTaxReturn(extracted, yearSlot, existingSources) {
+  const sources = [...existingSources];
+  const isYr1 = yearSlot === 'prior';
+
+  const findOrCreate = (method) => {
+    const idx = sources.findIndex(s => s.method === method);
+    if (idx >= 0) return idx;
+    sources.push({ id: uid(), method, fields: {}, calculated: 0, yr1Data: null, yr2Data: null, manualDocs: [] });
+    return sources.length - 1;
+  };
+
+  const updateFields = (idx, patch) => {
+    sources[idx] = { ...sources[idx], fields: { ...sources[idx].fields, ...patch } };
+    sources[idx].calculated = Math.max(0, CALCS[sources[idx].method](sources[idx].fields));
+  };
+
+  if (extracted.schedule_c_net && Math.abs(extracted.schedule_c_net) > 0) {
+    const idx = findOrCreate('SELF_EMPLOYED');
+    if (isYr1) {
+      sources[idx].yr1Data = extracted;
+      updateFields(idx, { yr1_net: String(extracted.schedule_c_net), depreciation: String(extracted.schedule_c_depreciation || 0), home_office: String(extracted.schedule_c_home_office || 0) });
+    } else {
+      sources[idx].yr2Data = extracted;
+      updateFields(idx, { yr2_net: String(extracted.schedule_c_net), depreciation: String(extracted.schedule_c_depreciation || 0), home_office: String(extracted.schedule_c_home_office || 0) });
+    }
+  }
+
+  if (extracted.schedule_e_net && Math.abs(extracted.schedule_e_net) > 0) {
+    const idx = findOrCreate('RENTAL');
+    if (isYr1) {
+      sources[idx].yr1Data = extracted;
+      updateFields(idx, { yr1_net: String(extracted.schedule_e_net), yr1_depr: String(extracted.schedule_e_depreciation || 0), gross_rents: String((extracted.schedule_e_gross_rents || 0) / 12) });
+    } else {
+      sources[idx].yr2Data = extracted;
+      updateFields(idx, { yr2_net: String(extracted.schedule_e_net), yr2_depr: String(extracted.schedule_e_depreciation || 0) });
+    }
+  }
+
+  if (extracted.schedule_d_net && Math.abs(extracted.schedule_d_net) > 0) {
+    const idx = findOrCreate('CAPITAL_GAINS');
+    if (isYr1) { sources[idx].yr1Data = extracted; updateFields(idx, { yr1_gains: String(extracted.schedule_d_net) }); }
+    else { sources[idx].yr2Data = extracted; updateFields(idx, { yr2_gains: String(extracted.schedule_d_net) }); }
+  }
+
+  if (extracted.k1_ordinary && Math.abs(extracted.k1_ordinary) > 0) {
+    const idx = findOrCreate('S_CORP');
+    if (isYr1) { sources[idx].yr1Data = extracted; updateFields(idx, { yr1_k1: String(extracted.k1_ordinary), ownership_pct: String(extracted.k1_ownership_pct || 100) }); }
+    else { sources[idx].yr2Data = extracted; updateFields(idx, { yr2_k1: String(extracted.k1_ordinary) }); }
+  }
+
+  if (extracted.social_security_monthly && extracted.social_security_monthly > 0) {
+    const idx = findOrCreate('SOCIAL_SECURITY');
+    sources[idx].yr1Data = extracted;
+    updateFields(idx, { monthly_benefit: String(extracted.social_security_monthly), gross_up: 'yes' });
+  }
+
+  if (extracted.w2_wages && extracted.w2_wages > 0) {
+    const idx = findOrCreate('W2');
+    sources[idx].yr1Data = extracted;
+    updateFields(idx, { base_monthly: String((extracted.w2_wages / 12).toFixed(2)) });
+  }
+
+  return sources;
+}
+
+// ─── YearPanel — side by side extraction display ──────────────────────────────
+function YearPanel({ label, yearKey, data, loading, onUpload, onRemove }) {
+  if (loading) return (
+    <div style={{ padding: '12px 14px' }}>
+      <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>{label}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'var(--color-background-secondary)', borderRadius: 'var(--border-radius-md)', fontSize: 12, color: 'var(--color-text-secondary)' }}>
+        <span>⏳</span><span>Extracting…</span>
+      </div>
+    </div>
+  );
+  if (data && !data.parse_error) return (
+    <div style={{ padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <span style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {data.tax_year && <span style={{ fontSize: 10, background: '#e0f2fe', color: '#0369a1', padding: '2px 7px', borderRadius: 10 }}>{data.tax_year}</span>}
+          <button onClick={onRemove} style={{ fontSize: 11, color: 'var(--color-text-danger)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>
+        </div>
+      </div>
+      <div style={{ background: 'var(--color-background-secondary)', borderRadius: 'var(--border-radius-md)', padding: '10px 12px', fontSize: 12 }}>
+        {data.schedule_c_net > 0 && <Row l="Sch C net" v={fmt$(data.schedule_c_net)} />}
+        {data.schedule_c_depreciation > 0 && <Row l="+ Depreciation" v={fmt$(data.schedule_c_depreciation)} />}
+        {data.schedule_c_home_office > 0 && <Row l="+ Home office" v={fmt$(data.schedule_c_home_office)} />}
+        {data.schedule_e_net !== 0 && data.schedule_e_net !== undefined && <Row l="Sch E net" v={fmt$(data.schedule_e_net)} />}
+        {data.schedule_e_depreciation > 0 && <Row l="+ Sch E depr" v={fmt$(data.schedule_e_depreciation)} />}
+        {data.social_security_monthly > 0 && <Row l="SS monthly" v={fmt$(data.social_security_monthly)} />}
+        {data.schedule_d_net > 0 && <Row l="Capital gains" v={fmt$(data.schedule_d_net)} />}
+        {(data.flags || []).slice(0, 3).map((fl, i) => <div key={i} style={{ fontSize: 10, color: '#92400e', marginTop: 4 }}>⚠️ {fl}</div>)}
+      </div>
+    </div>
+  );
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5 mb-4">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <span className="text-xl">{method.icon}</span>
-          <h3 className="font-bold text-slate-800">{method.label}</h3>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="text-right">
-            <div className="text-xs text-slate-400">Qualifying Monthly</div>
-            <div className="text-lg font-black text-indigo-600">{fmt$(source.calculated)}</div>
-          </div>
-          <button onClick={() => onRemove(groupId, source.id)} className="text-slate-300 hover:text-red-400 text-xl">✕</button>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        {method.fields.map(field => (
-          <div key={field}>
-            <label className="block text-xs font-semibold text-slate-400 mb-1">{FIELD_LABELS[field] || field}</label>
-            {field === 'gross_up_eligible' || field === 'is_taxable' ? (
-              <select value={source.fields[field]||'no'} onChange={e => onUpdate(groupId, source.id, field, e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300">
-                <option value="yes">Yes</option><option value="no">No</option>
-              </select>
-            ) : (
-              <input type="number" value={source.fields[field]||''} placeholder="0"
-                onChange={e => onUpdate(groupId, source.id, field, e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
-            )}
-          </div>
-        ))}
-      </div>
-      <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 mb-3">
-        <p className="text-xs text-amber-700"><strong>📐 Calculation:</strong> {method.notes}</p>
-      </div>
-      <div>
-        <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Required Documentation</p>
-        <div className="flex flex-wrap gap-1.5">
-          {method.docs.map((d, i) => (
-            <span key={i} className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full">📎 {d}</span>
-          ))}
-        </div>
-      </div>
+    <div style={{ padding: '12px 14px' }}>
+      <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>{label}</div>
+      <label style={{ cursor: 'pointer', border: '0.5px dashed var(--color-border-secondary)', borderRadius: 'var(--border-radius-md)', padding: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: 'var(--color-background-secondary)' }}>
+        <span style={{ fontSize: 18 }}>📤</span>
+        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>Upload 1040 PDF</span>
+        <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) { onUpload(e.target.files[0]); e.target.value = ''; } }} />
+      </label>
     </div>
   );
 }
 
-// ─── Borrower Group Section ───────────────────────────────────────────────────
-function BorrowerGroup({ group, addingForGroup, onAddSource, onUpdate, onRemove, onStartAdd, onCancelAdd }) {
-  const styles     = ROLE_STYLES[group.role] || ROLE_STYLES['co-borrower'];
-  const groupTotal = group.sources.reduce((s, src) => s + (src.calculated||0), 0);
-  const isAdding   = addingForGroup === group.id;
-
+function Row({ l, v }) {
   return (
-    <div className="mb-8">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${styles.dot}`} />
-          <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">
-            {group.name || (group.role === 'primary' ? 'Borrower' : 'Co-Borrower')}
-          </h2>
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${styles.badge}`}>
-            {group.role === 'primary' ? 'Primary' : 'Co-Borrower'}
-          </span>
+    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+      <span style={{ color: 'var(--color-text-secondary)' }}>{l}</span>
+      <span style={{ fontWeight: 500, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{v}</span>
+    </div>
+  );
+}
+
+// ─── TaxReturnUploader ────────────────────────────────────────────────────────
+function TaxReturnUploader({ taxReturns, onUpload, onRemove }) {
+  const prior = taxReturns.prior, current = taxReturns.current;
+  const detectedTypes = [];
+  [prior.extracted, current.extracted].forEach(ext => {
+    if (!ext || ext.parse_error) return;
+    if (ext.schedule_c_net && Math.abs(ext.schedule_c_net) > 0) detectedTypes.push('🏢 Schedule C');
+    if (ext.schedule_e_net && Math.abs(ext.schedule_e_net) > 0) detectedTypes.push('🏠 Schedule E');
+    if (ext.social_security_monthly > 0) detectedTypes.push('🛡️ SS income');
+    if (ext.schedule_d_net > 0) detectedTypes.push('📈 Capital gains');
+    if (ext.w2_wages > 0) detectedTypes.push('💼 W-2 wages');
+  });
+  const uniqueTypes = [...new Set(detectedTypes)];
+  return (
+    <div style={{ background: 'var(--color-background-primary)', border: '0.5px solid var(--color-border-tertiary)', borderRadius: 'var(--border-radius-lg)', overflow: 'hidden', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '0.5px solid var(--color-border-tertiary)', background: '#eef2ff' }}>
+        <span style={{ fontSize: 20 }}>📄</span>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 500, color: '#3730a3' }}>Federal tax returns (1040)</div>
+          <div style={{ fontSize: 11, color: '#6366f1' }}>Upload both years — AI auto-detects all income types from a single PDF</div>
         </div>
-        <div className={`text-sm font-black shrink-0 ${styles.total}`}>{fmt$(groupTotal)}/mo</div>
       </div>
-
-      {group.sources.map(s => (
-        <SourceCard key={s.id} source={s} groupId={group.id} onUpdate={onUpdate} onRemove={onRemove} />
-      ))}
-
-      {isAdding ? (
-        <div className="bg-white rounded-xl border border-indigo-200 p-4">
-          <p className="text-sm font-bold text-slate-700 mb-3">
-            Select income type for {group.name || (group.role === 'primary' ? 'borrower' : 'co-borrower')}
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {Object.values(INCOME_METHODS).map(m => (
-              <button key={m.id} onClick={() => onAddSource(group.id, m.id)}
-                className="flex items-center gap-2 p-3 rounded-lg border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 text-left transition-all">
-                <span className="text-lg">{m.icon}</span>
-                <span className="text-sm font-semibold text-slate-700">{m.label}</span>
-              </button>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: uniqueTypes.length > 0 ? '0.5px solid var(--color-border-tertiary)' : 'none' }}>
+        <div style={{ borderRight: '0.5px solid var(--color-border-tertiary)' }}>
+          <YearPanel label="Prior year" yearKey="prior" data={prior.extracted} loading={prior.extracting} onUpload={f => onUpload('prior', f)} onRemove={() => onRemove('prior')} />
+        </div>
+        <div>
+          <YearPanel label="Current year" yearKey="current" data={current.extracted} loading={current.extracting} onUpload={f => onUpload('current', f)} onRemove={() => onRemove('current')} />
+        </div>
+      </div>
+      {uniqueTypes.length > 0 && (
+        <div style={{ padding: '10px 16px', background: '#eef2ff' }}>
+          <div style={{ fontSize: 11, fontWeight: 500, color: '#3730a3', marginBottom: 6 }}>Auto-detected income types — cards created below</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {uniqueTypes.map((t, i) => (
+              <span key={i} style={{ fontSize: 11, background: '#fff', border: '0.5px solid #c7d2fe', color: '#3730a3', padding: '3px 10px', borderRadius: 12 }}>{t}</span>
             ))}
           </div>
-          <button onClick={onCancelAdd} className="mt-3 text-xs text-slate-400 hover:text-slate-600">Cancel</button>
         </div>
-      ) : (
-        <button onClick={() => onStartAdd(group.id)}
-          className="w-full py-3 border-2 border-dashed border-slate-200 rounded-xl text-sm font-semibold text-slate-400 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all">
-          + Add Income Source for {group.name || (group.role === 'primary' ? 'Borrower' : 'Co-Borrower')}
-        </button>
       )}
     </div>
   );
 }
 
-// ─── Decision Record Banner (inline — green state + NSI pill) ─────────────────
-function DRBanner({ savedRecordId, saving, onSave, nsiSuggestion, onNsiNavigate }) {
-  const isSaved = Boolean(savedRecordId);
+// ─── W2Uploader ───────────────────────────────────────────────────────────────
+function W2Uploader({ w2Docs, onUpload, onRemove }) {
   return (
-    <div style={{
-      background:   isSaved ? '#f0fdf4' : '#ffffff',
-      borderBottom: isSaved ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
-      padding:      '10px 32px',
-      display:      'flex',
-      alignItems:   'center',
-      gap:          12,
-      flexWrap:     'wrap',
-      transition:   'background 0.3s, border-color 0.3s',
-    }}>
-      <div style={{
-        width: 30, height: 30, borderRadius: 7, flexShrink: 0,
-        background: isSaved ? '#dcfce7' : '#f1f5f9',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        transition: 'background 0.3s',
-      }}>
-        {isSaved
-          ? <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7.5l3 3 6-6" stroke="#16a34a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          : <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="#475569" strokeWidth="1.4"/><path d="M5 8h6M5 5.5h6M5 10.5h3.5" stroke="#475569" strokeWidth="1.2" strokeLinecap="round"/></svg>
-        }
+    <div style={{ background: 'var(--color-background-primary)', border: '0.5px solid var(--color-border-tertiary)', borderRadius: 'var(--border-radius-lg)', overflow: 'hidden', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: w2Docs.length > 0 ? '0.5px solid var(--color-border-tertiary)' : 'none', background: '#f0fdf4' }}>
+        <span style={{ fontSize: 20 }}>💼</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: '#166534' }}>W-2 / Employment income</div>
+          <div style={{ fontSize: 11, color: '#16a34a' }}>Pay stubs, W-2s, offer letters — AI extracts base pay, OT, and bonus</div>
+        </div>
+        <label style={{ cursor: 'pointer', fontSize: 11, fontWeight: 500, color: '#166534', background: '#fff', border: '0.5px solid #bbf7d0', borderRadius: 'var(--border-radius-md)', padding: '6px 12px', flexShrink: 0 }}>
+          + Upload
+          <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) { onUpload(e.target.files[0]); e.target.value = ''; } }} />
+        </label>
       </div>
-      <div>
-        <p style={{ fontSize: 12, fontWeight: 600, color: isSaved ? '#14532d' : '#1e293b', margin: 0 }}>
-          {isSaved ? 'Decision Record — Saved ✓' : 'Decision Record'}
-        </p>
-        <p style={{ fontSize: 11, color: isSaved ? '#16a34a' : '#94a3b8', margin: 0 }}>
-          {isSaved ? 'INCOME ANALYZER findings logged to audit trail' : 'Save INCOME ANALYZER findings to your audit trail'}
-        </p>
+      {w2Docs.map((d, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderBottom: '0.5px solid var(--color-border-tertiary)', fontSize: 12 }}>
+          {d.loading ? <span style={{ color: 'var(--color-text-secondary)' }}>⏳ Extracting…</span> : (
+            <>
+              <span style={{ color: '#16a34a' }}>✓</span>
+              <span style={{ color: 'var(--color-text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
+              {d.extracted && !d.extracted.parse_error && d.extracted.employer_name && <span style={{ fontSize: 11, color: '#166534', background: '#f0fdf4', padding: '2px 7px', borderRadius: 10 }}>{d.extracted.employer_name}</span>}
+              <button onClick={() => onRemove(i)} style={{ fontSize: 11, color: 'var(--color-text-danger)', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}>✕</button>
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── OtherIncomeSelector ──────────────────────────────────────────────────────
+function OtherIncomeSelector({ onAdd }) {
+  const types = [
+    { method: 'SOCIAL_SECURITY', label: 'Social Security / SSI', icon: '🛡️' },
+    { method: 'PENSION', label: 'Pension / retirement', icon: '💰' },
+    { method: 'MILITARY', label: 'Military / BAH / BAS', icon: '🎖️' },
+    { method: 'CHILD_SUPPORT', label: 'Child support / alimony', icon: '👨‍👧' },
+  ];
+  return (
+    <div style={{ background: 'var(--color-background-primary)', border: '0.5px solid var(--color-border-tertiary)', borderRadius: 'var(--border-radius-lg)', overflow: 'hidden', marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '0.5px solid var(--color-border-tertiary)', background: '#fffbeb' }}>
+        <span style={{ fontSize: 20 }}>📋</span>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 500, color: '#92400e' }}>Other income</div>
+          <div style={{ fontSize: 11, color: '#b45309' }}>Award letters, LES, court orders — upload the document and we'll extract the qualifying amount</div>
+        </div>
       </div>
-      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        {isSaved && nsiSuggestion?.path && (
-          <button onClick={() => onNsiNavigate(nsiSuggestion.path)}
-            style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, padding: '5px 13px', cursor: 'pointer', fontFamily: 'inherit' }}>
-            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-              <path d="M7 1v8M4 6l3 3 3-3" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M2 11h10" stroke="#3b82f6" strokeWidth="1.4" strokeLinecap="round"/>
-            </svg>
-            <div>
-              <p style={{ fontSize: 9, fontWeight: 700, color: '#1d4ed8', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>Next Suggested Action</p>
-              <p style={{ fontSize: 11, color: '#1e40af', fontWeight: 500, margin: 0 }}>{nsiSuggestion.moduleLabel || nsiSuggestion.moduleName}</p>
-            </div>
-            <span style={{ fontSize: 12, color: '#3b82f6' }}>→</span>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
+        {types.map((t, i) => (
+          <button key={t.method} onClick={() => onAdd(t.method)}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', textAlign: 'left', background: 'none', border: 'none', borderRight: i % 2 === 0 ? '0.5px solid var(--color-border-tertiary)' : 'none', borderBottom: i < 2 ? '0.5px solid var(--color-border-tertiary)' : 'none', cursor: 'pointer', fontSize: 12, color: 'var(--color-text-primary)' }}>
+            <span style={{ fontSize: 16 }}>{t.icon}</span>
+            <span>{t.label}</span>
           </button>
-        )}
-        <button
-          onClick={!isSaved && !saving ? onSave : undefined}
-          disabled={isSaved || saving}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            background: isSaved ? '#16a34a' : '#0f172a',
-            color: '#f8fafc', border: 'none', borderRadius: 6,
-            padding: '7px 15px', fontSize: 11, fontWeight: 600,
-            cursor: isSaved ? 'default' : 'pointer',
-            fontFamily: 'inherit', whiteSpace: 'nowrap',
-            opacity: saving ? 0.7 : 1, transition: 'background 0.3s',
-          }}
-        >
-          {isSaved
-            ? <><svg width="11" height="11" viewBox="0 0 14 14" fill="none"><path d="M2.5 7.5l3 3 6-6" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg> Saved</>
-            : saving ? 'Saving…'
-            : <><svg width="11" height="11" viewBox="0 0 14 14" fill="none"><rect x="2" y="2" width="10" height="10" rx="1.5" stroke="#f8fafc" strokeWidth="1.3"/><path d="M4.5 7l2 2 3.5-3.5" stroke="#f8fafc" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg> Save to Decision Record</>
-          }
-        </button>
+        ))}
       </div>
     </div>
   );
 }
 
-// ─── Main Component ────────────────────────────────────────────────────────────
+// ─── SourceCard — income type aware layout ────────────────────────────────────
+function SourceCard({ source, onRemove, onUpdateField, onUploadOtherDoc }) {
+  const meta = METHOD_META[source.method] || {};
+  const calc = Math.max(0, CALCS[source.method] ? CALCS[source.method](source.fields) : 0);
+  const f = source.fields;
+
+  const renderMultiYear = () => {
+    const y1 = source.yr1Data, y2 = source.yr2Data;
+    let y1adj = 0, y2adj = 0, qualifying = 0, method = '', declining = false;
+
+    if (source.method === 'SELF_EMPLOYED') {
+      const add = (parseFloat(f.depreciation) || 0) + (parseFloat(f.depletion) || 0) + (parseFloat(f.home_office) || 0);
+      const yr1 = parseFloat(f.yr1_net) || 0, yr2 = parseFloat(f.yr2_net) || 0;
+      y1adj = yr1 + add; y2adj = yr2 + add;
+      if (yr2 > 0 && y2adj < y1adj * 0.90) { declining = true; qualifying = y2adj / 12; method = 'Lower year (declining)'; }
+      else if (yr1 > 0 && yr2 > 0) { qualifying = ((y1adj + y2adj) / 2) / 12; method = '2-year average'; }
+      else { qualifying = (yr1 > 0 ? y1adj : y2adj) / 12; method = 'Single year'; }
+    } else if (source.method === 'RENTAL') {
+      const y1n = parseFloat(f.yr1_net) || 0, y1d = parseFloat(f.yr1_depr) || 0;
+      const y2n = parseFloat(f.yr2_net) || 0, y2d = parseFloat(f.yr2_depr) || 0;
+      y1adj = y1n + y1d; y2adj = y2n + y2d;
+      if (y1adj !== 0 && y2adj !== 0) { qualifying = ((y1adj + y2adj) / 2) / 12; method = '2-year average'; }
+      else { qualifying = (y1adj !== 0 ? y1adj : y2adj) / 12; method = 'Single year'; }
+    } else {
+      qualifying = calc;
+      method = '2-year average';
+    }
+
+    return (
+      <div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
+          <div style={{ padding: '12px 14px', borderRight: '0.5px solid var(--color-border-tertiary)' }}>
+            <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>Prior year {y1 && y1.tax_year ? '— ' + y1.tax_year : ''}</div>
+            {y1 && !y1.parse_error ? (
+              <div style={{ background: 'var(--color-background-secondary)', borderRadius: 'var(--border-radius-md)', padding: '10px 12px', fontSize: 12 }}>
+                {source.method === 'SELF_EMPLOYED' && <>
+                  <Row l="Net profit" v={fmt$(y1.schedule_c_net || 0)} />
+                  {(y1.schedule_c_depreciation || 0) > 0 && <Row l="+ Depreciation" v={fmt$(y1.schedule_c_depreciation)} />}
+                  {(y1.schedule_c_home_office || 0) > 0 && <Row l="+ Home office" v={fmt$(y1.schedule_c_home_office)} />}
+                  <div style={{ borderTop: '0.5px solid var(--color-border-tertiary)', marginTop: 4, paddingTop: 4 }}><Row l="Adjusted" v={fmt$(y1adj)} /></div>
+                </>}
+                {source.method === 'RENTAL' && <>
+                  <Row l="Sch E net" v={fmt$(y1.schedule_e_net || 0)} />
+                  {(y1.schedule_e_depreciation || 0) > 0 && <Row l="+ Depreciation" v={fmt$(y1.schedule_e_depreciation)} />}
+                  <div style={{ borderTop: '0.5px solid var(--color-border-tertiary)', marginTop: 4, paddingTop: 4 }}><Row l="Adjusted" v={fmt$(y1adj)} /></div>
+                </>}
+                {source.method === 'CAPITAL_GAINS' && <Row l="Capital gains" v={fmt$(y1.schedule_d_net || 0)} />}
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>Auto-populated from tax return upload</div>
+            )}
+          </div>
+          <div style={{ padding: '12px 14px' }}>
+            <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>Current year {y2 && y2.tax_year ? '— ' + y2.tax_year : ''}</div>
+            {y2 && !y2.parse_error ? (
+              <div style={{ background: 'var(--color-background-secondary)', borderRadius: 'var(--border-radius-md)', padding: '10px 12px', fontSize: 12 }}>
+                {source.method === 'SELF_EMPLOYED' && <>
+                  <Row l="Net profit" v={fmt$(y2.schedule_c_net || 0)} />
+                  {(y2.schedule_c_depreciation || 0) > 0 && <Row l="+ Depreciation" v={fmt$(y2.schedule_c_depreciation)} />}
+                  {(y2.schedule_c_home_office || 0) > 0 && <Row l="+ Home office" v={fmt$(y2.schedule_c_home_office)} />}
+                  <div style={{ borderTop: '0.5px solid var(--color-border-tertiary)', marginTop: 4, paddingTop: 4 }}><Row l="Adjusted" v={fmt$(y2adj)} /></div>
+                </>}
+                {source.method === 'RENTAL' && <>
+                  <Row l="Sch E net" v={fmt$(y2.schedule_e_net || 0)} />
+                  {(y2.schedule_e_depreciation || 0) > 0 && <Row l="+ Depreciation" v={fmt$(y2.schedule_e_depreciation)} />}
+                  <div style={{ borderTop: '0.5px solid var(--color-border-tertiary)', marginTop: 4, paddingTop: 4 }}><Row l="Adjusted" v={fmt$(y2adj)} /></div>
+                </>}
+                {source.method === 'CAPITAL_GAINS' && <Row l="Capital gains" v={fmt$(y2.schedule_d_net || 0)} />}
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>Auto-populated from tax return upload</div>
+            )}
+          </div>
+        </div>
+        {declining && (
+          <div style={{ padding: '8px 14px', background: '#fffbeb', borderBottom: '0.5px solid #fde68a' }}>
+            <div style={{ fontSize: 11, color: '#92400e' }}>
+              ⚠️ <strong>Declining income</strong> — {fmt$(y2adj)} is {((y2adj / y1adj) * 100).toFixed(1)}% of prior year (threshold 90%) · lower year used per Fannie B3-3.4-02
+            </div>
+            <div style={{ fontSize: 11, color: '#92400e', fontFamily: 'var(--font-mono)', marginTop: 3, background: '#fef3c7', borderRadius: 4, padding: '3px 8px', display: 'inline-block' }}>
+              {fmt$(y2adj)} ÷ 12 = {fmt$(qualifying)}/mo
+            </div>
+          </div>
+        )}
+        {!declining && qualifying > 0 && (
+          <div style={{ padding: '8px 14px', background: 'var(--color-background-secondary)', borderBottom: '0.5px solid var(--color-border-tertiary)', fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>
+            {method}{y1adj > 0 && y2adj > 0 ? ': (' + fmt$(y1adj) + ' + ' + fmt$(y2adj) + ') ÷ 2 ÷ 12 = ' : ': '}<strong style={{ color: 'var(--color-text-primary)' }}>{fmt$(qualifying)}/mo</strong>
+          </div>
+        )}
+        <ManualFieldsEditor source={source} onUpdateField={onUpdateField} />
+      </div>
+    );
+  };
+
+  const renderSinglePeriod = () => {
+    const ext = source.yr1Data;
+    return (
+      <div>
+        <div style={{ padding: '12px 14px', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
+          {!ext && (
+            <label style={{ cursor: 'pointer', border: '0.5px dashed var(--color-border-secondary)', borderRadius: 'var(--border-radius-md)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8, background: 'var(--color-background-secondary)', marginBottom: 12 }}>
+              <span style={{ fontSize: 14 }}>📤</span>
+              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Upload award letter / LES / court order</span>
+              <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) { onUploadOtherDoc(source.id, e.target.files[0]); e.target.value = ''; } }} />
+            </label>
+          )}
+          {ext && !ext.parse_error && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+              {source.method === 'SOCIAL_SECURITY' && <>
+                <MetricTile label="Gross monthly" value={fmt$(ext.monthly_benefit || 0)} />
+                <MetricTile label="Non-taxable" value="Confirmed" color="#16a34a" />
+                <MetricTile label="Grossed up 1.25×" value={fmt$((ext.monthly_benefit || 0) * 1.25)} color="#3730a3" highlight />
+              </>}
+              {source.method === 'MILITARY' && <>
+                <MetricTile label="Base pay" value={fmt$(ext.base_pay || 0)} />
+                <MetricTile label="BAH (grossed up)" value={fmt$((ext.bah || 0) * 1.25)} color="#3730a3" />
+                <MetricTile label="BAS (grossed up)" value={fmt$((ext.bas || 0) * 1.25)} color="#3730a3" />
+              </>}
+              {source.method === 'PENSION' && <>
+                <MetricTile label="Monthly amount" value={fmt$(ext.monthly_amount || 0)} />
+                <MetricTile label="Non-taxable" value={ext.non_taxable ? 'Yes' : 'No'} color={ext.non_taxable ? '#16a34a' : 'var(--color-text-secondary)'} />
+                {ext.non_taxable && <MetricTile label="Grossed up 1.25×" value={fmt$((ext.monthly_amount || 0) * 1.25)} color="#3730a3" highlight />}
+              </>}
+              {source.method === 'CHILD_SUPPORT' && <>
+                <MetricTile label="Monthly amount" value={fmt$(ext.monthly_amount || 0)} />
+                <MetricTile label="Months remaining" value={ext.months_remaining + ' mo'} color={ext.months_remaining >= 36 ? '#16a34a' : '#dc2626'} />
+                <MetricTile label="Qualifying" value={ext.months_remaining >= 36 ? fmt$(ext.monthly_amount || 0) : '$0.00'} color={ext.months_remaining >= 36 ? '#3730a3' : '#dc2626'} highlight />
+              </>}
+            </div>
+          )}
+          <ManualFieldsEditor source={source} onUpdateField={onUpdateField} compact={!!ext} />
+        </div>
+        {ext && !ext.parse_error && (
+          <div style={{ padding: '8px 14px', background: 'var(--color-background-secondary)', fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>
+            {source.method === 'SOCIAL_SECURITY' && <>${ (parseFloat(source.fields.monthly_benefit) || 0).toFixed(2)} × 1.25 gross-up = <strong style={{ color: 'var(--color-text-primary)' }}>{fmt$(calc)}/mo</strong> — FHA 4000.1 / Fannie B3-3.1-09</>}
+            {source.method === 'MILITARY' && <>Base pay + BAH × 1.25 + BAS × 1.25 = <strong style={{ color: 'var(--color-text-primary)' }}>{fmt$(calc)}/mo</strong></>}
+            {source.method === 'PENSION' && <><strong style={{ color: 'var(--color-text-primary)' }}>{fmt$(calc)}/mo</strong> {source.fields.taxable === 'no' ? '(non-taxable gross-up applied)' : '(taxable — no gross-up)'}</>}
+            {source.method === 'CHILD_SUPPORT' && <><strong style={{ color: (parseFloat(source.fields.months_remaining) || 0) >= 36 ? 'var(--color-text-primary)' : '#dc2626' }}>{fmt$(calc)}/mo</strong> — {(parseFloat(source.fields.months_remaining) || 0) >= 36 ? 'qualifies (36+ months remaining)' : 'excluded (< 36 months)'}</>}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderW2 = () => {
+    const docs = source.manualDocs || [];
+    const latestExt = docs.length > 0 ? docs[docs.length - 1].extracted : null;
+    return (
+      <div>
+        <div style={{ padding: '12px 14px', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
+          {docs.map((d, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: '#f0fdf4', border: '0.5px solid #bbf7d0', borderRadius: 'var(--border-radius-md)', marginBottom: 6, fontSize: 12 }}>
+              <span style={{ color: '#16a34a' }}>✓</span>
+              <span style={{ color: '#15803d', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
+              {d.extracted?.employer_name && <span style={{ fontSize: 10, color: '#166534', background: '#dcfce7', padding: '2px 6px', borderRadius: 8 }}>{d.extracted.employer_name}</span>}
+            </div>
+          ))}
+          {latestExt && !latestExt.parse_error && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+              {latestExt.base_annual > 0 && <MetricTile label="Base annual" value={fmt$(latestExt.base_annual)} />}
+              {latestExt.current_gross > 0 && <MetricTile label="Current gross/period" value={fmt$(latestExt.current_gross)} />}
+              {latestExt.overtime_ytd > 0 && <MetricTile label="OT YTD" value={fmt$(latestExt.overtime_ytd)} />}
+              {latestExt.bonus_ytd > 0 && <MetricTile label="Bonus YTD" value={fmt$(latestExt.bonus_ytd)} />}
+            </div>
+          )}
+        </div>
+        <ManualFieldsEditor source={source} onUpdateField={onUpdateField} />
+        <div style={{ padding: '8px 14px', background: 'var(--color-background-secondary)', fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', borderTop: '0.5px solid var(--color-border-tertiary)' }}>
+          Base {fmt$(parseFloat(f.base_monthly) || 0)} + OT {fmt$(parseFloat(f.overtime_monthly) || 0)} + Bonus {fmt$(parseFloat(f.bonus_monthly) || 0)} = <strong style={{ color: 'var(--color-text-primary)' }}>{fmt$(calc)}/mo</strong>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ background: 'var(--color-background-primary)', border: '0.5px solid var(--color-border-tertiary)', borderRadius: 'var(--border-radius-lg)', overflow: 'hidden', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 18 }}>{meta.icon}</span>
+          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--color-text-primary)' }}>{meta.label}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>qualifying monthly</div>
+            <div style={{ fontSize: 18, fontWeight: 500, color: '#3730a3', fontFamily: 'var(--font-mono)' }}>{fmt$(calc)}</div>
+          </div>
+          <button onClick={onRemove} style={{ color: 'var(--color-text-tertiary)', fontSize: 18, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>✕</button>
+        </div>
+      </div>
+      {meta.multiYear && renderMultiYear()}
+      {!meta.multiYear && source.method === 'W2' && renderW2()}
+      {!meta.multiYear && source.method !== 'W2' && renderSinglePeriod()}
+    </div>
+  );
+}
+
+function MetricTile({ label, value, color, highlight }) {
+  return (
+    <div style={{ background: highlight ? '#eef2ff' : 'var(--color-background-secondary)', border: highlight ? '0.5px solid #c7d2fe' : 'none', borderRadius: 'var(--border-radius-md)', padding: '8px 10px' }}>
+      <div style={{ fontSize: 10, color: highlight ? '#6366f1' : 'var(--color-text-secondary)', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 500, color: color || 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>{value}</div>
+    </div>
+  );
+}
+
+const FIELD_DEFS = {
+  SELF_EMPLOYED: [['yr1_net', 'Year 1 net profit ($)'], ['yr2_net', 'Year 2 net profit ($)'], ['depreciation', 'Depreciation addback ($)'], ['depletion', 'Depletion addback ($)'], ['home_office', 'Home office addback ($)']],
+  RENTAL: [['yr1_net', 'Year 1 Sch E net ($)'], ['yr1_depr', 'Year 1 depreciation ($)'], ['yr2_net', 'Year 2 Sch E net ($)'], ['yr2_depr', 'Year 2 depreciation ($)'], ['gross_rents', 'Gross monthly rents ($)'], ['vacancy_pct', 'Vacancy factor (%)']],
+  W2: [['base_monthly', 'Base monthly ($)'], ['overtime_monthly', 'OT monthly (2yr avg, $)'], ['bonus_monthly', 'Bonus monthly (2yr avg, $)'], ['commission_monthly', 'Commission monthly ($)']],
+  SOCIAL_SECURITY: [['monthly_benefit', 'Monthly benefit ($)'], ['gross_up', 'Non-taxable (gross-up)?']],
+  PENSION: [['monthly_amount', 'Monthly amount ($)'], ['taxable', 'Is taxable?']],
+  MILITARY: [['base_pay', 'Base pay ($/mo)'], ['bah', 'BAH ($/mo)'], ['bas', 'BAS ($/mo)'], ['other', 'Other allotments ($/mo)']],
+  CHILD_SUPPORT: [['monthly_amount', 'Monthly amount ($)'], ['months_remaining', 'Months remaining']],
+  CAPITAL_GAINS: [['yr1_gains', 'Year 1 gains ($)'], ['yr2_gains', 'Year 2 gains ($)']],
+  S_CORP: [['yr1_k1', 'K-1 Year 1 ($)'], ['yr2_k1', 'K-1 Year 2 ($)'], ['ownership_pct', 'Ownership %'], ['w2_from_biz', 'W-2 from business ($)'], ['depr_addback', 'Depreciation addback ($)']],
+  CONTRACTOR_1099: [['yr1_income', 'Year 1 gross ($)'], ['yr1_expenses', 'Year 1 expenses ($)'], ['yr2_income', 'Year 2 gross ($)'], ['yr2_expenses', 'Year 2 expenses ($)']],
+};
+const SELECT_FIELDS = new Set(['gross_up', 'taxable']);
+
+function ManualFieldsEditor({ source, onUpdateField, compact }) {
+  const defs = FIELD_DEFS[source.method] || [];
+  const [open, setOpen] = useState(!compact);
+  if (!defs.length) return null;
+  return (
+    <div style={{ padding: '8px 14px 12px', borderTop: compact ? '0.5px solid var(--color-border-tertiary)' : 'none' }}>
+      <button onClick={() => setOpen(v => !v)} style={{ fontSize: 11, color: 'var(--color-text-secondary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginBottom: open ? 10 : 0 }}>
+        {open ? '▲ Hide manual fields' : '▼ Edit fields manually'}
+      </button>
+      {open && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          {defs.map(([key, label]) => (
+            <div key={key}>
+              <label style={{ display: 'block', fontSize: 10, color: 'var(--color-text-secondary)', marginBottom: 3 }}>{label}</label>
+              {SELECT_FIELDS.has(key) ? (
+                <select value={source.fields[key] || 'no'} onChange={e => onUpdateField(source.id, key, e.target.value)} style={{ width: '100%', fontSize: 12, padding: '6px 8px', border: '0.5px solid var(--color-border-secondary)', borderRadius: 'var(--border-radius-md)', background: 'var(--color-background-primary)', color: 'var(--color-text-primary)' }}>
+                  <option value="yes">Yes</option><option value="no">No</option>
+                </select>
+              ) : (
+                <input type="number" value={source.fields[key] || ''} onChange={e => onUpdateField(source.id, key, e.target.value)} placeholder="0"
+                  style={{ width: '100%', fontSize: 12, padding: '6px 8px', border: '0.5px solid var(--color-border-secondary)', borderRadius: 'var(--border-radius-md)', background: 'var(--color-background-primary)', color: 'var(--color-text-primary)', boxSizing: 'border-box' }} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Income Summary Bar ───────────────────────────────────────────────────────
+function IncomeSummary({ sources, groupName }) {
+  const total = sources.reduce((s, src) => s + Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0), 0);
+  if (sources.length === 0) return null;
+  return (
+    <div style={{ background: 'var(--color-background-primary)', border: '0.5px solid var(--color-border-tertiary)', borderRadius: 'var(--border-radius-lg)', overflow: 'hidden', marginTop: 8 }}>
+      <div style={{ padding: '10px 16px', borderBottom: '0.5px solid var(--color-border-tertiary)' }}>
+        <div style={{ fontSize: 11, fontWeight: 500, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{groupName} — qualifying income summary</div>
+      </div>
+      <div style={{ padding: '8px 12px' }}>
+        {sources.map(src => {
+          const m = METHOD_META[src.method] || {};
+          const amt = Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0);
+          return (
+            <div key={src.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 8px', background: 'var(--color-background-secondary)', borderRadius: 'var(--border-radius-md)', marginBottom: 6, fontSize: 12 }}>
+              <span style={{ color: 'var(--color-text-secondary)' }}>{m.icon} {m.label}</span>
+              <span style={{ fontWeight: 500, fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)' }}>{fmt$(amt)}/mo</span>
+            </div>
+          );
+        })}
+        {sources.length > 1 && (
+          <div style={{ borderTop: '0.5px solid var(--color-border-tertiary)', marginTop: 4, paddingTop: 8, marginBottom: 4 }}>
+            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', marginBottom: 4 }}>
+              {sources.map(src => fmt$(Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0))).join(' + ')}
+            </div>
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: '#eef2ff', border: '0.5px solid #c7d2fe', borderRadius: 'var(--border-radius-md)' }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 500, color: '#3730a3' }}>Total qualifying income</div>
+            <div style={{ fontSize: 11, color: '#6366f1' }}>{groupName}</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 20, fontWeight: 500, color: '#3730a3', fontFamily: 'var(--font-mono)' }}>{fmt$(total)}<span style={{ fontSize: 12, fontWeight: 400 }}>/mo</span></div>
+            <div style={{ fontSize: 11, color: '#6366f1', fontFamily: 'var(--font-mono)' }}>{fmt$(total * 12)}/yr</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Income Worksheet ─────────────────────────────────────────────────────────
+function IncomeWorksheet({ borrowerGroups, scenario, notes, totalQualifying, verification }) {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const bName = scenario ? [scenario.firstName, scenario.lastName].filter(Boolean).join(' ') || scenario.scenarioName || '' : '';
+  return (
+    <div>
+      <button onClick={() => window.print()} className="mb-5 px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-xl hover:bg-indigo-700">Print / Save as PDF</button>
+      <div style={{ background: '#fff', color: '#0f172a', padding: '32px 36px', fontFamily: "'Georgia',serif", maxWidth: 900, border: '1px solid #e2e8f0', borderRadius: 8 }}>
+        <div style={{ borderBottom: '2.5px solid #1e3a5f', paddingBottom: 16, marginBottom: 20, display: 'flex', justifyContent: 'space-between' }}>
+          <div><div style={{ fontSize: 20, fontWeight: 700, color: '#1e3a5f' }}>LoanBeacons</div><div style={{ fontSize: 11, color: '#64748b' }}>Powered by AI · Patent Pending</div></div>
+          <div style={{ textAlign: 'right' }}><div style={{ fontSize: 15, fontWeight: 700, color: '#1e3a5f' }}>INCOME ANALYSIS WORKSHEET</div><div style={{ fontSize: 11, color: '#64748b' }}>Prepared: {today}</div></div>
+        </div>
+        {scenario && (
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 22, fontSize: 12, border: '0.5px solid #e2e8f0' }}>
+            <tbody>
+              <tr style={{ background: '#f8fafc' }}>
+                <td style={{ padding: '6px 10px', fontWeight: 700, color: '#475569', width: '16%', borderRight: '0.5px solid #e2e8f0' }}>Borrower</td>
+                <td style={{ padding: '6px 10px', width: '34%', borderRight: '0.5px solid #e2e8f0' }}>{bName || '—'}</td>
+                <td style={{ padding: '6px 10px', fontWeight: 700, color: '#475569', width: '16%', borderRight: '0.5px solid #e2e8f0' }}>Loan amount</td>
+                <td style={{ padding: '6px 10px' }}>{scenario.loanAmount ? fmt$(parseFloat(scenario.loanAmount)) : '—'}</td>
+              </tr>
+              <tr>
+                <td style={{ padding: '6px 10px', fontWeight: 700, color: '#475569', borderRight: '0.5px solid #e2e8f0' }}>Property</td>
+                <td style={{ padding: '6px 10px', borderRight: '0.5px solid #e2e8f0' }}>{scenario.propertyAddress || scenario.address || '—'}</td>
+                <td style={{ padding: '6px 10px', fontWeight: 700, color: '#475569', borderRight: '0.5px solid #e2e8f0' }}>Loan type</td>
+                <td style={{ padding: '6px 10px' }}>{scenario.loanType || '—'}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+        {borrowerGroups.map(group => {
+          const gt = group.sources.reduce((s, src) => s + Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0), 0);
+          return (
+            <div key={group.id} style={{ marginBottom: 28 }}>
+              <div style={{ background: '#1e3a5f', color: '#fff', padding: '8px 14px', borderRadius: '4px 4px 0 0', display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 600 }}>
+                <span>{group.name || (group.role === 'primary' ? 'Primary Borrower' : 'Co-Borrower')}</span>
+                <span>Total: {fmt$(gt)}/mo · {fmt$(gt * 12)}/yr</span>
+              </div>
+              {group.sources.map(src => {
+                const m = METHOD_META[src.method] || {};
+                const amt = Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0);
+                const y1 = src.yr1Data, y2 = src.yr2Data;
+                return (
+                  <div key={src.id} style={{ border: '0.5px solid #e2e8f0', borderTop: 'none' }}>
+                    <div style={{ background: '#f8fafc', padding: '8px 14px', borderBottom: '0.5px solid #e2e8f0', display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>{m.icon} {m.label}</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: '#1e3a5f', fontFamily: 'monospace' }}>{fmt$(amt)}/mo · {fmt$(amt * 12)}/yr</span>
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                      <tbody>
+                        {y1 && !y1.parse_error && y2 && !y2.parse_error && (
+                          <tr><td style={{ padding: '6px 12px', fontWeight: 600, color: '#64748b', width: '18%', borderBottom: '0.5px solid #f1f5f9', borderRight: '0.5px solid #f1f5f9' }}>Two-year</td>
+                          <td style={{ padding: '6px 12px', borderBottom: '0.5px solid #f1f5f9', fontFamily: 'monospace', fontSize: 11 }}>
+                            {y1.tax_year}: {fmt$(y1.schedule_c_net || y1.schedule_e_net || 0)} adj · {y2.tax_year}: {fmt$(y2.schedule_c_net || y2.schedule_e_net || 0)} adj
+                          </td></tr>
+                        )}
+                        <tr style={{ background: '#f8fafc' }}><td style={{ padding: '6px 12px', fontWeight: 600, color: '#64748b', borderBottom: '0.5px solid #f1f5f9', borderRight: '0.5px solid #f1f5f9' }}>Guideline</td>
+                        <td style={{ padding: '6px 12px', fontSize: 11, fontStyle: 'italic', color: '#64748b', borderBottom: '0.5px solid #f1f5f9' }}>
+                          {src.method === 'SELF_EMPLOYED' ? 'FHA 4000.1 / Fannie B3-3.4-02 — 2-year avg; declining >10% = lower year' : src.method === 'RENTAL' ? '2-year avg Schedule E + depreciation addback' : src.method === 'SOCIAL_SECURITY' ? 'Non-taxable SS grossed up 25% per FHA 4000.1 / Fannie B3-3.1-09' : ''}
+                        </td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+              <table style={{ width: '100%', borderCollapse: 'collapse', border: '0.5px solid #1e3a5f', borderTop: 'none' }}>
+                <tbody><tr style={{ background: '#dbeafe' }}>
+                  <td style={{ padding: '8px 14px', fontWeight: 600, color: '#1e3a5f', fontSize: 12 }}>{group.name} — subtotal</td>
+                  <td style={{ padding: '8px 14px', textAlign: 'right', fontWeight: 700, color: '#1e3a5f', fontSize: 14, fontFamily: 'monospace' }}>{fmt$(gt)}/mo</td>
+                  <td style={{ padding: '8px 14px', textAlign: 'right', color: '#1e3a5f', fontSize: 12, fontFamily: 'monospace' }}>{fmt$(gt * 12)}/yr</td>
+                </tr></tbody>
+              </table>
+            </div>
+          );
+        })}
+        <div style={{ background: '#1e3a5f', color: '#fff', borderRadius: 8, padding: '18px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div><div style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, opacity: 0.75 }}>Total qualifying income</div><div style={{ fontSize: 11, opacity: 0.5 }}>All borrowers</div></div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 30, fontWeight: 700, fontFamily: 'monospace' }}>{fmt$(totalQualifying)}<span style={{ fontSize: 14, opacity: 0.6 }}>/mo</span></div>
+            <div style={{ fontSize: 13, opacity: 0.65, fontFamily: 'monospace' }}>{fmt$(totalQualifying * 12)}/yr</div>
+          </div>
+        </div>
+        {verification && (
+          <div style={{ marginTop: 16, border: '1px solid', borderColor: verification.agree ? '#16a34a' : '#dc2626', borderRadius: 8, padding: '12px 16px', background: verification.agree ? '#f0fdf4' : '#fef2f2' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 18 }}>{verification.agree ? '✅' : '⚠️'}</span>
+              <div style={{ fontSize: 13, fontWeight: 700, color: verification.agree ? '#15803d' : '#b91c1c' }}>
+                {verification.agree ? 'Calculation Verified — AI confirmed ' + fmt$(totalQualifying) + '/mo' : 'Discrepancy Detected — LO Review Required'}
+              </div>
+            </div>
+          </div>
+        )}
+        {notes && <div style={{ marginTop: 20, border: '0.5px solid #e2e8f0', borderRadius: 6, padding: 14 }}><div style={{ fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>LO Notes</div><div style={{ fontSize: 12, color: '#374151', lineHeight: 1.7 }}>{notes}</div></div>}
+        <div style={{ marginTop: 32, paddingTop: 20, borderTop: '1.5px solid #e2e8f0' }}>
+          <div style={{ fontSize: 11, color: '#64748b', marginBottom: 20, fontStyle: 'italic', lineHeight: 1.6 }}>I certify that the income analysis above accurately reflects the income documentation reviewed in this file and complies with applicable agency guidelines.</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
+            {['Loan Officer Signature', 'Date Prepared', 'LO Name (Print) / NMLS #', 'Company / Branch / NMLS'].map(l => (
+              <div key={l}><div style={{ borderTop: '1px solid #0f172a', paddingTop: 5, fontSize: 11, color: '#475569' }}>{l}</div></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function IncomeAnalyzer() {
   const [searchParams] = useSearchParams();
-  const navigate  = useNavigate();
+  const navigate = useNavigate();
   const scenarioId = searchParams.get('scenarioId');
+  const lsKey = scenarioId ? `lb_income_v4_${scenarioId}` : null;
 
-  const { reportFindings }                = useDecisionRecord(scenarioId);
+  const [scenario, setScenario] = useState(null);
+  const [scenarios, setScenarios] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [showAll, setShowAll] = useState(false);
+  const [activeTab, setActiveTab] = useState(0);
+  const [notes, setNotes] = useState('');
+  const [aiAnalysis, setAiAnalysis] = useState('');
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [verification, setVerification] = useState(null);
+  const [recordSaving, setRecordSaving] = useState(false);
   const [savedRecordId, setSavedRecordId] = useState(null);
-  const [recordSaving,  setRecordSaving]  = useState(false);
-  const [findingsReported, setFindingsReported] = useState(false);
 
-  const [scenario,       setScenario]       = useState(null);
-  const [loading,        setLoading]        = useState(!!scenarioId);
-  const [scenarios,      setScenarios]      = useState([]);
-  const [search,         setSearch]         = useState('');
-  const [showAll,        setShowAll]        = useState(false);
-  const [notes,          setNotes]          = useState('');
-  const [addingForGroup, setAddingForGroup] = useState(null);
   const [borrowerGroups, setBorrowerGroups] = useState([]);
 
-  // ─── Load Scenario ────────────────────────────────────────────────────────
+  const { reportFindings } = useDecisionRecord(scenarioId);
+
+  const makeGroup = useCallback((role, name) => ({
+    id: uid(), role, name,
+    taxReturns: {
+      prior: { extracted: null, extracting: false, fileName: null, error: null },
+      current: { extracted: null, extracting: false, fileName: null, error: null },
+    },
+    w2Docs: [],
+    sources: [],
+  }), []);
+
+  const saveToStorage = useCallback(() => {
+    if (!lsKey) return;
+    const saveable = borrowerGroups.map(g => ({
+      ...g,
+      taxReturns: {
+        prior: { ...g.taxReturns.prior, extracting: false },
+        current: { ...g.taxReturns.current, extracting: false },
+      },
+      w2Docs: g.w2Docs.map(d => ({ ...d, loading: false })),
+    }));
+    localStorage.setItem(lsKey, JSON.stringify({ borrowerGroups: saveable, notes, aiAnalysis, savedRecordId, verification }));
+  }, [lsKey, borrowerGroups, notes, aiAnalysis, savedRecordId, verification]);
+
+  useEffect(() => { saveToStorage(); }, [saveToStorage]);
+
   useEffect(() => {
     if (!scenarioId) {
-      getDocs(collection(db, 'scenarios')).then(snap => {
-        setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      }).catch(console.error);
-      setLoading(false); return;
+      getDocs(collection(db, 'scenarios')).then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(console.error).finally(() => setLoading(false));
+      return;
+    }
+    if (lsKey) {
+      try {
+        const saved = localStorage.getItem(lsKey);
+        if (saved) {
+          const s = JSON.parse(saved);
+          if (s.borrowerGroups) setBorrowerGroups(s.borrowerGroups);
+          if (s.notes) setNotes(s.notes);
+          if (s.aiAnalysis) setAiAnalysis(s.aiAnalysis);
+          if (s.savedRecordId) setSavedRecordId(s.savedRecordId);
+          if (s.verification) setVerification(s.verification);
+        }
+      } catch (_) {}
     }
     getDoc(doc(db, 'scenarios', scenarioId)).then(snap => {
       if (!snap.exists()) return;
       const d = { id: snap.id, ...snap.data() };
       setScenario(d);
-      const groups = [];
-
-      const primaryName = `${d.firstName||''} ${d.lastName||''}`.trim() || d.borrowerName || 'Primary Borrower';
-      const primarySources = d.monthlyIncome && parseFloat(d.monthlyIncome) > 0
-        ? [{ id: Date.now(), method: 'W2', fields: { base_monthly: String(d.monthlyIncome) }, calculated: parseFloat(d.monthlyIncome)||0 }]
-        : [];
-      groups.push({ id: 'primary', name: primaryName, role: 'primary', sources: primarySources });
-
-      const coBorrowers = d.coBorrowers || [];
-      if (coBorrowers.length > 0) {
-        coBorrowers.forEach((cb, i) => {
-          const cbName    = `${cb.firstName||''} ${cb.lastName||''}`.trim() || `Co-Borrower ${i + 1}`;
-          const cbIncome  = parseFloat(cb.monthlyIncome) || 0;
-          const cbSources = cbIncome > 0
-            ? [{ id: Date.now() + i + 1, method: 'W2', fields: { base_monthly: String(cbIncome) }, calculated: cbIncome }]
-            : [];
-          groups.push({ id: `co-${i}`, name: cbName, role: 'co-borrower', sources: cbSources });
-        });
-      } else if (d.coBorrowerIncome && parseFloat(d.coBorrowerIncome) > 0) {
-        groups.push({
-          id: 'co-0', name: 'Co-Borrower', role: 'co-borrower',
-          sources: [{ id: Date.now() + 1, method: 'W2', fields: { base_monthly: String(d.coBorrowerIncome) }, calculated: parseFloat(d.coBorrowerIncome)||0 }],
-        });
-      } else {
-        groups.push({ id: 'co-0', name: 'Co-Borrower', role: 'co-borrower', sources: [] });
+      const saved = lsKey ? localStorage.getItem(lsKey) : null;
+      if (!saved || !JSON.parse(saved).borrowerGroups?.length) {
+        const name = [d.firstName, d.lastName].filter(Boolean).join(' ') || d.scenarioName || 'Primary Borrower';
+        const groups = [makeGroup('primary', name)];
+        if (d.coBorrowerFirstName || d.coFirstName) {
+          const cbName = [d.coBorrowerFirstName || d.coFirstName, d.coBorrowerLastName || d.coLastName].filter(Boolean).join(' ') || 'Co-Borrower';
+          groups.push(makeGroup('co-borrower', cbName));
+        }
+        setBorrowerGroups(groups);
       }
-      setBorrowerGroups(groups);
     }).catch(console.error).finally(() => setLoading(false));
-  }, [scenarioId]);
+  }, [scenarioId, lsKey, makeGroup]);
 
-  // ─── Group Operations ─────────────────────────────────────────────────────
-  const handleAddSource = (groupId, methodId) => {
-    const newSource = { id: Date.now(), method: methodId, fields: {}, calculated: 0 };
-    setBorrowerGroups(prev => prev.map(g => g.id === groupId ? { ...g, sources: [...g.sources, newSource] } : g));
-    setAddingForGroup(null);
+  const handleTaxReturnUpload = async (groupId, yearSlot, file) => {
+    setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
+      ...g, taxReturns: { ...g.taxReturns, [yearSlot]: { ...g.taxReturns[yearSlot], extracting: true, error: null, fileName: file.name } }
+    }));
+    try {
+      const extracted = await extractPDF(file, TAX_RETURN_PROMPT);
+      setBorrowerGroups(prev => prev.map(g => {
+        if (g.id !== groupId) return g;
+        const newSources = buildSourcesFromTaxReturn(extracted, yearSlot, g.sources);
+        return {
+          ...g,
+          taxReturns: { ...g.taxReturns, [yearSlot]: { extracted, extracting: false, fileName: file.name, error: null } },
+          sources: newSources,
+        };
+      }));
+    } catch (err) {
+      setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
+        ...g, taxReturns: { ...g.taxReturns, [yearSlot]: { ...g.taxReturns[yearSlot], extracting: false, error: err.message } }
+      }));
+    }
   };
 
-  const handleUpdateSource = (groupId, sourceId, field, val) => {
-    setBorrowerGroups(prev => prev.map(g => {
-      if (g.id !== groupId) return g;
-      return {
-        ...g, sources: g.sources.map(s => {
-          if (s.id !== sourceId) return s;
-          const newFields = { ...s.fields, [field]: val };
-          const method    = INCOME_METHODS[s.method];
-          return { ...s, fields: newFields, calculated: method ? method.calc(newFields) : 0 };
-        }),
-      };
+  const handleTaxReturnRemove = (groupId, yearSlot) => {
+    setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
+      ...g,
+      taxReturns: { ...g.taxReturns, [yearSlot]: { extracted: null, extracting: false, fileName: null, error: null } },
+      sources: g.sources.map(s => yearSlot === 'prior' ? { ...s, yr1Data: null, fields: { ...s.fields, yr1_net: '', yr1_depr: '' } } : { ...s, yr2Data: null, fields: { ...s.fields, yr2_net: '', yr2_depr: '' } }).map(s => ({ ...s, calculated: Math.max(0, CALCS[s.method] ? CALCS[s.method](s.fields) : 0) })),
+    }));
+  };
+
+  const handleW2Upload = async (groupId, file) => {
+    const tempId = uid();
+    setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
+      ...g, w2Docs: [...g.w2Docs, { id: tempId, name: file.name, loading: true, extracted: null }]
+    }));
+    try {
+      const extracted = await extractPDF(file, W2_PROMPT);
+      setBorrowerGroups(prev => prev.map(g => {
+        if (g.id !== groupId) return g;
+        const w2Docs = g.w2Docs.map(d => d.id !== tempId ? d : { ...d, loading: false, extracted });
+        let sources = [...g.sources];
+        const idx = sources.findIndex(s => s.method === 'W2');
+        if (idx < 0) {
+          sources.push({ id: uid(), method: 'W2', fields: {}, calculated: 0, yr1Data: extracted, yr2Data: null, manualDocs: [{ name: file.name, extracted }] });
+        } else {
+          sources[idx] = { ...sources[idx], yr1Data: extracted, manualDocs: [...(sources[idx].manualDocs || []), { name: file.name, extracted }] };
+        }
+        if (extracted && !extracted.parse_error) {
+          const i2 = sources.findIndex(s => s.method === 'W2');
+          const f = { ...sources[i2].fields };
+          if (extracted.base_annual && !parseFloat(f.base_monthly)) f.base_monthly = String((extracted.base_annual / 12).toFixed(2));
+          else if (extracted.box1_wages && !parseFloat(f.base_monthly)) f.base_monthly = String((extracted.box1_wages / 12).toFixed(2));
+          sources[i2] = { ...sources[i2], fields: f, calculated: Math.max(0, CALCS.W2(f)) };
+        }
+        return { ...g, w2Docs, sources };
+      }));
+    } catch (err) {
+      setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
+        ...g, w2Docs: g.w2Docs.map(d => d.id !== tempId ? d : { ...d, loading: false, error: err.message })
+      }));
+    }
+  };
+
+  const handleW2Remove = (groupId, docIndex) => {
+    setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
+      ...g, w2Docs: g.w2Docs.filter((_, i) => i !== docIndex)
+    }));
+  };
+
+  const handleAddOtherIncome = (groupId, method) => {
+    setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
+      ...g, sources: [...g.sources, { id: uid(), method, fields: {}, calculated: 0, yr1Data: null, yr2Data: null, manualDocs: [] }]
     }));
   };
 
   const handleRemoveSource = (groupId, sourceId) => {
-    setBorrowerGroups(prev => prev.map(g =>
-      g.id === groupId ? { ...g, sources: g.sources.filter(s => s.id !== sourceId) } : g
-    ));
+    setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
+      ...g, sources: g.sources.filter(s => s.id !== sourceId)
+    }));
+  };
+
+  const handleUpdateField = (groupId, sourceId, key, value) => {
+    setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
+      ...g, sources: g.sources.map(s => {
+        if (s.id !== sourceId) return s;
+        const f = { ...s.fields, [key]: value };
+        return { ...s, fields: f, calculated: Math.max(0, CALCS[s.method] ? CALCS[s.method](f) : 0) };
+      })
+    }));
+  };
+
+  const handleUploadOtherDoc = async (groupId, sourceId, file) => {
+    const src = borrowerGroups.find(g => g.id === groupId)?.sources.find(s => s.id === sourceId);
+    if (!src) return;
+    const prompt = OTHER_PROMPTS[src.method] || '';
+    try {
+      const extracted = await extractPDF(file, 'Extract income data from this document. Return ONLY valid JSON. ' + prompt);
+      setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
+        ...g, sources: g.sources.map(s => {
+          if (s.id !== sourceId) return s;
+          const f = { ...s.fields };
+          if (extracted.monthly_benefit && !parseFloat(f.monthly_benefit)) f.monthly_benefit = String(extracted.monthly_benefit);
+          if (extracted.non_taxable) f.gross_up = 'yes';
+          if (extracted.monthly_amount && !parseFloat(f.monthly_amount)) f.monthly_amount = String(extracted.monthly_amount);
+          if (extracted.months_remaining && !parseFloat(f.months_remaining)) f.months_remaining = String(extracted.months_remaining);
+          if (extracted.base_pay && !parseFloat(f.base_pay)) f.base_pay = String(extracted.base_pay);
+          if (extracted.bah && !parseFloat(f.bah)) f.bah = String(extracted.bah);
+          if (extracted.bas && !parseFloat(f.bas)) f.bas = String(extracted.bas);
+          return { ...s, yr1Data: extracted, fields: f, calculated: Math.max(0, CALCS[s.method] ? CALCS[s.method](f) : 0) };
+        })
+      }));
+    } catch (err) { console.error('Upload error:', err); }
   };
 
   const handleAddCoBorrower = () => {
-    const nextIdx = borrowerGroups.filter(g => g.role === 'co-borrower').length;
-    setBorrowerGroups(prev => [...prev, { id: `co-${Date.now()}`, name: `Co-Borrower ${nextIdx + 1}`, role: 'co-borrower', sources: [] }]);
+    if (borrowerGroups.length >= 4) return;
+    setBorrowerGroups(prev => [...prev, makeGroup('co-borrower', `Co-Borrower ${prev.length}`)]);
   };
 
-  // ─── Totals ───────────────────────────────────────────────────────────────
-  const groupTotals     = borrowerGroups.map(g => ({ ...g, total: g.sources.reduce((s, src) => s + (src.calculated||0), 0) }));
-  const totalQualifying = groupTotals.reduce((s, g) => s + g.total, 0);
+  const totalQualifying = borrowerGroups.reduce((s, g) => s + g.sources.reduce((s2, src) => s2 + Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0), 0), 0);
 
-  // ─── NSI ─────────────────────────────────────────────────────────────────
-  const rawPurpose  = (scenario?.loanPurpose || '').toLowerCase();
-  const loanPurpose = rawPurpose.includes('cash') ? 'cash_out_refi'
-    : rawPurpose.includes('rate') || rawPurpose.includes('refi') ? 'rate_term_refi'
-    : 'purchase';
-
-  const allSources  = (borrowerGroups || []).flatMap(g => g.sources || []);
-  const nsiFindings = {
-    incomeType:       allSources.some(s => s.method === 'SELF_EMPLOYED') ? 'self_employed'
-                    : allSources.some(s => s.method === 'BANK_STATEMENT') ? 'bank_statement'
-                    : 'w2',
-    selfEmployed:     allSources.some(s => s.method === 'SELF_EMPLOYED'),
-    incomeSufficient: totalQualifying > 0,
-    assetsVerified:   false,
+  const handleAIAnalysis = async () => {
+    setAiAnalyzing(true);
+    setActiveTab(2);
+    setAiAnalysis('');
+    setVerification(null);
+    const detail = borrowerGroups.map(g => ({
+      borrower: g.name,
+      totalMonthly: g.sources.reduce((s, src) => s + Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0), 0),
+      sources: g.sources.map(s => ({ type: METHOD_META[s.method]?.label, monthly: Math.max(0, CALCS[s.method] ? CALCS[s.method](s.fields) : 0), fields: s.fields })),
+    }));
+    try {
+      const r1 = await fetch(API, { method: 'POST', headers: HDRS(), body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 3000, messages: [{ role: 'user', content: 'Senior mortgage underwriter: analyze this income file. DATA:' + JSON.stringify(detail) + ' TOTAL:' + fmt$(totalQualifying) + '/mo LOAN:' + (scenario?.loanType || '') + ' ' + (scenario?.loanAmount ? '$' + parseInt(scenario.loanAmount).toLocaleString() : '') + ' NOTES:' + (notes || 'None') + ' Provide: 1.INCOME NARRATIVE(3-4 paragraphs) 2.QUALIFYING INCOME SUMMARY(each source) 3.RISK FLAGS & RESOLUTION(guideline citations) 4.UNDERWRITER SCRUTINY POINTS 5.RECOMMENDATION' }] }) });
+      if (!r1.ok) throw new Error('Pass 1 ' + r1.status);
+      const d1 = await r1.json();
+      const narrative = d1.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      if (narrative) setAiAnalysis(narrative);
+      const r2 = await fetch(API, { method: 'POST', headers: HDRS(), body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 2000, messages: [{ role: 'user', content: 'Independent mortgage income auditor. Recalculate from raw fields WITHOUT using pre-calculated amounts. RAW:' + JSON.stringify(detail.map(g => ({ borrower: g.borrower, sources: g.sources.map(s => ({ type: s.type, rawFields: s.fields })) }))) + ' Rules: SE=(yr1+add+yr2+add)/2/12 or lower year if declining>10%. Rental=(yr1net+yr1depr+yr2net+yr2depr)/2/12. SS=monthly_benefit*(gross_up=yes?1.25:1). Military=base_pay+bah*1.25+bas*1.25+other. Return ONLY JSON:{"verified":true,"grandTotalMonthly":0,"discrepancies":[],"notes":""}' }] }) });
+      if (!r2.ok) throw new Error('Pass 2 ' + r2.status);
+      const d2 = await r2.json();
+      const raw = d2.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      try {
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (match) {
+          const vr = JSON.parse(match[0]);
+          vr.primaryTotal = totalQualifying;
+          vr.agree = Math.abs((vr.grandTotalMonthly || 0) - totalQualifying) < 2;
+          vr.diff = Math.abs((vr.grandTotalMonthly || 0) - totalQualifying);
+          setVerification(vr);
+        }
+      } catch (_) {}
+    } catch (err) { console.error(err); setAiAnalysis('Error: ' + err.message); }
+    setAiAnalyzing(false);
   };
 
-  const { primarySuggestion, logFollow } = useNextStepIntelligence({
-    currentModuleKey:        'INCOME_ANALYSIS',
-    loanPurpose,
-    decisionRecordFindings:  { INCOME_ANALYSIS: nsiFindings },
-    scenarioData:            scenario || {},
-    completedModules:        [],
-    scenarioId,
-    onWriteToDecisionRecord: null,
-  });
-
-  // ─── Save to Decision Record ──────────────────────────────────────────────
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
     try {
-      const writtenId = await reportFindings('INCOME_ANALYZER', {
-        totalQualifyingMonthly: parseFloat(totalQualifying.toFixed(2)),
-        annualQualifyingIncome: parseFloat((totalQualifying * 12).toFixed(2)),
-        borrowerGroups: groupTotals.map(g => ({
-          name: g.name, role: g.role, totalMonthly: parseFloat(g.total.toFixed(2)),
-          sources: g.sources.map(s => ({ method: s.method, monthly: parseFloat(s.calculated.toFixed(2)) })),
-        })),
-        loNotes:   notes,
-        timestamp: new Date().toISOString(),
-      }, [], [], '1.0.0');
+      const riskFlags = [];
+      borrowerGroups.forEach(g => g.sources.forEach(s => {
+        if (s.method === 'CHILD_SUPPORT' && (parseFloat(s.fields.months_remaining) || 0) < 36) riskFlags.push({ field: 'cs', message: 'Child support < 36 months continuance', severity: 'HIGH' });
+        if (s.method === 'W2' && (parseFloat(s.fields.overtime_monthly) > 0 || parseFloat(s.fields.bonus_monthly) > 0)) riskFlags.push({ field: 'variable', message: 'Variable income — verify 2-year history', severity: 'MEDIUM' });
+      }));
+      const writtenId = await reportFindings('INCOME_ANALYZER', { totalQualifyingMonthly: totalQualifying, totalQualifyingAnnual: totalQualifying * 12, borrowers: borrowerGroups.map(g => ({ name: g.name, role: g.role, monthlyIncome: g.sources.reduce((s, src) => s + Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0), 0) })), loNotes: notes, aiAnalysis, timestamp: new Date().toISOString() }, [], riskFlags, '4.0.0');
       if (writtenId) setSavedRecordId(writtenId);
-      setFindingsReported(true);
     } catch (e) { console.error(e); }
-    finally { setRecordSaving(false); }
+    setRecordSaving(false);
   };
 
-  // ─── Loading ──────────────────────────────────────────────────────────────
+  const rawPurpose = (scenario?.loanPurpose || '').toLowerCase();
+  const loanPurpose = rawPurpose.includes('cash') ? 'cash_out_refi' : rawPurpose.includes('rate') || rawPurpose.includes('refi') ? 'rate_term_refi' : 'purchase';
+  const { primarySuggestion, secondarySuggestions, logFollow, logOverride } = useNextStepIntelligence({ currentModuleKey: 'INCOME_ANALYZER', loanPurpose, decisionRecordFindings: { INCOME_ANALYZER: { incomeConfirmed: totalQualifying > 0 } }, scenarioData: scenario || {}, completedModules: [], scenarioId, onWriteToDecisionRecord: null });
+  const allNames = borrowerGroups.map(g => g.name).filter(Boolean).join(' · ');
+  const TABS = [{ id: 0, label: 'Income Entry', icon: '💼' }, { id: 1, label: 'Income Worksheet', icon: '📋' }, { id: 2, label: 'AI Analysis', icon: '🤖' }];
+
   if (loading) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="flex items-center gap-3 text-slate-400">
-        <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-        <span className="text-sm">Loading…</span>
-      </div>
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="text-center"><div className="text-5xl mb-4">💼</div><div className="text-slate-500">Loading…</div></div>
     </div>
   );
 
-  // ─── STATE A: No scenario — Landing / Selector ────────────────────────────
   if (!scenarioId) {
-    const query     = search.toLowerCase().trim();
-    const sorted    = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
-    const filtered  = query ? sorted.filter(s => (s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim()).toLowerCase().includes(query)) : sorted;
-    const displayed = query ? filtered : showAll ? filtered : filtered.slice(0, 5);
-    const hasMore   = !query && !showAll && filtered.length > 5;
-
+    const q = search.toLowerCase().trim();
+    const sorted = [...scenarios].sort((a, b) => (b.updatedAt?.seconds || b.createdAt?.seconds || 0) - (a.updatedAt?.seconds || a.createdAt?.seconds || 0));
+    const filtered = q ? sorted.filter(s => (s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim()).toLowerCase().includes(q)) : sorted;
+    const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
+    const hasMore = !q && !showAll && filtered.length > 5;
     return (
-      <div className="min-h-screen bg-slate-50">
-
-        {/* ── Hero (landing) ── */}
-        <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', padding: '28px 32px 24px' }}>
-          <button onClick={() => navigate('/')}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#818cf8', fontSize: 12, fontWeight: 600, marginBottom: 20, background: 'none', border: 'none', cursor: 'pointer' }}>
-            ← Back to Dashboard
-          </button>
-          <p style={{ fontSize: 10, fontWeight: 600, color: '#64748b', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
-            Stage 1 — Pre-Structure &amp; Initial Analysis
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, background: '#6366f1', borderRadius: 8, fontSize: 11, fontWeight: 700, color: '#fff' }}>
-              M02
-            </span>
-            <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: '#f8fafc', lineHeight: 1.15 }}>
-              Income Analyzer™
-            </h1>
-          </div>
-          <p style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.65, maxWidth: 520, marginBottom: 14 }}>
-            Multi-borrower income qualification across W-2, self-employed, rental, Social Security, military, and more — with per-borrower named sections and documentation checklists.
-          </p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {['W-2 / Salary', 'Self-Employed', 'Rental Income', 'Social Security', 'Military / BAH', 'Child Support'].map(tag => (
-              <span key={tag} style={{ padding: '3px 11px', borderRadius: 20, border: '1px solid #334155', fontSize: 11, fontWeight: 500, color: '#cbd5e1' }}>{tag}</span>
-            ))}
+      <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans',system-ui,sans-serif" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 px-6 py-10">
+          <div className="max-w-2xl mx-auto">
+            <button onClick={() => navigate('/')} className="flex items-center gap-1.5 text-indigo-300 hover:text-white text-xs font-semibold mb-6 transition-colors">← Back to Dashboard</button>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-11 h-11 bg-indigo-500 rounded-2xl flex items-center justify-center text-white font-black text-sm">02</div>
+              <div>
+                <span className="text-xs font-bold tracking-widest text-indigo-400 uppercase">Stage 1 — Pre-Structure</span>
+                <h1 style={{ fontFamily: "'DM Serif Display',Georgia,serif" }} className="text-2xl font-normal text-white mt-0.5">Income Analyzer™</h1>
+              </div>
+            </div>
+            <p className="text-indigo-300 text-sm leading-relaxed mb-5">Upload federal tax returns once — AI auto-detects all income types. W-2, Schedule C, E, D, and more from a single PDF.</p>
+            <div className="flex flex-wrap gap-2">
+              {['Smart 1040 Upload', 'Auto Income Detection', 'Declining Income Analysis', '4-Borrower Support', 'AI Verification', 'Decision Record'].map(tag => (
+                <span key={tag} className="text-xs bg-white/10 border border-white/10 text-indigo-200 px-3 py-1 rounded-full font-medium">{tag}</span>
+              ))}
+            </div>
           </div>
         </div>
-
-        {/* ── Scenario Selector ── */}
-        <div style={{ maxWidth: 640, margin: '0 auto', padding: '28px 24px' }}>
-          <h2 style={{ fontSize: 11, fontWeight: 700, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 4 }}>Select a Scenario</h2>
-          <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 14 }}>Search by name or pick from your most recent files.</p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1.5px solid #e2e8f0', borderRadius: 10, padding: '9px 14px', marginBottom: 14 }}>
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="6.5" cy="6.5" r="5" stroke="#94a3b8" strokeWidth="1.6"/><path d="M10.5 10.5L14 14" stroke="#94a3b8" strokeWidth="1.6" strokeLinecap="round"/></svg>
-            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…"
-              style={{ border: 'none', outline: 'none', fontSize: 13, color: '#475569', width: '100%', background: 'transparent', fontFamily: 'inherit' }} />
-            {search && <button onClick={() => setSearch('')} style={{ color: '#94a3b8', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>✕</button>}
+        <div className="max-w-2xl mx-auto px-6 py-8">
+          <div className="relative mb-4">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+            <input type="text" value={search} onChange={e => { setSearch(e.target.value); setShowAll(false); }} placeholder="Search borrower name…" className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
           </div>
-
-          {scenarios.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
-              <p className="text-3xl mb-3">📂</p>
-              <p className="text-sm font-semibold text-slate-600">No scenarios found</p>
-              <p className="text-xs text-slate-400 mt-1">Create one in Scenario Creator first.</p>
-              <button onClick={() => navigate('/scenario-creator')} className="mt-4 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline">→ Go to Scenario Creator</button>
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
-              <p className="text-2xl mb-2">🔍</p>
-              <p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p>
-              <button onClick={() => setSearch('')} className="mt-2 text-xs text-indigo-500 hover:underline">Clear search</button>
-            </div>
+          {filtered.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100"><p className="text-sm text-slate-500">No matches for "{search}"</p></div>
           ) : (
             <div className="space-y-2.5">
-              {!query && !showAll && <p style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 7 }}>Recently Updated</p>}
               {displayed.map(s => {
-                const name   = s.scenarioName || `${s.firstName||''} ${s.lastName||''}`.trim() || 'Unnamed Scenario';
-                const amount = parseFloat(s.loanAmount || 0);
+                const sName = s.scenarioName || `${s.firstName || ''} ${s.lastName || ''}`.trim() || 'Unnamed Scenario';
                 return (
-                  <button key={s.id} onClick={() => navigate(`/income-analyzer?scenarioId=${s.id}`)}
-                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-indigo-300 hover:shadow-md hover:bg-indigo-50/30 transition-all group">
+                  <button key={s.id} onClick={() => navigate('/income-analyzer?scenarioId=' + s.id)} className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-indigo-300 hover:shadow-md hover:bg-indigo-50/30 transition-all group">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-indigo-700 transition-colors">{name}</div>
-                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                          {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
-                          {s.loanType    && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{s.loanType}</span>}
-                          {s.creditScore && <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 px-2 py-0.5 rounded-full font-mono">FICO {s.creditScore}</span>}
+                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-indigo-700">{sName}</div>
+                        <div className="flex items-center gap-2 mt-1">
+                          {s.loanAmount && <span className="text-xs text-slate-500 font-mono">${parseFloat(s.loanAmount).toLocaleString()}</span>}
+                          {s.loanType && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{s.loanType}</span>}
                         </div>
                       </div>
-                      <span className="text-slate-300 group-hover:text-indigo-400 text-lg transition-colors shrink-0">→</span>
+                      <span className="text-slate-300 group-hover:text-indigo-400 text-lg">→</span>
                     </div>
                   </button>
                 );
               })}
-              {hasMore && (
-                <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-indigo-500 hover:text-indigo-700 py-3 border border-dashed border-indigo-200 rounded-2xl hover:bg-indigo-50 transition-all">
-                  View all {filtered.length} scenarios
-                </button>
-              )}
-              {showAll && filtered.length > 5 && (
-                <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>
-              )}
+              {hasMore && <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-indigo-500 py-3 border border-dashed border-indigo-200 rounded-2xl hover:bg-indigo-50">View all {filtered.length} scenarios</button>}
             </div>
           )}
         </div>
@@ -546,186 +1076,179 @@ export default function IncomeAnalyzer() {
     );
   }
 
-  // ─── STATE B: Scenario loaded — Active Module ─────────────────────────────
-  const borrower        = scenario ? `${scenario.firstName||''} ${scenario.lastName||''}`.trim() || scenario.borrowerName : null;
-  const coBorrowerNames = scenario?.coBorrowers?.filter(cb => cb.firstName || cb.lastName).map(cb => `${cb.firstName||''} ${cb.lastName||''}`.trim()) || [];
-  const propertyAddress = scenario ? [scenario.streetAddress, scenario.city, scenario.state, scenario.zipCode].filter(Boolean).join(', ') : '';
-
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
-
-      {/* ════════════════════════════════════════════════════════
-          1. HERO
-      ════════════════════════════════════════════════════════ */}
-      <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', padding: '26px 32px 22px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 20 }}>
-        {/* Left content */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontSize: 10, fontWeight: 600, color: '#64748b', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6 }}>
-            LoanBeacons™ — Module 02
-          </p>
-          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: '#f8fafc', lineHeight: 1.15, marginBottom: 8 }}>
-            Income Analyzer™
-          </h1>
-          <p style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.6, marginBottom: 0 }}>
-            W-2 · Self-Employed · Rental · Social Security · Military · Child Support
-          </p>
-        </div>
-
-        {/* Right column — pills + scenario card */}
-        <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-          <span style={{ background: 'rgba(34,197,94,0.15)', color: '#86efac', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid rgba(134,239,172,0.3)' }}>● LIVE</span>
-          {totalQualifying > 0 && (
-            <span style={{ background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid rgba(165,180,252,0.3)' }}>
-              {fmt$(totalQualifying)}/mo
-            </span>
-          )}
-          {scenario && (
-            <div style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid #334155', borderRadius: 10, padding: '10px 14px', minWidth: 176, backdropFilter: 'blur(4px)' }}>
-              <p style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>Active Scenario</p>
-              <p style={{ fontSize: 13, fontWeight: 600, color: '#f1f5f9' }}>{borrower || 'Unknown Borrower'}</p>
-              <p style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>
-                {scenario.loanAmount ? `$${Number(scenario.loanAmount).toLocaleString()}` : ''}{scenario.loanType ? ` · ${scenario.loanType}` : ''}
-              </p>
-              <span onClick={() => navigate('/income-analyzer')} style={{ fontSize: 10, color: '#818cf8', marginTop: 6, cursor: 'pointer', display: 'inline-block' }}>Change scenario →</span>
+    <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans',system-ui,sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+      <div className="max-w-7xl mx-auto px-6 pt-4">
+        <DecisionRecordBanner recordId={savedRecordId} moduleName="Income Analyzer™" moduleKey="INCOME_ANALYZER" onSave={handleSaveToRecord} saving={recordSaving} />
+      </div>
+      <div className="max-w-7xl mx-auto px-6">
+        <ModuleNav moduleNumber={2} />
+      </div>
+      <div className="max-w-7xl mx-auto px-6 mb-4">
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl px-6 py-5">
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div style={{ flex: 1 }}>
+              <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-xs mb-2 block">← Dashboard</button>
+              <h1 className="text-2xl font-bold text-white" style={{ fontFamily: 'DM Serif Display,serif' }}>Income Analyzer™</h1>
+              <p className="text-slate-400 text-sm mt-1">{allNames || 'Smart upload · Auto income detection · AI verification'}</p>
             </div>
-          )}
+            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10, marginLeft: 24 }}>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-400/30">Stage 1 — Pre-Structure</span>
+                <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">Module 2</span>
+                <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-400/30 font-semibold">● LIVE</span>
+              </div>
+              {scenario && (
+                <div className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right" style={{ minWidth: 190 }}>
+                  <p className="text-xs text-slate-300 truncate" style={{ maxWidth: 200 }}>{allNames || scenario.scenarioName || 'No Borrower'}</p>
+                  <p className="text-lg font-black text-white">{scenario.loanAmount ? '$' + parseInt(scenario.loanAmount).toLocaleString() : '—'}</p>
+                  <p className="text-xs text-slate-400">{scenario.loanType || 'Purchase'}{totalQualifying > 0 && <span className="text-indigo-300 font-bold"> · {fmt$(totalQualifying)}/mo</span>}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="max-w-7xl mx-auto px-6">
+        <ScenarioHeader moduleTitle="Income Analyzer™" moduleNumber={2} scenarioId={scenarioId} />
+      </div>
+      {savedRecordId && primarySuggestion && (
+        <div className="max-w-7xl mx-auto px-6">
+          <NextStepCard suggestion={primarySuggestion} secondarySuggestions={secondarySuggestions} onFollow={logFollow} onOverride={logOverride} loanPurpose={loanPurpose} scenarioId={scenarioId} />
+        </div>
+      )}
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="flex gap-0">
+            {TABS.map(t => (
+              <button key={t.id} onClick={() => setActiveTab(t.id)} className={`px-5 py-3.5 text-sm font-semibold border-b-2 transition-all ${activeTab === t.id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>{t.icon} {t.label}</button>
+            ))}
+            <div className="ml-auto flex items-center px-4 gap-2">
+              <span className="text-xs text-slate-400">Total:</span>
+              <span className="text-base font-black text-indigo-600">{fmt$(totalQualifying)}/mo</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* ════════════════════════════════════════════════════════
-          2. SCENARIO HEADER BAR
-      ════════════════════════════════════════════════════════ */}
-      {scenario && (
-        <div style={{ background: '#1a2744', padding: '8px 32px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', borderBottom: '1px solid #0f172a' }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{borrower || 'Unknown Borrower'}</span>
-          {coBorrowerNames.map((n, i) => <span key={i} style={{ fontSize: 11, color: '#64748b' }}>+ {n}</span>)}
-          {propertyAddress && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>{propertyAddress}</span></>}
-          {scenario.loanAmount && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>Loan <span style={{ color: '#cbd5e1', fontWeight: 500 }}>${Number(scenario.loanAmount).toLocaleString()}</span></span></>}
-          {scenario.loanType   && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>Type <span style={{ color: '#cbd5e1', fontWeight: 500 }}>{scenario.loanType}</span></span></>}
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════
-          3. MODULE NAV BAR
-      ════════════════════════════════════════════════════════ */}
-      <ModuleNav moduleNumber={2} />
-
-      {/* ════════════════════════════════════════════════════════
-          4. DECISION RECORD BANNER — green on save + NSI pill
-      ════════════════════════════════════════════════════════ */}
-      <DRBanner
-        savedRecordId={savedRecordId}
-        saving={recordSaving}
-        onSave={handleSaveToRecord}
-        nsiSuggestion={findingsReported ? primarySuggestion : null}
-        onNsiNavigate={(path) => { logFollow(); navigate(`${path}?scenarioId=${scenarioId}`); }}
-      />
-
-      {/* ════════════════════════════════════════════════════════
-          5. CONTENT
-      ════════════════════════════════════════════════════════ */}
-      <div className="max-w-5xl mx-auto px-4 py-6">
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-          <div className="xl:col-span-2">
-
-            {borrowerGroups.map(group => (
-              <BorrowerGroup
-                key={group.id}
-                group={group}
-                addingForGroup={addingForGroup}
-                onAddSource={handleAddSource}
-                onUpdate={handleUpdateSource}
-                onRemove={handleRemoveSource}
-                onStartAdd={(id) => setAddingForGroup(id)}
-                onCancelAdd={() => setAddingForGroup(null)}
-              />
-            ))}
-
-            <button onClick={handleAddCoBorrower}
-              className="w-full py-3 border-2 border-dashed border-violet-200 rounded-xl text-sm font-semibold text-violet-400 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50 transition-all mb-6">
-              + Add Another Co-Borrower
-            </button>
-
-            {/* LO Notes */}
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-5">
-              <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-3">📝 LO Notes</h2>
-              <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
-                placeholder="Income calculation rationale, unusual income types, addback justifications..."
-                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700 focus:ring-2 focus:ring-indigo-300 resize-none" />
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        {activeTab === 0 && (
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <div className="xl:col-span-2">
+              {borrowerGroups.map((group, gi) => (
+                <div key={group.id} className="mb-8">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${group.role === 'primary' ? 'bg-indigo-500' : 'bg-violet-500'}`} />
+                      <span className="font-bold text-slate-800">{group.name}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full border font-medium capitalize ${group.role === 'primary' ? 'bg-indigo-100 text-indigo-700 border-indigo-200' : 'bg-violet-100 text-violet-700 border-violet-200'}`}>{group.role}</span>
+                    </div>
+                    <div className={`text-base font-black ${group.role === 'primary' ? 'text-indigo-600' : 'text-violet-600'}`}>
+                      {fmt$(group.sources.reduce((s, src) => s + Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0), 0))}/mo
+                    </div>
+                  </div>
+                  <TaxReturnUploader taxReturns={group.taxReturns} onUpload={(slot, file) => handleTaxReturnUpload(group.id, slot, file)} onRemove={slot => handleTaxReturnRemove(group.id, slot)} />
+                  <W2Uploader w2Docs={group.w2Docs} onUpload={file => handleW2Upload(group.id, file)} onRemove={i => handleW2Remove(group.id, i)} />
+                  <OtherIncomeSelector onAdd={method => handleAddOtherIncome(group.id, method)} />
+                  {group.sources.map(src => (
+                    <SourceCard key={src.id} source={src} onRemove={() => handleRemoveSource(group.id, src.id)} onUpdateField={(sid, key, val) => handleUpdateField(group.id, sid, key, val)} onUploadOtherDoc={(sid, file) => handleUploadOtherDoc(group.id, sid, file)} />
+                  ))}
+                  {group.sources.length > 0 && <IncomeSummary sources={group.sources} groupName={group.name} />}
+                </div>
+              ))}
+              {borrowerGroups.length < 4 && (
+                <button onClick={handleAddCoBorrower} className="w-full py-3 border-2 border-dashed border-violet-200 rounded-xl text-sm font-semibold text-violet-400 hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50 transition-all mb-6">+ Add Co-Borrower</button>
+              )}
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 mb-5">
+                <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-3">📝 LO Notes</h2>
+                <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} placeholder="Income rationale, addback justifications, compensating factors…" className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-300 resize-none" />
+              </div>
+              <div className="flex gap-3 flex-wrap">
+                <button onClick={handleAIAnalysis} disabled={aiAnalyzing} className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50">{aiAnalyzing ? '⏳ Analyzing…' : '🤖 Run AI Analysis'}</button>
+                <button onClick={() => setActiveTab(1)} className="px-5 py-2.5 bg-white border border-indigo-200 text-indigo-600 text-sm font-bold rounded-xl hover:bg-indigo-50">📋 Income Worksheet</button>
+                <button onClick={handleSaveToRecord} disabled={recordSaving} className={`px-5 py-2.5 text-sm font-bold rounded-xl border transition-colors ${savedRecordId ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{savedRecordId ? '✅ Saved to Decision Record' : recordSaving ? '⏳ Saving…' : '💾 Save to Decision Record'}</button>
+              </div>
             </div>
-
-          </div>
-
-          {/* ── Right Panel ── */}
-          <div className="space-y-4">
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Income Summary</h3>
-              <div className="space-y-3">
-                {groupTotals.map(g => {
-                  const styles = ROLE_STYLES[g.role] || ROLE_STYLES['co-borrower'];
+            <div className="space-y-4">
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">All Borrowers — Total</h3>
+                {borrowerGroups.map(g => {
+                  const gt = g.sources.reduce((s, src) => s + Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0), 0);
+                  const style = g.role === 'primary' ? { dot: 'bg-indigo-500', total: 'text-indigo-600', bar: 'bg-indigo-400' } : { dot: 'bg-violet-500', total: 'text-violet-600', bar: 'bg-violet-400' };
                   return (
-                    <div key={g.id}>
+                    <div key={g.id} className="mb-3">
                       <div className="flex justify-between text-xs mb-1">
-                        <span className="text-slate-600 font-semibold truncate max-w-[130px]">{g.name}</span>
-                        <span className={`font-bold shrink-0 ml-1 ${styles.total}`}>{fmt$(g.total)}/mo</span>
+                        <span className="text-slate-600 font-semibold">{g.name}</span>
+                        <span className={`font-bold ${style.total}`}>{fmt$(gt)}/mo</span>
                       </div>
-                      {totalQualifying > 0 && (
-                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                          <div className={`h-full ${styles.bar} rounded-full transition-all`}
-                            style={{ width: `${(g.total / totalQualifying) * 100}%` }} />
-                        </div>
-                      )}
+                      {totalQualifying > 0 && <div className="h-1.5 bg-slate-100 rounded-full"><div className={`h-full ${style.bar} rounded-full`} style={{ width: `${(gt / totalQualifying) * 100}%` }} /></div>}
                     </div>
                   );
                 })}
                 <div className="border-t border-slate-100 pt-3 flex justify-between">
-                  <span className="text-sm font-bold text-slate-600">Total Qualifying</span>
+                  <span className="text-sm font-bold text-slate-600">Grand Total</span>
                   <span className="text-sm font-black text-indigo-600">{fmt$(totalQualifying)}/mo</span>
                 </div>
-                <div className="flex justify-between text-xs text-slate-400">
-                  <span>Annual</span><span className="font-semibold">{fmt$(totalQualifying * 12)}</span>
-                </div>
+                <div className="flex justify-between text-xs text-slate-400 mt-1"><span>Annual</span><span className="font-semibold">{fmt$(totalQualifying * 12)}</span></div>
               </div>
-            </div>
-
-            {borrowerGroups.some(g => g.sources.length > 0) && (
-              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Sources Breakdown</h3>
-                <div className="space-y-2">
-                  {borrowerGroups.map(g =>
-                    g.sources.map(s => {
-                      const m      = INCOME_METHODS[s.method];
-                      const styles = ROLE_STYLES[g.role] || ROLE_STYLES['co-borrower'];
-                      return (
-                        <div key={s.id} className="flex items-center justify-between text-xs gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${styles.dot}`} />
-                            <span className="text-slate-500 truncate max-w-[80px]">{g.name}</span>
-                            <span className="text-slate-300 shrink-0">·</span>
-                            <span className="text-slate-600 truncate">{m?.icon} {m?.label}</span>
-                          </div>
-                          <span className="font-bold text-slate-800 shrink-0">{fmt$(s.calculated)}</span>
-                        </div>
-                      );
-                    })
-                  )}
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2">⚠️ Key Guidelines</h3>
+                <div className="text-xs text-amber-700 space-y-1.5">
+                  <p>• SE: 2-year avg; decline &gt;10% = lower year</p>
+                  <p>• Rental: Sch E net + depreciation addback</p>
+                  <p>• OT/bonus: 2-year history required</p>
+                  <p>• Non-taxable income: gross up 25%</p>
+                  <p>• Child support: 36+ months remaining</p>
+                  <p>• SEP IRA / meals: NOT addbacks</p>
                 </div>
-              </div>
-            )}
-
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-              <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2">⚠️ Key Rules</h3>
-              <div className="text-xs text-amber-700 space-y-1.5">
-                <p>• Self-employed: 2-year tax return average</p>
-                <p>• Overtime/bonus: 2-year history required</p>
-                <p>• Child support: 3+ years continuance</p>
-                <p>• Non-taxable income: gross up 25%</p>
-                <p>• Rental: 75% of gross rents (FHA/Fannie)</p>
-                <p>• Commission: 2-year average, declining trends reviewed</p>
               </div>
             </div>
           </div>
-        </div>
+        )}
+        {activeTab === 1 && <IncomeWorksheet borrowerGroups={borrowerGroups} scenario={scenario} notes={notes} totalQualifying={totalQualifying} verification={verification} />}
+        {activeTab === 2 && (
+          <div className="max-w-4xl">
+            {aiAnalyzing && (
+              <div className="text-center py-16">
+                <div className="text-5xl mb-5">🤖</div>
+                <div className="text-base font-semibold text-slate-600">Analyzing income file…</div>
+                <div className="text-sm mt-3 text-slate-400">Pass 1 — Income narrative &amp; risk flags</div>
+                <div className="text-sm mt-1 text-slate-400">Pass 2 — Independent verification</div>
+              </div>
+            )}
+            {!aiAnalyzing && !aiAnalysis && (
+              <div className="text-center py-16 text-slate-400">
+                <div className="text-4xl mb-4">📊</div>
+                <p className="text-sm">Go to <strong>Income Entry</strong> and click <span className="text-indigo-600 font-bold">Run AI Analysis</span>.</p>
+              </div>
+            )}
+            {aiAnalysis && !aiAnalyzing && (
+              <div>
+                <div className="flex gap-3 mb-5 flex-wrap">
+                  <button onClick={handleAIAnalysis} className="px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-xl hover:bg-indigo-700">🔄 Re-run</button>
+                  <button onClick={() => setActiveTab(1)} className="px-4 py-2 bg-white border border-indigo-200 text-indigo-600 text-sm font-bold rounded-xl hover:bg-indigo-50">📋 Worksheet</button>
+                  <button onClick={() => window.print()} className="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-sm font-bold rounded-xl hover:bg-slate-50">🖨️ Print</button>
+                </div>
+                {verification && (
+                  <div className={`mb-5 rounded-xl p-4 border flex items-start gap-3 ${verification.agree ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+                    <span className="text-2xl">{verification.agree ? '✅' : '⚠️'}</span>
+                    <div>
+                      <div className={`font-bold text-sm ${verification.agree ? 'text-emerald-700' : 'text-red-700'}`}>
+                        {verification.agree ? 'Calculation Verified — AI confirmed ' + fmt$(totalQualifying) + '/mo' : 'Discrepancy Detected — LO Review Required'}
+                      </div>
+                      {!verification.agree && <div className="text-xs text-red-600 mt-1">Primary: {fmt$(verification.primaryTotal)}/mo · Verification: {fmt$(verification.grandTotalMonthly)}/mo · Diff: {fmt$(verification.diff || 0)}</div>}
+                      {(verification.discrepancies || []).map((d, di) => <div key={di} className="text-xs text-amber-700 mt-1">{d.source}: expected {fmt$(d.expected)} · got {fmt$(d.calculated)} — {d.reason}</div>)}
+                    </div>
+                  </div>
+                )}
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                  <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed whitespace-pre-wrap">{aiAnalysis}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
