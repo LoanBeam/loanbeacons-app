@@ -90,8 +90,12 @@ const TAX_RETURN_PROMPT = `Extract ALL income data from this federal tax return.
 "flags":[]}
 CRITICAL: Put ACTUAL numbers from the return — not 0 unless truly zero. schedule_c_net = Schedule C Line 31. schedule_e_net = Schedule E Part I total. schedule_c_depreciation = Schedule C Line 13. schedule_e_depreciation = Schedule E depreciation column total. social_security_monthly = annual SS / 12. Flag any traps: SEP IRA is NOT an addback, meals are NOT an addback.`;
 
-const W2_PROMPT = `Extract employment income data. Return ONLY valid JSON.
-{"doc_type":"w2_paystub","employer_name":"","employee_name":"","pay_frequency":"biweekly","current_gross":0,"ytd_gross":0,"base_annual":0,"box1_wages":0,"overtime_ytd":0,"bonus_ytd":0,"hire_date":"","prior_employer_contamination":false,"prior_employer_amount":0,"flags":[]}`;
+const W2_PROMPT = `Extract employment income. Return ONLY valid JSON, no markdown.
+Schema: {"doc_type":"pay_stub","employee_name":"","employer_name":"","employer_ein":"","pay_period_start":"","pay_period_end":"","check_date":"","pay_frequency":"biweekly","current_gross":0,"ytd_gross":0,"earnings":{"base":0,"overtime":0,"bonus":0,"commission":0,"shift_differential":0},"ytd_earnings":{"base":0,"overtime":0,"bonus":0,"commission":0},"net_pay":0,"hire_date":"","prior_employer_ytd_included":false,"prior_employer_amount":0,"prior_employer_name":"","flags":[]}
+CRITICAL: earnings.base = Regular Pay CURRENT period only (NOT total gross). earnings.overtime = Overtime CURRENT period. earnings.shift_differential = Shift Differential CURRENT period. Check footnotes for prior employer YTD contamination. Flag OT spikes, hire date discrepancies, short tenure.`;
+
+const W2_ONLY_PROMPT = `Extract W-2 tax document data. Return ONLY valid JSON, no markdown.
+Schema: {"doc_type":"w2","tax_year":0,"employer_name":"","employee_name":"","employer_ein":"","box1_wages":0,"box2_fed_withheld":0,"box3_ss_wages":0,"box5_medicare_wages":0,"flags":[]}`;
 
 const OTHER_PROMPTS = {
   SOCIAL_SECURITY: '{"doc_type":"ssa","monthly_benefit":0,"annual_benefit":0,"non_taxable":true,"recipient_name":"","effective_date":"","flags":[]}',
@@ -293,19 +297,82 @@ function TaxReturnUploader({ taxReturns, onUpload, onRemove }) {
 }
 
 // ─── W2Uploader ───────────────────────────────────────────────────────────────
-function W2Uploader({ w2Docs, onUpload, onRemove }) {
+function W2Uploader({ w2Docs, onUpload, onRemove, currentEmployerName, currentHireDate, onUpdateField }) {
+  // Calculate months at current employer
+  const monthsAtEmployer = (() => {
+    if (!currentHireDate) return null;
+    const hire = new Date(currentHireDate);
+    const now = new Date();
+    if (isNaN(hire.getTime())) return null;
+    return Math.floor((now - hire) / (1000 * 60 * 60 * 24 * 30.44));
+  })();
+  const otEligible = monthsAtEmployer !== null && monthsAtEmployer >= 24;
+  const otMonthsNeeded = monthsAtEmployer !== null ? Math.max(0, 24 - monthsAtEmployer) : null;
+
+  // Check for employer mismatches in uploaded W-2s
+  const mismatchedW2s = w2Docs.filter(d => {
+    if (!d.extracted || d.extracted.parse_error || !currentEmployerName) return false;
+    const w2emp = (d.extracted.employer_name || '').toLowerCase();
+    const curremp = currentEmployerName.toLowerCase();
+    return w2emp && curremp && !w2emp.includes(curremp.split(' ')[0]) && !curremp.includes(w2emp.split(' ')[0]);
+  });
+
   return (
     <div style={{ background: 'var(--color-background-primary)', border: '0.5px solid var(--color-border-tertiary)', borderRadius: 'var(--border-radius-lg)', overflow: 'hidden', marginBottom: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: w2Docs.length > 0 ? '0.5px solid var(--color-border-tertiary)' : 'none', background: '#f0fdf4' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderBottom: '0.5px solid var(--color-border-tertiary)', background: '#f0fdf4' }}>
         <span style={{ fontSize: 20 }}>💼</span>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 13, fontWeight: 500, color: '#166534' }}>W-2 / Employment income</div>
-          <div style={{ fontSize: 11, color: '#16a34a' }}>Pay stubs, W-2s, offer letters — AI extracts base pay, OT, and bonus</div>
+          <div style={{ fontSize: 11, color: '#16a34a' }}>Upload pay stubs for current rate · Upload W-2s for 2-year OT/bonus history</div>
         </div>
-        <label style={{ cursor: 'pointer', fontSize: 11, fontWeight: 500, color: '#166534', background: '#fff', border: '0.5px solid #bbf7d0', borderRadius: 'var(--border-radius-md)', padding: '6px 12px', flexShrink: 0 }}>
-          + Upload
-          <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) { onUpload(e.target.files[0]); e.target.value = ''; } }} />
-        </label>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '10px 14px', borderBottom: '0.5px solid var(--color-border-tertiary)', background: 'var(--color-background-secondary)' }}>
+        <div>
+          <label style={{ display: 'block', fontSize: 10, fontWeight: 500, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>Current employer name</label>
+          <input type="text" value={currentEmployerName} onChange={e => onUpdateField('currentEmployerName', e.target.value)} placeholder="e.g. Piedmont Healthcare" style={{ width: '100%', fontSize: 12, padding: '6px 8px', border: '0.5px solid var(--color-border-secondary)', borderRadius: 'var(--border-radius-md)', background: 'var(--color-background-primary)', color: 'var(--color-text-primary)', boxSizing: 'border-box' }} />
+        </div>
+        <div>
+          <label style={{ display: 'block', fontSize: 10, fontWeight: 500, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>Hire date at current employer</label>
+          <input type="date" value={currentHireDate} onChange={e => onUpdateField('currentHireDate', e.target.value)} style={{ width: '100%', fontSize: 12, padding: '6px 8px', border: '0.5px solid var(--color-border-secondary)', borderRadius: 'var(--border-radius-md)', background: 'var(--color-background-primary)', color: 'var(--color-text-primary)', boxSizing: 'border-box' }} />
+        </div>
+      </div>
+      {currentHireDate && (
+        <div style={{ padding: '8px 14px', borderBottom: '0.5px solid var(--color-border-tertiary)', background: otEligible ? '#f0fdf4' : '#fffbeb', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 13 }}>{otEligible ? '✅' : '⚠️'}</span>
+          <div style={{ fontSize: 11 }}>
+            {otEligible
+              ? <span style={{ color: '#15803d', fontWeight: 500 }}>OT/bonus eligible — {monthsAtEmployer} months at current employer (24-month requirement met)</span>
+              : <span style={{ color: '#92400e', fontWeight: 500 }}>OT/bonus excluded — {monthsAtEmployer} months at current employer · need {otMonthsNeeded} more months · eligible {new Date(new Date(currentHireDate).getTime() + 24*30.44*24*60*60*1000).toLocaleDateString('en-US',{month:'short',year:'numeric'})}</span>
+            }
+          </div>
+        </div>
+      )}
+      {mismatchedW2s.length > 0 && (
+        <div style={{ padding: '8px 14px', borderBottom: '0.5px solid var(--color-border-tertiary)', background: '#fef2f2' }}>
+          <div style={{ fontSize: 11, fontWeight: 500, color: '#dc2626' }}>🚨 W-2 employer mismatch detected</div>
+          {mismatchedW2s.map((d, i) => (
+            <div key={i} style={{ fontSize: 11, color: '#b91c1c', marginTop: 2 }}>
+              {d.extracted.employer_name} ≠ {currentEmployerName} — W-2 OT history applies to prior employer, not current
+            </div>
+          ))}
+          <div style={{ fontSize: 11, color: '#b91c1c', marginTop: 2 }}>OT from mismatched W-2s excluded from qualifying per FHA 4000.1 / Fannie B3-3.1</div>
+        </div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderBottom: w2Docs.length > 0 ? '0.5px solid var(--color-border-tertiary)' : 'none' }}>
+        <div style={{ padding: '10px 14px', borderRight: '0.5px solid var(--color-border-tertiary)' }}>
+          <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Pay stubs (last 30 days)</div>
+          <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 500, color: '#166534', background: '#fff', border: '0.5px solid #bbf7d0', borderRadius: 'var(--border-radius-md)', padding: '6px 10px' }}>
+            <span>📤</span> Upload stub
+            <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) { onUpload(e.target.files[0], 'paystub'); e.target.value = ''; } }} />
+          </label>
+        </div>
+        <div style={{ padding: '10px 14px' }}>
+          <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>W-2s (last 2 years — for OT/bonus avg)</div>
+          <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 500, color: '#166534', background: '#fff', border: '0.5px solid #bbf7d0', borderRadius: 'var(--border-radius-md)', padding: '6px 10px' }}>
+            <span>📤</span> Upload W-2
+            <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={e => { if (e.target.files[0]) { onUpload(e.target.files[0], 'w2'); e.target.value = ''; } }} />
+          </label>
+        </div>
       </div>
       {w2Docs.map((d, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderBottom: '0.5px solid var(--color-border-tertiary)', fontSize: 12 }}>
@@ -511,17 +578,52 @@ function SourceCard({ source, onRemove, onUpdateField, onUploadOtherDoc }) {
             </div>
           ))}
           {latestExt && !latestExt.parse_error && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-              {latestExt.base_annual > 0 && <MetricTile label="Base annual" value={fmt$(latestExt.base_annual)} />}
-              {latestExt.current_gross > 0 && <MetricTile label="Current gross/period" value={fmt$(latestExt.current_gross)} />}
-              {latestExt.overtime_ytd > 0 && <MetricTile label="OT YTD" value={fmt$(latestExt.overtime_ytd)} />}
-              {latestExt.bonus_ytd > 0 && <MetricTile label="Bonus YTD" value={fmt$(latestExt.bonus_ytd)} />}
+            <div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8, marginBottom: 8 }}>
+                {latestExt.hourly_rate > 0 && <MetricTile label="Hourly rate" value={'$'+latestExt.hourly_rate.toFixed(2)+'/hr'} />}
+                {latestExt.hours_regular > 0 && <MetricTile label="Regular hours/period" value={latestExt.hours_regular+' hrs'} />}
+                {latestExt.current_gross > 0 && <MetricTile label="Current gross/period" value={fmt$(latestExt.current_gross)} />}
+              {latestExt.current_base > 0 && <MetricTile label="Regular Pay (base)" value={fmt$(latestExt.current_base)} color="#16a34a" highlight />}
+              {latestExt.hourly_rate > 0 && <MetricTile label="Hourly rate" value={'$'+latestExt.hourly_rate.toFixed(2)+'/hr'} />}
+              {latestExt.current_overtime > 0 && <MetricTile label="OT this period" value={fmt$(latestExt.current_overtime)} />}
+                {latestExt.current_overtime > 0 && <MetricTile label="OT this period" value={fmt$(latestExt.current_overtime)} />}
+                {latestExt.ytd_overtime > 0 && <MetricTile label="OT YTD" value={fmt$(latestExt.ytd_overtime)} />}
+                {latestExt.clean_ytd > 0 && <MetricTile label="Clean YTD (ex prior emp)" value={fmt$(latestExt.clean_ytd)} color="#16a34a" />}
+              </div>
+              {latestExt.prior_employer_contamination && (
+                <div style={{ background: '#fef2f2', border: '0.5px solid #fecaca', borderRadius: 'var(--border-radius-md)', padding: '8px 12px', marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 500, color: '#dc2626' }}>🚨 YTD contamination: {fmt$(latestExt.prior_employer_amount)} from {latestExt.prior_employer_name} included in YTD — excluded from qualifying</div>
+                </div>
+              )}
+              {latestExt.hire_date && (
+                <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 4 }}>
+                  Current employer hire date: <strong style={{ color: 'var(--color-text-primary)' }}>{latestExt.hire_date}</strong>
+                  {latestExt.hire_date > '2025-01-01' && <span style={{ color: '#d97706', marginLeft: 8 }}>⚠️ Less than 2 years at current employer — verify continuance</span>}
+                </div>
+              )}
+              {!parseFloat(source.fields.base_monthly) && latestExt.current_gross > 0 && (
+                <div style={{background:'#fef9c3',border:'0.5px solid #fde047',borderRadius:'var(--border-radius-md)',padding:'8px 10px',marginTop:6}}>
+                  <div style={{fontSize:11,fontWeight:500,color:'#854d0e'}}>📝 Base pay needs manual entry</div>
+                  <div style={{fontSize:11,color:'#92400e',marginTop:2}}>Gross/period: {fmt$(latestExt.current_gross)} — enter base pay only below (exclude OT, shift diff, holiday). Expected: {fmt$((latestExt.current_gross-(latestExt.current_overtime||0)-(latestExt.current_shift_diff||0))*({biweekly:26,weekly:52,semimonthly:24,monthly:12}[latestExt.pay_frequency]||26)/12)}/mo</div>
+                </div>
+              )}
+              {(latestExt.flags || []).map((fl, fi) => (
+                <div key={fi} style={{ fontSize: 11, color: '#92400e', marginTop: 3 }}>⚠️ {fl}</div>
+              ))}
             </div>
           )}
         </div>
         <ManualFieldsEditor source={source} onUpdateField={onUpdateField} />
         <div style={{ padding: '8px 14px', background: 'var(--color-background-secondary)', fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', borderTop: '0.5px solid var(--color-border-tertiary)' }}>
-          Base {fmt$(parseFloat(f.base_monthly) || 0)} + OT {fmt$(parseFloat(f.overtime_monthly) || 0)} + Bonus {fmt$(parseFloat(f.bonus_monthly) || 0)} = <strong style={{ color: 'var(--color-text-primary)' }}>{fmt$(calc)}/mo</strong>
+          {docs.length > 0 && docs[0].extracted?.hourly_rate > 0
+            ? `$${docs[0].extracted.hourly_rate}/hr × ${docs[0].extracted.hours_regular}hrs × ${({weekly:52,biweekly:26,semimonthly:24,monthly:12}[docs[0].extracted.pay_frequency]||26)} periods ÷ 12 = `
+            : docs.length > 0 && docs[0].extracted?.current_base > 0
+            ? `$${fmt$(docs[0].extracted.current_base)}/period × ${({weekly:52,biweekly:26,semimonthly:24,monthly:12}[docs[0].extracted.pay_frequency]||26)} ÷ 12 = `
+            : 'Base '}
+          <strong style={{ color: '#3730a3' }}>{fmt$(parseFloat(f.base_monthly) || 0)}/mo base</strong>
+          {parseFloat(f.overtime_monthly) > 0 && <span> + OT {fmt$(parseFloat(f.overtime_monthly))}</span>}
+          {parseFloat(f.bonus_monthly) > 0 && <span> + Bonus {fmt$(parseFloat(f.bonus_monthly))}</span>}
+          {' = '}<strong style={{ color: 'var(--color-text-primary)' }}>{fmt$(calc)}/mo</strong>
         </div>
       </div>
     );
@@ -776,6 +878,8 @@ export default function IncomeAnalyzer() {
 
   const makeGroup = useCallback((role, name) => ({
     id: uid(), role, name,
+    currentEmployerName: '',
+    currentHireDate: '',
     taxReturns: {
       prior: { extracted: null, extracting: false, fileName: null, error: null },
       current: { extracted: null, extracting: false, fileName: null, error: null },
@@ -864,13 +968,14 @@ export default function IncomeAnalyzer() {
     }));
   };
 
-  const handleW2Upload = async (groupId, file) => {
+  const handleW2Upload = async (groupId, file, subType) => {
     const tempId = uid();
     setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
       ...g, w2Docs: [...g.w2Docs, { id: tempId, name: file.name, loading: true, extracted: null }]
     }));
     try {
-      const extracted = await extractPDF(file, W2_PROMPT);
+      const prompt = subType === 'w2' ? W2_ONLY_PROMPT : W2_PROMPT;
+      const extracted = await extractPDF(file, prompt);
       setBorrowerGroups(prev => prev.map(g => {
         if (g.id !== groupId) return g;
         const w2Docs = g.w2Docs.map(d => d.id !== tempId ? d : { ...d, loading: false, extracted });
@@ -884,9 +989,37 @@ export default function IncomeAnalyzer() {
         if (extracted && !extracted.parse_error) {
           const i2 = sources.findIndex(s => s.method === 'W2');
           const f = { ...sources[i2].fields };
-          if (extracted.base_annual && !parseFloat(f.base_monthly)) f.base_monthly = String((extracted.base_annual / 12).toFixed(2));
-          else if (extracted.box1_wages && !parseFloat(f.base_monthly)) f.base_monthly = String((extracted.box1_wages / 12).toFixed(2));
-          sources[i2] = { ...sources[i2], fields: f, calculated: Math.max(0, CALCS.W2(f)) };
+          const periods = {weekly:52,biweekly:26,semimonthly:24,monthly:12}[extracted.pay_frequency]||26;
+          // ── v48 proven logic: earnings.base = Regular Pay current period ──
+          // This is what worked. earnings is a nested object — Haiku extracts it reliably.
+          if (extracted.doc_type === 'pay_stub') {
+            // base_monthly = earnings.base (Regular Pay current period) x pay periods / 12
+            if (extracted.earnings?.base && !parseFloat(f.base_monthly))
+              f.base_monthly = String(((extracted.earnings.base * periods) / 12).toFixed(2));
+            // OT and bonus: NOT auto-populated from pay stubs
+            // FHA 4000.1 / Fannie B3-3.1: variable income requires 2-year W-2 history
+            // Upload W-2s in the W-2 slot above to qualify OT/bonus
+          }
+          // W-2 upload: Box 1 wages for base verification + OT/bonus if eligible
+          if (extracted.doc_type === 'w2' && extracted.box1_wages) {
+            if (!parseFloat(f.base_monthly))
+              f.base_monthly = String((extracted.box1_wages / 12).toFixed(2));
+            // OT/bonus from W-2: only if 24+ months at current employer AND W-2 is from current employer
+            const hireDate = g.currentHireDate;
+            const empName = (g.currentEmployerName || '').toLowerCase();
+            const w2emp = (extracted.employer_name || '').toLowerCase();
+            const empMatch = !empName || !w2emp || w2emp.includes(empName.split(' ')[0]) || empName.includes(w2emp.split(' ')[0]);
+            const monthsAtEmp = hireDate ? Math.floor((new Date() - new Date(hireDate)) / (1000*60*60*24*30.44)) : 0;
+            if (empMatch && monthsAtEmp >= 24) {
+              const expectedBase = (parseFloat(f.base_monthly) || 0) * 12;
+              const excess = extracted.box1_wages - expectedBase;
+              if (excess > 500 && !parseFloat(f.bonus_monthly))
+                f.bonus_monthly = String((excess / 12).toFixed(2));
+            }
+          }
+          const calcResult = Math.max(0, CALCS.W2(f));
+          console.log('[W2 v48] earnings.base:', extracted.earnings?.base, 'periods:', periods, '→ base_monthly:', f.base_monthly, 'calc:', calcResult);
+          sources[i2] = { ...sources[i2], fields: f, calculated: calcResult };
         }
         return { ...g, w2Docs, sources };
       }));
@@ -901,6 +1034,10 @@ export default function IncomeAnalyzer() {
     setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : {
       ...g, w2Docs: g.w2Docs.filter((_, i) => i !== docIndex)
     }));
+  };
+
+  const handleUpdateGroupField = (groupId, field, value) => {
+    setBorrowerGroups(prev => prev.map(g => g.id !== groupId ? g : { ...g, [field]: value }));
   };
 
   const handleAddOtherIncome = (groupId, method) => {
@@ -1149,7 +1286,7 @@ export default function IncomeAnalyzer() {
                     </div>
                   </div>
                   <TaxReturnUploader taxReturns={group.taxReturns} onUpload={(slot, file) => handleTaxReturnUpload(group.id, slot, file)} onRemove={slot => handleTaxReturnRemove(group.id, slot)} />
-                  <W2Uploader w2Docs={group.w2Docs} onUpload={file => handleW2Upload(group.id, file)} onRemove={i => handleW2Remove(group.id, i)} />
+                  <W2Uploader w2Docs={group.w2Docs} onUpload={(file, subType) => handleW2Upload(group.id, file, subType)} onRemove={i => handleW2Remove(group.id, i)} currentEmployerName={group.currentEmployerName||''} currentHireDate={group.currentHireDate||''} onUpdateField={(field,val) => handleUpdateGroupField(group.id, field, val)} />
                   <OtherIncomeSelector onAdd={method => handleAddOtherIncome(group.id, method)} />
                   {group.sources.map(src => (
                     <SourceCard key={src.id} source={src} onRemove={() => handleRemoveSource(group.id, src.id)} onUpdateField={(sid, key, val) => handleUpdateField(group.id, sid, key, val)} onUploadOtherDoc={(sid, file) => handleUploadOtherDoc(group.id, sid, file)} />
