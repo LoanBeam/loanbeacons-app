@@ -47,7 +47,17 @@ const CALCS = {
   },
   W2: f => (parseFloat(f.base_monthly) || 0) + (parseFloat(f.overtime_monthly) || 0) + (parseFloat(f.bonus_monthly) || 0) + (parseFloat(f.commission_monthly) || 0),
   SOCIAL_SECURITY: f => (parseFloat(f.monthly_benefit) || 0) * (f.gross_up === 'yes' ? 1.25 : 1),
-  PENSION: f => (parseFloat(f.monthly_amount) || 0) * (f.taxable === 'no' ? 1.25 : 1),
+  PENSION: f => {
+    const total = parseFloat(f.monthly_amount) || 0;
+    const nontaxable = parseFloat(f.nontaxable_portion) || 0;
+    const taxable = parseFloat(f.taxable_portion) || 0;
+    // IRS Simplified Method: partial non-taxable — only gross up that portion
+    if (nontaxable > 0 && taxable > 0) return taxable + (nontaxable * 1.25);
+    // Fully non-taxable
+    if (nontaxable > 0 && taxable === 0) return nontaxable * 1.25;
+    // Fallback: use is_taxable flag on total
+    return total * (f.taxable === 'no' ? 1.25 : 1);
+  },
   MILITARY: f => (parseFloat(f.base_pay) || 0) + ((parseFloat(f.bah) || 0) * 1.25) + ((parseFloat(f.bas) || 0) * 1.25) + (parseFloat(f.other) || 0),
   CHILD_SUPPORT: f => (parseFloat(f.months_remaining) || 0) >= 36 ? (parseFloat(f.monthly_amount) || 0) : 0,
   CAPITAL_GAINS: f => ((parseFloat(f.yr1_gains) || 0) + (parseFloat(f.yr2_gains) || 0)) / 2 / 12,
@@ -99,9 +109,9 @@ Schema: {"doc_type":"w2","tax_year":0,"employer_name":"","employee_name":"","emp
 
 const OTHER_PROMPTS = {
   SOCIAL_SECURITY: '{"doc_type":"ssa","monthly_benefit":0,"annual_benefit":0,"non_taxable":true,"recipient_name":"","effective_date":"","flags":[]}',
-  PENSION: '{"doc_type":"pension","monthly_amount":0,"annual_amount":0,"non_taxable":false,"pension_name":"","flags":[]}',
-  MILITARY: '{"doc_type":"les","base_pay":0,"bah":0,"bas":0,"special_pay":0,"ets_date":"","branch":"","rank":"","flags":[]}',
-  CHILD_SUPPORT: '{"doc_type":"court_order","monthly_amount":0,"months_remaining":0,"payor_name":"","flags":[]}',
+  PENSION: '{"doc_type":"pension","monthly_amount":0,"annual_amount":0,"taxable_portion":0,"nontaxable_portion":0,"non_taxable":false,"pension_name":"","source":"","flags":[]} CRITICAL: Check for IRS Simplified Method — pension may be PARTIALLY non-taxable. If so, extract taxable_portion and nontaxable_portion separately. non_taxable=true only if FULLY non-taxable. Flag partial non-taxable status. Flag if pension is from government/military (often non-taxable). CORRECT CALC: qualifying = taxable_portion + (nontaxable_portion × 1.25). Never gross-up the taxable portion.',
+  MILITARY: '{"doc_type":"les","base_pay":0,"bah":0,"bas":0,"special_pay":0,"ets_date":"","branch":"","rank":"","service_member_name":"","flags":[]} CRITICAL: base_pay = monthly base pay (taxable). bah = Basic Allowance for Housing monthly (non-taxable, gross-up 25%). bas = Basic Allowance for Subsistence monthly (non-taxable, gross-up 25%). ets_date = Expiration Term of Service date. If ETS within 12 months: flag "CONTINUANCE RISK: ETS in X months — verify re-enlistment or continued service documentation required". Flag if ETS within 3 years (may not meet continuance requirement).',
+  CHILD_SUPPORT: '{"doc_type":"court_order","monthly_amount":0,"months_remaining":0,"payor_name":"","recipient_name":"","termination_date":"","missed_payments":false,"flags":[]} CRITICAL: monthly_amount = the court-ordered monthly payment amount (NEVER leave as 0 if a dollar amount appears). months_remaining = count from today to termination date. Flag any missed payments in payment history. Flag if months_remaining < 36 (minimum for qualifying).',
 };
 
 // ─── Extract PDF via Haiku ────────────────────────────────────────────────────
@@ -539,14 +549,22 @@ function SourceCard({ source, onRemove, onUpdateField, onUploadOtherDoc }) {
                 <MetricTile label="BAS (grossed up)" value={fmt$((ext.bas || 0) * 1.25)} color="#3730a3" />
               </>}
               {source.method === 'PENSION' && <>
-                <MetricTile label="Monthly amount" value={fmt$(ext.monthly_amount || 0)} />
-                <MetricTile label="Non-taxable" value={ext.non_taxable ? 'Yes' : 'No'} color={ext.non_taxable ? '#16a34a' : 'var(--color-text-secondary)'} />
-                {ext.non_taxable && <MetricTile label="Grossed up 1.25×" value={fmt$((ext.monthly_amount || 0) * 1.25)} color="#3730a3" highlight />}
+                <MetricTile label="Gross monthly" value={fmt$(ext.monthly_amount || 0)} />
+                {ext.nontaxable_portion > 0 && ext.taxable_portion > 0
+                  ? <MetricTile label="Non-taxable portion" value={fmt$(ext.nontaxable_portion)} color="#16a34a" />
+                  : <MetricTile label="Non-taxable" value={ext.non_taxable ? 'Yes' : 'No'} color={ext.non_taxable ? '#16a34a' : 'var(--color-text-secondary)'} />
+                }
+                {ext.nontaxable_portion > 0 && ext.taxable_portion > 0
+                  ? <MetricTile label="Qualifying (IRS Simplified)" value={fmt$(ext.taxable_portion + ext.nontaxable_portion * 1.25)} color="#3730a3" highlight />
+                  : ext.non_taxable
+                  ? <MetricTile label="Grossed up 1.25×" value={fmt$((ext.monthly_amount || 0) * 1.25)} color="#3730a3" highlight />
+                  : <MetricTile label="Qualifying" value={fmt$(ext.monthly_amount || 0)} />
+                }
               </>}
               {source.method === 'CHILD_SUPPORT' && <>
-                <MetricTile label="Monthly amount" value={fmt$(ext.monthly_amount || 0)} />
-                <MetricTile label="Months remaining" value={ext.months_remaining + ' mo'} color={ext.months_remaining >= 36 ? '#16a34a' : '#dc2626'} />
-                <MetricTile label="Qualifying" value={ext.months_remaining >= 36 ? fmt$(ext.monthly_amount || 0) : '$0.00'} color={ext.months_remaining >= 36 ? '#3730a3' : '#dc2626'} highlight />
+                <MetricTile label="Court-ordered monthly" value={fmt$(ext.monthly_amount || parseFloat(source.fields.monthly_amount) || 0)} />
+                <MetricTile label="Months remaining" value={(ext.months_remaining || parseFloat(source.fields.months_remaining) || 0) + ' mo'} color={(ext.months_remaining || parseFloat(source.fields.months_remaining) || 0) >= 36 ? '#16a34a' : '#dc2626'} />
+                <MetricTile label="Qualifying" value={(ext.months_remaining || parseFloat(source.fields.months_remaining) || 0) >= 36 ? fmt$(ext.monthly_amount || 0) : '$0.00 — excluded'} color={(ext.months_remaining || parseFloat(source.fields.months_remaining) || 0) >= 36 ? '#3730a3' : '#dc2626'} highlight />
               </>}
             </div>
           )}
@@ -665,7 +683,7 @@ const FIELD_DEFS = {
   RENTAL: [['yr1_net', 'Year 1 Sch E net ($)'], ['yr1_depr', 'Year 1 depreciation ($)'], ['yr2_net', 'Year 2 Sch E net ($)'], ['yr2_depr', 'Year 2 depreciation ($)'], ['gross_rents', 'Gross monthly rents ($)'], ['vacancy_pct', 'Vacancy factor (%)']],
   W2: [['base_monthly', 'Base monthly ($)'], ['overtime_monthly', 'OT monthly (2yr avg, $)'], ['bonus_monthly', 'Bonus monthly (2yr avg, $)'], ['commission_monthly', 'Commission monthly ($)']],
   SOCIAL_SECURITY: [['monthly_benefit', 'Monthly benefit ($)'], ['gross_up', 'Non-taxable (gross-up)?']],
-  PENSION: [['monthly_amount', 'Monthly amount ($)'], ['taxable', 'Is taxable?']],
+  PENSION: [['monthly_amount', 'Monthly amount ($)'], ['taxable', 'Is taxable?'], ['taxable_portion', 'Taxable portion ($/mo)'], ['nontaxable_portion', 'Non-taxable portion ($/mo)']],
   MILITARY: [['base_pay', 'Base pay ($/mo)'], ['bah', 'BAH ($/mo)'], ['bas', 'BAS ($/mo)'], ['other', 'Other allotments ($/mo)']],
   CHILD_SUPPORT: [['monthly_amount', 'Monthly amount ($)'], ['months_remaining', 'Months remaining']],
   CAPITAL_GAINS: [['yr1_gains', 'Year 1 gains ($)'], ['yr2_gains', 'Year 2 gains ($)']],
@@ -1001,14 +1019,18 @@ export default function IncomeAnalyzer() {
             // Upload W-2s in the W-2 slot above to qualify OT/bonus
           }
           // W-2 upload: Box 1 wages for base verification + OT/bonus if eligible
-          if (extracted.doc_type === 'w2' && extracted.box1_wages) {
-            if (!parseFloat(f.base_monthly))
-              f.base_monthly = String((extracted.box1_wages / 12).toFixed(2));
+          if (extracted.doc_type === 'w2' && (extracted.box1_wages || extracted.total_box1_wages)) {
+            const wages = extracted.total_box1_wages || extracted.box1_wages;
+            // NOTE: W-2 does NOT set base_monthly.
+            // Base pay comes from pay stubs only (earnings.base × periods).
+            // W-2s establish OT/bonus 2-year history only.
             // OT/bonus from W-2: only if 24+ months at current employer AND W-2 is from current employer
             const hireDate = g.currentHireDate;
             const empName = (g.currentEmployerName || '').toLowerCase();
             const w2emp = (extracted.employer_name || '').toLowerCase();
-            const empMatch = !empName || !w2emp || w2emp.includes(empName.split(' ')[0]) || empName.includes(w2emp.split(' ')[0]);
+            // For multi-employer W-2s, check if ANY employer matches
+            const allEmps = extracted.all_employers ? extracted.all_employers.map(e=>(e.employer_name||'').toLowerCase()) : [w2emp];
+            const empMatch = !empName || !w2emp || allEmps.some(e => e.includes(empName.split(' ')[0]) || empName.split(' ')[0] && e && empName.includes(e.split(' ')[0]));
             const monthsAtEmp = hireDate ? Math.floor((new Date() - new Date(hireDate)) / (1000*60*60*24*30.44)) : 0;
             if (empMatch && monthsAtEmp >= 24) {
               const expectedBase = (parseFloat(f.base_monthly) || 0) * 12;
@@ -1076,9 +1098,14 @@ export default function IncomeAnalyzer() {
           if (extracted.non_taxable) f.gross_up = 'yes';
           if (extracted.monthly_amount && !parseFloat(f.monthly_amount)) f.monthly_amount = String(extracted.monthly_amount);
           if (extracted.months_remaining && !parseFloat(f.months_remaining)) f.months_remaining = String(extracted.months_remaining);
+          // Pension IRS Simplified Method partial non-taxable
+          if (extracted.taxable_portion > 0 && !parseFloat(f.taxable_portion)) f.taxable_portion = String(extracted.taxable_portion);
+          if (extracted.nontaxable_portion > 0 && !parseFloat(f.nontaxable_portion)) f.nontaxable_portion = String(extracted.nontaxable_portion);
           if (extracted.base_pay && !parseFloat(f.base_pay)) f.base_pay = String(extracted.base_pay);
           if (extracted.bah && !parseFloat(f.bah)) f.bah = String(extracted.bah);
           if (extracted.bas && !parseFloat(f.bas)) f.bas = String(extracted.bas);
+          if (extracted.special_pay && !parseFloat(f.other)) f.other = String(extracted.special_pay);
+          if (extracted.special_pay && !parseFloat(f.other)) f.other = String(extracted.special_pay);
           return { ...s, yr1Data: extracted, fields: f, calculated: Math.max(0, CALCS[s.method] ? CALCS[s.method](f) : 0) };
         })
       }));
