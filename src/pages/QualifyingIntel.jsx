@@ -813,8 +813,7 @@ export default function QualifyingIntel() {
       '',
       'FORMAT: Professional business letter, plain text, no markdown. Include: date, salutation (Dear Home Seller/Real Estate Professional), body paragraphs, numbered conditions list, signature block, compliance footer. 400-600 words. Use actual data provided - no placeholder brackets.',
     ];
-    const systemPrompt = sysLines.join('
-');
+    const systemPrompt = sysLines.join('\n');
 
     // Build user message using array join
     const coBorrower = scenario?.coBorrowers?.length
@@ -839,8 +838,7 @@ export default function QualifyingIntel() {
       'Company NMLS#: ' + (letterCompanyNmls || 'Company NMLS# on file'),
       letterPhone ? 'Phone: ' + letterPhone : '',
       letterEmail ? 'Email: ' + letterEmail : '',
-    ].filter(l => l !== '').join('
-');
+    ].filter(l => l !== '').join('\n');
     const userMsg = msgLines;
 
     try {
