@@ -1069,6 +1069,26 @@ export default function QualifyingIntel() {
               <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
                 <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-4">🏠 Housing & Debts</h2>
                 <div className="grid grid-cols-3 md:grid-cols-4 gap-3 mb-3">
+                  {/* Loan Amount Warning — when current loan exceeds max for eligible programs */}
+                  {parseFloat(loanAmount) > 0 && (() => {
+                    const eligibleMaxLoans = maxPurchasePrices.filter(p => programResults.find(r=>r.key===p.key)?.eligible && p.maxLoan > 0);
+                    const lowestEligibleMax = eligibleMaxLoans.length > 0 ? Math.min(...eligibleMaxLoans.map(p=>p.maxLoan)) : 0;
+                    return lowestEligibleMax > 0 && parseFloat(loanAmount) > lowestEligibleMax ? (
+                      <div className="col-span-3 md:col-span-4 bg-amber-50 border border-amber-300 rounded-xl px-3 py-2 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <span className="text-amber-500 text-base">⚠</span>
+                          <div>
+                            <p className="text-xs font-bold text-amber-800">Loan amount exceeds qualifying max</p>
+                            <p className="text-xs text-amber-700">Max qualifying loan: <span className="font-mono font-bold">{fmt$0(lowestEligibleMax)}</span> — click "← Use This" on a program card below</p>
+                          </div>
+                        </div>
+                        <button onClick={() => setLoanAmount(String(lowestEligibleMax))}
+                          className="shrink-0 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors whitespace-nowrap">
+                          Fix It →
+                        </button>
+                      </div>
+                    ) : null;
+                  })()}
                   {[
                     { label: 'Loan Amount', val: loanAmount, set: setLoanAmount, ph: '400000' },
                     { label: 'Taxes /mo',   val: taxes,      set: setTaxes,      ph: '417'    },
@@ -1228,9 +1248,37 @@ export default function QualifyingIntel() {
                           {mp?.maxPurchase > 0 ? (
                             <div className="space-y-2">
                               <div className="bg-indigo-50 rounded-xl px-4 py-3">
-                                <p className="text-xs text-indigo-500 mb-0.5">Max Purchase Price</p>
-                                <p className="text-2xl font-black text-indigo-700 font-mono">{fmt$0(mp.maxPurchase)}</p>
-                                <p className="text-xs text-slate-400 mt-0.5">Max loan: <span className="font-mono">{fmt$0(mp.maxLoan)}</span></p>
+                                <div className="flex items-start justify-between">
+                                  <div>
+                                    <p className="text-xs text-indigo-500 mb-0.5">Max Purchase Price</p>
+                                    <p className="text-2xl font-black text-indigo-700 font-mono">{fmt$0(mp.maxPurchase)}</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-between mt-2">
+                                  <div>
+                                    <p className="text-xs text-slate-500">Max loan amount:</p>
+                                    <p className="text-base font-black text-slate-800 font-mono">{fmt$0(mp.maxLoan)}</p>
+                                  </div>
+                                  <button
+                                    onClick={() => setLoanAmount(String(mp.maxLoan))}
+                                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border-2 transition-all ${
+                                      parseFloat(loanAmount) === mp.maxLoan
+                                        ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                                        : 'bg-white text-indigo-700 border-indigo-400 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'
+                                    }`}
+                                    title="Click to use this as your loan amount"
+                                  >
+                                    {parseFloat(loanAmount) === mp.maxLoan ? '✓ Using' : '← Use This'}
+                                  </button>
+                                </div>
+                                {parseFloat(loanAmount) > mp.maxLoan && mp.maxLoan > 0 && (
+                                  <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 flex items-center gap-1.5">
+                                    <span className="text-amber-500 text-xs">⚠</span>
+                                    <p className="text-xs text-amber-700 font-semibold">
+                                      Current loan <span className="font-mono">{fmt$0(parseFloat(loanAmount))}</span> exceeds max by <span className="font-mono">{fmt$0(parseFloat(loanAmount)-mp.maxLoan)}</span>
+                                    </p>
+                                  </div>
+                                )}
                               </div>
                               <div className="grid grid-cols-3 gap-2">
                                 <div className="bg-slate-50 rounded-xl p-2 text-center">
@@ -1309,7 +1357,20 @@ export default function QualifyingIntel() {
                     <div className="text-2xl font-black font-mono">{fmt$0(best.maxPurchase)}</div>
                     <p className="text-xs text-indigo-300 mt-0.5">{best.label} · {downPct}% down</p>
                     <div className="mt-3 pt-3 border-t border-indigo-500 text-xs space-y-1">
-                      <div className="flex justify-between"><span className="text-indigo-300">Max Loan</span><span className="font-mono font-bold">{fmt$0(best.maxLoan)}</span></div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-indigo-300">Max Loan</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold">{fmt$0(best.maxLoan)}</span>
+                          <button onClick={() => setLoanAmount(String(best.maxLoan))}
+                            className={`px-2 py-0.5 rounded-lg text-xs font-bold border transition-all ${
+                              parseFloat(loanAmount) === best.maxLoan
+                                ? 'bg-emerald-400/30 text-emerald-200 border-emerald-400/40'
+                                : 'bg-white/20 text-white border-white/30 hover:bg-white/30'
+                            }`}>
+                            {parseFloat(loanAmount) === best.maxLoan ? '✓' : '← Use'}
+                          </button>
+                        </div>
+                      </div>
                       <div className="flex justify-between"><span className="text-indigo-300">Down Payment</span><span className="font-mono font-bold">{fmt$0(best.maxPurchase*downPct/100)}</span></div>
                     </div>
                   </div>
