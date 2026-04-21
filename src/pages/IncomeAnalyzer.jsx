@@ -1,6 +1,6 @@
 // src/pages/IncomeAnalyzer.jsx
 // LoanBeacons™ — Module 2 | Stage 1: Pre-Structure
-// Income Analyzer™ v4.0 — Smart upload workflow
+// Income Analyzer™ v4.2.3 — Firestore reconstruct on load + debounced autosave
 // Upload 1040 once → AI auto-detects all income types
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -1043,6 +1043,43 @@ export default function IncomeAnalyzer() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges]);
 
+  // ─── Debounced Firestore autosave (3s after last change) ─────────────────
+  // Writes income snapshot to scenario doc so it survives across devices/browsers
+  useEffect(() => {
+    if (!scenarioId || !initialLoadDone.current || !hasUnsavedChanges) return;
+    const totalQual = borrowerGroups.reduce(
+      (s, g) => s + g.sources.reduce((s2, src) => s2 + Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0), 0), 0
+    );
+    if (totalQual === 0) return; // don't autosave empty state
+    const timer = setTimeout(async () => {
+      try {
+        const snapshot = {
+          totalQualifyingMonthly: totalQual,
+          totalQualifyingAnnual: totalQual * 12,
+          borrowers: borrowerGroups.map(g => ({
+            name: g.name, role: g.role,
+            monthlyIncome: g.sources.reduce((s, src) => s + Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0), 0),
+            sources: g.sources.map(s => ({
+              method: s.method,
+              label: METHOD_META[s.method]?.label || s.method,
+              monthly: Math.max(0, CALCS[s.method] ? CALCS[s.method](s.fields) : 0),
+              fields: s.fields,
+            })),
+          })),
+          loNotes: notes,
+          savedAt: new Date().toISOString(),
+          moduleVersion: '4.2',
+        };
+        await updateDoc(doc(db, 'scenarios', scenarioId), {
+          income: snapshot,
+          incomeUpdatedAt: serverTimestamp(),
+        });
+        console.log('[M02] Autosaved income to Firestore');
+      } catch (e) { console.warn('[M02] Autosave failed:', e.message); }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [borrowerGroups, notes, scenarioId, hasUnsavedChanges]);
+
   useEffect(() => {
     if (!scenarioId) {
       getDocs(collection(db, 'scenarios')).then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(console.error).finally(() => setLoading(false));
@@ -1066,14 +1103,39 @@ export default function IncomeAnalyzer() {
       const d = { id: snap.id, ...snap.data() };
       setScenario(d);
       const saved = lsKey ? localStorage.getItem(lsKey) : null;
-      if (!saved || !JSON.parse(saved).borrowerGroups?.length) {
-        const name = [d.firstName, d.lastName].filter(Boolean).join(' ') || d.scenarioName || 'Primary Borrower';
-        const groups = [makeGroup('primary', name)];
-        if (d.coBorrowerFirstName || d.coFirstName) {
-          const cbName = [d.coBorrowerFirstName || d.coFirstName, d.coBorrowerLastName || d.coLastName].filter(Boolean).join(' ') || 'Co-Borrower';
-          groups.push(makeGroup('co-borrower', cbName));
+      const hasLocalData = saved && JSON.parse(saved).borrowerGroups?.length > 0;
+
+      if (!hasLocalData) {
+        // ── Priority 1: Reconstruct from scenario.income (Firestore) ──────────
+        // This is the source of truth — works across devices, browsers, localhost vs prod
+        if (d.income?.borrowers?.length > 0) {
+          const reconstructed = d.income.borrowers.map(b => ({
+            ...makeGroup(b.role || 'primary', b.name || 'Primary Borrower'),
+            sources: (b.sources || []).map(s => ({
+              id: uid(),
+              method: s.method,
+              fields: s.fields || {},
+              calculated: s.monthly || 0,
+              yr1Data: null,
+              yr2Data: null,
+              manualDocs: [],
+            })),
+          }));
+          setBorrowerGroups(reconstructed);
+          // Also restore notes/savedRecordId from income snapshot
+          if (d.income.loNotes) setNotes(d.income.loNotes);
+          if (d.income.savedAt) setSavedRecordId('restored'); // prevents re-prompt
+          console.log('[M02] Restored income from Firestore scenario.income');
+        } else {
+          // ── Priority 2: Fresh empty groups from scenario fields ────────────
+          const name = [d.firstName, d.lastName].filter(Boolean).join(' ') || d.scenarioName || 'Primary Borrower';
+          const groups = [makeGroup('primary', name)];
+          if (d.coBorrowerFirstName || d.coFirstName) {
+            const cbName = [d.coBorrowerFirstName || d.coFirstName, d.coBorrowerLastName || d.coLastName].filter(Boolean).join(' ') || 'Co-Borrower';
+            groups.push(makeGroup('co-borrower', cbName));
+          }
+          setBorrowerGroups(groups);
         }
-        setBorrowerGroups(groups);
       }
       // Mark load complete — dirty tracking starts AFTER this
       setTimeout(() => { initialLoadDone.current = true; }, 100);
@@ -1462,12 +1524,16 @@ export default function IncomeAnalyzer() {
                   onClick={handleSaveToRecord}
                   disabled={recordSaving}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors"
+                  title="Save income to Decision Record — also persists across devices"
                 >
                   {recordSaving ? '⏳ Saving…' : '💾 Save'}
                 </button>
               )}
-              {!hasUnsavedChanges && savedRecordId && (
+              {!hasUnsavedChanges && savedRecordId && savedRecordId !== 'restored' && (
                 <span className="text-xs text-emerald-600 font-semibold">✅ Saved</span>
+              )}
+              {savedRecordId === 'restored' && hasUnsavedChanges === false && (
+                <span className="text-xs text-blue-500 font-semibold">🔄 Restored</span>
               )}
               <span className="text-xs text-slate-400">Total:</span>
               <span className="text-base font-black text-indigo-600">{fmt$(totalQualifying)}/mo</span>
