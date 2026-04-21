@@ -1351,6 +1351,58 @@ export default function QualifyingIntel() {
                   <p>• SE: 2-year tax return average</p>
                 </div>
               </div>
+
+              {/* Save to Decision Record */}
+              <div className={`rounded-2xl border p-4 transition-all ${savedRecordId && !hasUnsavedChanges ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200 shadow-sm'}`}>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${savedRecordId && !hasUnsavedChanges ? 'bg-emerald-100' : 'bg-slate-100'}`}>
+                    {savedRecordId && !hasUnsavedChanges
+                      ? <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M2.5 7.5l3 3 6-6" stroke="#16a34a" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      : <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="#475569" strokeWidth="1.4"/><path d="M5 8h6M5 5.5h6M5 10.5h3.5" stroke="#475569" strokeWidth="1.2" strokeLinecap="round"/></svg>
+                    }
+                  </div>
+                  <div>
+                    <p className={`text-xs font-bold ${savedRecordId && !hasUnsavedChanges ? 'text-emerald-800' : 'text-slate-700'}`}>
+                      {savedRecordId && !hasUnsavedChanges ? 'Decision Record Saved ✓' : 'Decision Record'}
+                    </p>
+                    <p className={`text-xs ${savedRecordId && !hasUnsavedChanges ? 'text-emerald-600' : 'text-slate-400'}`}>
+                      {savedRecordId && !hasUnsavedChanges ? 'Findings logged to audit trail' : 'Save findings to audit trail'}
+                    </p>
+                  </div>
+                </div>
+                {(hasUnsavedChanges || !savedRecordId) && (
+                  <button onClick={handleSaveToRecord} disabled={recordSaving}
+                    className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-2">
+                    {recordSaving ? '⏳ Saving…' : <><svg width="11" height="11" viewBox="0 0 14 14" fill="none"><rect x="2" y="2" width="10" height="10" rx="1.5" stroke="#fff" strokeWidth="1.3"/><path d="M4.5 7l2 2 3.5-3.5" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg> Save to Decision Record</>}
+                  </button>
+                )}
+              </div>
+
+              {/* Next Step Intelligence — appears after save */}
+              {findingsReported && primarySuggestion?.path && (
+                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-4 text-white">
+                  <p className="text-xs font-bold text-blue-200 uppercase tracking-wide mb-2">⚡ Next Suggested Step</p>
+                  <p className="text-sm font-bold text-white mb-1">{primarySuggestion.moduleLabel || primarySuggestion.moduleName}</p>
+                  {primarySuggestion.reason && <p className="text-xs text-blue-200 mb-3 leading-relaxed">{primarySuggestion.reason}</p>}
+                  <button
+                    onClick={() => { logFollow(); navigate(`${primarySuggestion.path}?scenarioId=${scenarioId}`); }}
+                    className="w-full py-2 bg-white/20 hover:bg-white/30 border border-white/30 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2">
+                    Go to {primarySuggestion.moduleLabel || 'Next Module'} →
+                  </button>
+                  {secondarySuggestions?.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-blue-500 space-y-1.5">
+                      <p className="text-xs text-blue-300 font-semibold">Also consider:</p>
+                      {secondarySuggestions.slice(0, 2).map((s, i) => (
+                        <button key={i} onClick={() => { logOverride(); navigate(`${s.path}?scenarioId=${scenarioId}`); }}
+                          className="w-full text-left text-xs text-blue-200 hover:text-white flex items-center gap-1.5 transition-colors">
+                          <span className="text-blue-400">→</span> {s.moduleLabel || s.moduleName}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
             </div>
 
           </div>
