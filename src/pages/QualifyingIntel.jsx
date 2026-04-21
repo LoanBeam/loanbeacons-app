@@ -786,6 +786,19 @@ export default function QualifyingIntel() {
       onWriteToDecisionRecord: null,
     });
 
+  // ─── Sync loanAmount → letter tab (one-way, no loop risk) ──────────────────
+  // letterLoanAmount/letterPurchasePrice are only READ by generateLetter — never written back
+  useEffect(() => {
+    const la = parseFloat(loanAmount);
+    if (!la || la <= 0) return;
+    setLetterLoanAmount(String(Math.round(la)));
+    // Derive purchase price from current down payment
+    const dp = parseFloat(downPaymentPct) || 5;
+    if (dp > 0 && dp < 100) {
+      setLetterPurchasePrice(String(Math.round(la / (1 - dp / 100))));
+    }
+  }, [loanAmount, downPaymentPct]);
+
   // ─── Load LO Profile ─────────────────────────────────────────────────────────
   useEffect(() => {
     const loadLOProfile = async () => {
