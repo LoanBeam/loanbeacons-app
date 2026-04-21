@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import ModuleNav from '../components/ModuleNav';
@@ -670,11 +670,18 @@ export default function QualifyingIntel() {
       : 'purchase';
 
   const nsiFindings = {
-    dti:          parseFloat(backDTI?.toFixed(2))  || 0,
-    frontEndDTI:  parseFloat(frontDTI?.toFixed(2)) || 0,
-    creditScore:  parseInt(creditScore) || 0,
-    selfEmployed: incomes.some(i => i.type === 'self_employ'),
-    incomeType:   incomes[0]?.type || '',
+    dti:               parseFloat(backDTI?.toFixed(2))  || 0,
+    frontEndDTI:       parseFloat(frontDTI?.toFixed(2)) || 0,
+    creditScore:       parseInt(creditScore) || 0,
+    selfEmployed:      incomes.some(i => i.type === 'self_employ'),
+    incomeType:        incomes[0]?.type || '',
+    totalIncome:       totalIncome,
+    totalHousing:      totalHousing,
+    totalDebts:        totalDebts,
+    eligiblePrograms:  eligiblePrograms.map(r => r.key),
+    programsAnalyzed:  true,
+    dtiCalculated:     totalIncome > 0 && totalHousing > 0,
+    incomeConfirmed:   totalIncome > 0,
   };
 
   const { primarySuggestion, secondarySuggestions, logFollow, logOverride } =
@@ -683,7 +690,7 @@ export default function QualifyingIntel() {
       loanPurpose,
       decisionRecordFindings:  { QUALIFYING_INTEL: nsiFindings },
       scenarioData:            scenario || {},
-      completedModules:        [],
+      completedModules:        findingsReported ? ['INCOME_ANALYZER', 'QUALIFYING_INTEL'] : ['INCOME_ANALYZER'],
       scenarioId,
       onWriteToDecisionRecord: null,
     });
@@ -713,6 +720,25 @@ export default function QualifyingIntel() {
       if (writtenId) setSavedRecordId(writtenId);
       setFindingsReported(true);
       setHasUnsavedChanges(false);
+
+      // Also write qualifying summary to scenario doc for downstream modules
+      if (scenarioId) {
+        try {
+          await updateDoc(doc(db, 'scenarios', scenarioId), {
+            qualifyingIntel: {
+              totalIncome, totalBorrowerIncome, totalCoBorrowerIncome,
+              totalHousing, totalDebts,
+              frontDTI:         parseFloat(frontDTI.toFixed(2)),
+              backDTI:          parseFloat(backDTI.toFixed(2)),
+              eligiblePrograms: eligiblePrograms.map(r => r.key),
+              creditScore:      parseInt(creditScore) || null,
+              loanAmount:       parseFloat(loanAmount) || null,
+              savedAt:          new Date().toISOString(),
+            },
+            qualifyingIntelUpdatedAt: serverTimestamp(),
+          });
+        } catch (e) { console.warn('[M03] Firestore write failed:', e.message); }
+      }
     } catch (e) { console.error('Decision Record save failed:', e); }
     finally { setRecordSaving(false); }
   };
@@ -1390,21 +1416,56 @@ export default function QualifyingIntel() {
                   </div>
                 )}
               </div>
-            </div>
 
-            {/* ── Next Step Intelligence™ — renders after Save to Decision Record ── */}
-            {findingsReported && primarySuggestion && (
-              <div className="xl:col-span-2">
-                <NextStepCard
-                  suggestion={primarySuggestion}
-                  secondarySuggestions={secondarySuggestions}
-                  onFollow={logFollow}
-                  onOverride={logOverride}
-                  loanPurpose={loanPurpose}
-                  scenarioId={scenarioId}
-                />
-              </div>
-            )}
+              {/* ── Next Step Intelligence™ ── */}
+              {findingsReported && (
+                <div>
+                  {primarySuggestion ? (
+                    <NextStepCard
+                      suggestion={primarySuggestion}
+                      secondarySuggestions={secondarySuggestions}
+                      onFollow={logFollow}
+                      onOverride={logOverride}
+                      loanPurpose={loanPurpose}
+                      scenarioId={scenarioId}
+                    />
+                  ) : (
+                    <div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-2xl p-5">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-8 h-8 bg-indigo-100 rounded-xl flex items-center justify-center shrink-0">
+                          <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest">Next Step Intelligence™</p>
+                          <p className="text-sm font-bold text-slate-800">Qualifying complete — continue to Asset Analyzer</p>
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-500 mb-4 ml-11">DTI analysis saved. Next, verify the borrower's asset documentation — reserves, down payment source, and closing cost funds.</p>
+                      <div className="flex items-center gap-3 flex-wrap ml-11">
+                        <button
+                          onClick={() => navigate(`/asset-analyzer?scenarioId=${scenarioId}`)}
+                          className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
+                          Go to Asset Analyzer
+                        </button>
+                        <button
+                          onClick={() => navigate(`/lender-match?scenarioId=${scenarioId}`)}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 border border-indigo-200 px-3 py-2 rounded-xl transition-colors">
+                          → Lender Match
+                        </button>
+                        <button
+                          onClick={() => navigate(`/credit-analyzer?scenarioId=${scenarioId}`)}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 border border-indigo-200 px-3 py-2 rounded-xl transition-colors">
+                          → Credit Analyzer
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Right sidebar */}
             <div className="space-y-4">
