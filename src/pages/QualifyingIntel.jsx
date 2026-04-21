@@ -188,17 +188,17 @@ function getMIRate(programKey, downPctNum, ficoScore) {
     case 'HOMEREADY':
       // HomeReady: reduced MI ~25-35% below standard Conventional
       if (downPctNum >= 20) return 0;
-      if (ltv > 0.95) return (fico>=720?0.0050:fico>=680?0.0063:fico>=660?0.0073)/12;
-      if (ltv > 0.90) return (fico>=720?0.0027:fico>=680?0.0039:fico>=660?0.0052)/12;
-      if (ltv > 0.85) return (fico>=720?0.0018:fico>=680?0.0028:fico>=660?0.0040)/12;
-      return              (fico>=720?0.0011:fico>=680?0.0018:fico>=660?0.0027)/12;
+      if (ltv > 0.95) return (fico>=720?0.0050:fico>=680?0.0063:fico>=660?0.0073:0.0088)/12;
+      if (ltv > 0.90) return (fico>=720?0.0027:fico>=680?0.0039:fico>=660?0.0052:0.0065)/12;
+      if (ltv > 0.85) return (fico>=720?0.0018:fico>=680?0.0028:fico>=660?0.0040:0.0054)/12;
+      return              (fico>=720?0.0011:fico>=680?0.0018:fico>=660?0.0027:0.0038)/12;
     case 'HOMEPOSSIBLE':
       // Home Possible: similar reduced MI to HomeReady
       if (downPctNum >= 20) return 0;
-      if (ltv > 0.95) return (fico>=720?0.0050:fico>=680?0.0063:fico>=660?0.0073)/12;
-      if (ltv > 0.90) return (fico>=720?0.0027:fico>=680?0.0039:fico>=660?0.0052)/12;
-      if (ltv > 0.85) return (fico>=720?0.0018:fico>=680?0.0028:fico>=660?0.0040)/12;
-      return              (fico>=720?0.0011:fico>=680?0.0018:fico>=660?0.0027)/12;
+      if (ltv > 0.95) return (fico>=720?0.0050:fico>=680?0.0063:fico>=660?0.0073:0.0088)/12;
+      if (ltv > 0.90) return (fico>=720?0.0027:fico>=680?0.0039:fico>=660?0.0052:0.0065)/12;
+      if (ltv > 0.85) return (fico>=720?0.0018:fico>=680?0.0028:fico>=660?0.0040:0.0054)/12;
+      return              (fico>=720?0.0011:fico>=680?0.0018:fico>=660?0.0027:0.0038)/12;
     case 'USDA':
       return 0.0035/12; // 0.35%/yr annual guarantee fee
     case 'VA':
@@ -1025,8 +1025,54 @@ export default function QualifyingIntel() {
         </div>
       )}
 
+      {/* ── 5. Next Step Intelligence™ — above tab nav, matching M02 ── */}
+      {findingsReported && (
+        <div className="max-w-7xl mx-auto px-6">
+          {primarySuggestion ? (
+            <NextStepCard
+              suggestion={primarySuggestion}
+              secondarySuggestions={secondarySuggestions}
+              onFollow={logFollow}
+              onOverride={logOverride}
+              loanPurpose={loanPurpose}
+              scenarioId={scenarioId}
+            />
+          ) : (
+            <div className="mt-4 mb-2 bg-indigo-50 border border-indigo-200 rounded-2xl p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-8 h-8 bg-indigo-100 rounded-xl flex items-center justify-center shrink-0">
+                  <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest">Next Step Intelligence™</p>
+                  <p className="text-sm font-bold text-slate-800">Qualifying complete — proceed to Asset Analyzer</p>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 mb-4 ml-11">DTI analysis saved to the Decision Record. Next, verify asset documentation — reserves, down payment source, and closing cost funds.</p>
+              <div className="flex items-center gap-3 flex-wrap ml-11">
+                <button onClick={() => navigate(`/asset-analyzer?scenarioId=${scenarioId}`)}
+                  className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
+                  Go to Asset Analyzer
+                </button>
+                <button onClick={() => navigate(`/lender-match?scenarioId=${scenarioId}`)}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 px-3 py-2 rounded-xl transition-colors hover:text-indigo-800">
+                  → Lender Match
+                </button>
+                <button onClick={() => navigate(`/credit-analyzer?scenarioId=${scenarioId}`)}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 px-3 py-2 rounded-xl transition-colors hover:text-indigo-800">
+                  → Credit Analyzer
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ════════════════════════════════════════════════════════
-          5. THREE-TAB LAYOUT
+          6. THREE-TAB LAYOUT
       ════════════════════════════════════════════════════════ */}
 
       {/* ── Tab Navigation Bar ── */}
@@ -1489,54 +1535,6 @@ export default function QualifyingIntel() {
                 )}
               </div>
 
-              {/* ── Next Step Intelligence™ ── */}
-              {findingsReported && (
-                <div>
-                  {primarySuggestion ? (
-                    <NextStepCard
-                      suggestion={primarySuggestion}
-                      secondarySuggestions={secondarySuggestions}
-                      onFollow={logFollow}
-                      onOverride={logOverride}
-                      loanPurpose={loanPurpose}
-                      scenarioId={scenarioId}
-                    />
-                  ) : (
-                    <div className="mt-2 bg-indigo-50 border border-indigo-200 rounded-2xl p-5">
-                      <div className="flex items-center gap-3 mb-3">
-                        <div className="w-8 h-8 bg-indigo-100 rounded-xl flex items-center justify-center shrink-0">
-                          <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                          </svg>
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest">Next Step Intelligence™</p>
-                          <p className="text-sm font-bold text-slate-800">Qualifying complete — continue to Asset Analyzer</p>
-                        </div>
-                      </div>
-                      <p className="text-xs text-slate-500 mb-4 ml-11">DTI analysis saved. Next, verify the borrower's asset documentation — reserves, down payment source, and closing cost funds.</p>
-                      <div className="flex items-center gap-3 flex-wrap ml-11">
-                        <button
-                          onClick={() => navigate(`/asset-analyzer?scenarioId=${scenarioId}`)}
-                          className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors">
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
-                          Go to Asset Analyzer
-                        </button>
-                        <button
-                          onClick={() => navigate(`/lender-match?scenarioId=${scenarioId}`)}
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 border border-indigo-200 px-3 py-2 rounded-xl transition-colors">
-                          → Lender Match
-                        </button>
-                        <button
-                          onClick={() => navigate(`/credit-analyzer?scenarioId=${scenarioId}`)}
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 border border-indigo-200 px-3 py-2 rounded-xl transition-colors">
-                          → Credit Analyzer
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Right sidebar */}
@@ -1669,21 +1667,6 @@ export default function QualifyingIntel() {
                   </button>
                 )}
               </div>
-
-              {/* Next Step Intelligence — compact sidebar pointer (full card renders in left column) */}
-              {findingsReported && primarySuggestion && (
-                <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-3 flex items-center gap-3">
-                  <div className="w-8 h-8 bg-indigo-100 rounded-xl flex items-center justify-center shrink-0">
-                    <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-indigo-700">Next Step Intelligence™</p>
-                    <p className="text-xs text-indigo-500">↓ See recommendation below</p>
-                  </div>
-                </div>
-              )}
 
             </div>
 
