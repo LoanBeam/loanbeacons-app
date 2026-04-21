@@ -133,34 +133,88 @@ const OTHER_PROMPTS = {
   CHILD_SUPPORT: '{"doc_type":"court_order","monthly_amount":0,"months_remaining":0,"payor_name":"","recipient_name":"","termination_date":"","missed_payments":false,"flags":[]} CRITICAL: monthly_amount = the court-ordered monthly payment amount (NEVER leave as 0 if a dollar amount appears). months_remaining = count from today to termination date. Flag any missed payments in payment history. Flag if months_remaining < 36 (minimum for qualifying).',
 };
 
-// ─── Extract PDF via Haiku ────────────────────────────────────────────────────
-async function extractPDF(file, prompt) {
+// ─── Extract PDF via Haiku — with retry + exponential backoff ────────────────
+// Prevents 429 rate limit errors on rapid sequential uploads
+const _extractQueue = { running: false, queue: [] };
+
+async function _drainQueue() {
+  if (_extractQueue.running) return;
+  _extractQueue.running = true;
+  while (_extractQueue.queue.length > 0) {
+    const { resolve, reject, task } = _extractQueue.queue.shift();
+    try {
+      const result = await task();
+      resolve(result);
+    } catch (err) {
+      reject(err);
+    }
+    // Minimum 1.2s gap between Haiku calls to stay under rate limit
+    if (_extractQueue.queue.length > 0) {
+      await new Promise(r => setTimeout(r, 1200));
+    }
+  }
+  _extractQueue.running = false;
+}
+
+function queueExtract(task) {
+  return new Promise((resolve, reject) => {
+    _extractQueue.queue.push({ resolve, reject, task });
+    _drainQueue();
+  });
+}
+
+async function _doExtract(file, prompt) {
   const base64 = await new Promise((res, rej) => {
     const r = new FileReader();
     r.onload = () => res(r.result.split(',')[1]);
     r.onerror = () => rej(new Error('Read failed'));
     r.readAsDataURL(file);
   });
-  const resp = await fetch(API, {
-    method: 'POST',
-    headers: { ...HDRS(), 'anthropic-beta': 'pdfs-2024-09-25' },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001', max_tokens: 2000,
-      messages: [{ role: 'user', content: [
-        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
-        { type: 'text', text: 'Extract income data from this document. Return ONLY valid JSON, no markdown. ' + prompt },
-      ]}],
-    }),
-  });
-  if (!resp.ok) throw new Error('API ' + resp.status);
-  const data = await resp.json();
-  const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
-  const clean = text.replace(/```json|```/gi, '').trim();
-  try { return JSON.parse(clean); } catch (_) {
-    const s = clean.indexOf('{'), e = clean.lastIndexOf('}');
-    if (s !== -1 && e > s) return JSON.parse(clean.slice(s, e + 1));
-    return { parse_error: true, raw_text: text };
+
+  const MAX_RETRIES = 3;
+  let lastErr;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff: 3s, 8s
+      const wait = attempt === 1 ? 3000 : 8000;
+      console.log(`[extractPDF] 429 retry ${attempt}/${MAX_RETRIES - 1} — waiting ${wait}ms`);
+      await new Promise(r => setTimeout(r, wait));
+    }
+    try {
+      const resp = await fetch(API, {
+        method: 'POST',
+        headers: { ...HDRS(), 'anthropic-beta': 'pdfs-2024-09-25' },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001', max_tokens: 2000,
+          messages: [{ role: 'user', content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+            { type: 'text', text: 'Extract income data from this document. Return ONLY valid JSON, no markdown. ' + prompt },
+          ]}],
+        }),
+      });
+      if (resp.status === 429) {
+        lastErr = new Error('API 429');
+        continue; // retry
+      }
+      if (!resp.ok) throw new Error('API ' + resp.status);
+      const data = await resp.json();
+      const text = data.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      const clean = text.replace(/```json|```/gi, '').trim();
+      try { return JSON.parse(clean); } catch (_) {
+        const s = clean.indexOf('{'), e = clean.lastIndexOf('}');
+        if (s !== -1 && e > s) return JSON.parse(clean.slice(s, e + 1));
+        return { parse_error: true, raw_text: text };
+      }
+    } catch (err) {
+      lastErr = err;
+      if (!err.message.includes('429')) throw err; // non-429 errors fail immediately
+    }
   }
+  throw lastErr || new Error('Max retries exceeded');
+}
+
+async function extractPDF(file, prompt) {
+  return queueExtract(() => _doExtract(file, prompt));
 }
 
 // ─── Build income sources from tax return extraction ─────────────────────────
@@ -307,7 +361,12 @@ function TaxReturnUploader({ taxReturns, onUpload, onRemove }) {
     if (ext.schedule_e_net && Math.abs(ext.schedule_e_net) > 0) detectedTypes.push('🏠 Schedule E');
     if (ext.social_security_monthly > 0) detectedTypes.push('🛡️ SS income');
     if (ext.schedule_d_net > 0) detectedTypes.push('📈 Capital gains');
-    if (ext.w2_wages > 0) detectedTypes.push('💼 W-2 wages');
+    if (ext.w2_wages > 0) {
+      // Same SS-bleed guard as buildSourcesFromTaxReturn — don't badge W-2 if it's really SS
+      const ssGross = ext.social_security_annual || (ext.social_security_monthly * 12) || 0;
+      const isSSBleed = ssGross > 0 && Math.abs(ext.w2_wages - ssGross) < 200;
+      if (!isSSBleed) detectedTypes.push('💼 W-2 wages');
+    }
   });
   const uniqueTypes = [...new Set(detectedTypes)];
   return (
