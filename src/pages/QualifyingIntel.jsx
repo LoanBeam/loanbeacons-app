@@ -8,6 +8,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import ModuleNav from '../components/ModuleNav';
@@ -398,6 +399,8 @@ export default function QualifyingIntel() {
   const [letterGenerating,  setLetterGenerating]  = useState(false);
   const [generatedLetter,   setGeneratedLetter]   = useState('');
   const [letterError,       setLetterError]       = useState('');
+  const [loProfileSaving,   setLoProfileSaving]   = useState(false);
+  const [loProfileSaved,    setLoProfileSaved]    = useState(false);
   const [findingsReported, setFindingsReported] = useState(false);
   const [m02Imported,     setM02Imported]     = useState(false);
   const [activeTab,       setActiveTab]       = useState(0);
@@ -774,6 +777,85 @@ export default function QualifyingIntel() {
       scenarioId,
       onWriteToDecisionRecord: null,
     });
+
+  // ─── Load LO Profile ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const loadLOProfile = async () => {
+      // 1. Try localStorage cache first (instant)
+      const cached = localStorage.getItem('lb_lo_profile');
+      if (cached) {
+        try {
+          const p = JSON.parse(cached);
+          if (p.loName)      setLetterLoName(p.loName);
+          if (p.loNmls)      setLetterLoNmls(p.loNmls);
+          if (p.company)     setLetterCompany(p.company);
+          if (p.companyNmls) setLetterCompanyNmls(p.companyNmls);
+          if (p.phone)       setLetterPhone(p.phone);
+          if (p.email)       setLetterEmail(p.email);
+        } catch (_) {}
+      }
+      // 2. Refresh from Firestore users/{uid} for latest data
+      try {
+        const auth = getAuth();
+        const user = auth.currentUser;
+        if (user) {
+          const snap = await getDoc(doc(db, 'users', user.uid));
+          if (snap.exists()) {
+            const d = snap.data();
+            const profile = d.loProfile || d;
+            if (profile.loName)      setLetterLoName(profile.loName);
+            if (profile.loNmls)      setLetterLoNmls(profile.loNmls);
+            if (profile.company)     setLetterCompany(profile.company);
+            if (profile.companyNmls) setLetterCompanyNmls(profile.companyNmls);
+            if (profile.phone)       setLetterPhone(profile.phone);
+            if (profile.email)       setLetterEmail(profile.email || user.email || '');
+            // Update cache
+            localStorage.setItem('lb_lo_profile', JSON.stringify({
+              loName: profile.loName||'', loNmls: profile.loNmls||'',
+              company: profile.company||'', companyNmls: profile.companyNmls||'',
+              phone: profile.phone||'', email: profile.email||user.email||'',
+            }));
+          } else if (user.email) {
+            // At minimum populate email from Auth
+            setLetterEmail(user.email);
+          }
+        }
+      } catch (e) { console.warn('[M03] LO profile load:', e.message); }
+    };
+    loadLOProfile();
+  }, []);
+
+  // ─── Save LO Profile ─────────────────────────────────────────────────────────
+  const saveLoProfile = async () => {
+    setLoProfileSaving(true);
+    setLoProfileSaved(false);
+    const profile = {
+      loName: letterLoName, loNmls: letterLoNmls,
+      company: letterCompany, companyNmls: letterCompanyNmls,
+      phone: letterPhone, email: letterEmail,
+      updatedAt: new Date().toISOString(),
+    };
+    // Save to localStorage immediately
+    localStorage.setItem('lb_lo_profile', JSON.stringify(profile));
+    // Save to Firestore users/{uid}.loProfile
+    try {
+      const auth = getAuth();
+      const user = auth.currentUser;
+      if (user) {
+        await updateDoc(doc(db, 'users', user.uid), {
+          loProfile: profile,
+          loProfileUpdatedAt: serverTimestamp(),
+        }).catch(async () => {
+          // Doc may not exist yet - create it
+          const { setDoc } = await import('firebase/firestore');
+          await setDoc(doc(db, 'users', user.uid), { loProfile: profile, loProfileUpdatedAt: serverTimestamp() }, { merge: true });
+        });
+      }
+      setLoProfileSaved(true);
+      setTimeout(() => setLoProfileSaved(false), 3000);
+    } catch (e) { console.warn('[M03] LO profile save:', e.message); }
+    finally { setLoProfileSaving(false); }
+  };
 
   // ─── Letter Generator ────────────────────────────────────────────────────────
   const generateLetter = async () => {
@@ -2129,7 +2211,16 @@ export default function QualifyingIntel() {
 
               {/* LO signature block */}
               <div className="border border-slate-200 rounded-xl p-4 mb-4">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Loan Officer Signature Block</p>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Loan Officer Signature Block</p>
+                  <div className="flex items-center gap-2">
+                    {letterLoName && <span className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-semibold">Auto-populated</span>}
+                    <button onClick={saveLoProfile} disabled={loProfileSaving}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-lg transition-colors disabled:opacity-50">
+                      {loProfileSaved ? '✓ Saved' : loProfileSaving ? 'Saving...' : 'Save LO Info'}
+                    </button>
+                  </div>
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   {[
                     { label:'LO Name',        val:letterLoName,      set:setLetterLoName,      ph:'Full name as licensed' },
