@@ -11,6 +11,8 @@ import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import ModuleNav from '../components/ModuleNav';
+import DecisionRecordBanner from '../components/DecisionRecordBanner';
+import ScenarioHeader from '../components/ScenarioHeader';
 import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
 import NextStepCard from '../components/NextStepCard';
 
@@ -888,89 +890,76 @@ export default function QualifyingIntel() {
   const propertyAddress = scenario ? [scenario.streetAddress, scenario.city, scenario.state, scenario.zipCode].filter(Boolean).join(', ') : '';
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
+    <div className="min-h-screen bg-slate-50" style={{ fontFamily: "'DM Sans',system-ui,sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
-      {/* ════════════════════════════════════════════════════════
-          1. HERO
-      ════════════════════════════════════════════════════════ */}
-      <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', padding: '26px 32px 22px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 20 }}>
-        {/* Left content */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontSize: 10, fontWeight: 600, color: '#64748b', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6 }}>
-            LoanBeacons™ — Module 03
-          </p>
-          <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: '#f8fafc', lineHeight: 1.15, marginBottom: 8 }}>
-            Qualifying Intelligence™
-          </h1>
-          <p style={{ fontSize: 13, color: '#94a3b8', lineHeight: 1.6, marginBottom: 0 }}>
-            DTI Analysis · Income Qualification · Program Fit
-          </p>
-        </div>
+      {/* ── 1. Decision Record Banner ── */}
+      <div className="max-w-7xl mx-auto px-6 pt-4">
+        <DecisionRecordBanner
+          recordId={savedRecordId}
+          moduleName="Qualifying Intelligence™"
+          moduleKey="QUALIFYING_INTEL"
+          onSave={handleSaveToRecord}
+          saving={recordSaving}
+        />
+      </div>
 
-        {/* Right column — pills + scenario card */}
-        <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-          <span style={{ background: 'rgba(34,197,94,0.15)', color: '#86efac', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid rgba(134,239,172,0.3)' }}>● LIVE</span>
-          {overallPass && totalIncome > 0 && (
-            <span style={{ background: 'rgba(34,197,94,0.15)', color: '#86efac', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid rgba(134,239,172,0.3)' }}>
-              ✓ {eligiblePrograms.length} Program{eligiblePrograms.length !== 1 ? 's' : ''} Eligible
-            </span>
-          )}
-          {!overallPass && totalIncome > 0 && (
-            <span style={{ background: 'rgba(239,68,68,0.15)', color: '#fca5a5', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, border: '1px solid rgba(252,165,165,0.3)' }}>
-              ✗ No Programs Qualify
-            </span>
-          )}
-          {scenario && (
-            <div style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid #334155', borderRadius: 10, padding: '10px 14px', minWidth: 176, backdropFilter: 'blur(4px)' }}>
-              <p style={{ fontSize: 9, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>Active Scenario</p>
-              <p style={{ fontSize: 13, fontWeight: 600, color: '#f1f5f9' }}>{borrower || 'Unknown Borrower'}</p>
-              <p style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>
-                {scenario.loanAmount ? `$${Number(scenario.loanAmount).toLocaleString()}` : ''}{scenario.loanType ? ` · ${scenario.loanType}` : ''}{scenario.state ? ` · ${scenario.state}` : ''}
-              </p>
-              <span onClick={() => navigate('/qualifying-intel')} style={{ fontSize: 10, color: '#818cf8', marginTop: 6, cursor: 'pointer', display: 'inline-block' }}>Change scenario →</span>
+      {/* ── 2. Module Nav ── */}
+      <div className="max-w-7xl mx-auto px-6">
+        <ModuleNav moduleNumber={3} />
+      </div>
+
+      {/* ── 3. Hero — rounded-3xl matching M02 standard ── */}
+      <div className="max-w-7xl mx-auto px-6 mb-4">
+        <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl px-6 py-5">
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+            <div style={{ flex: 1 }}>
+              <button onClick={() => {
+                if (hasUnsavedChanges && !window.confirm('You have unsaved qualifying results.\n\nLeave without saving?\n\nClick Cancel to go back and save.')) return;
+                navigate('/');
+              }} className="text-slate-400 hover:text-white text-xs mb-2 block">← Dashboard</button>
+              <h1 className="text-2xl font-bold text-white" style={{ fontFamily: 'DM Serif Display,serif' }}>Qualifying Intelligence™</h1>
+              <p className="text-slate-400 text-sm mt-1">DTI Analysis · Income Qualification · Program Fit</p>
             </div>
-          )}
+            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10, marginLeft: 24 }}>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                <span className="text-xs font-bold tracking-widest text-indigo-300 uppercase bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-400/30">Stage 1 — Pre-Structure</span>
+                <span className="bg-white/10 text-white text-xs px-2 py-0.5 rounded-full border border-white/20">Module 3</span>
+                <span className="bg-emerald-500/20 text-emerald-300 text-xs px-3 py-1 rounded-full border border-emerald-400/30 font-semibold">● LIVE</span>
+              </div>
+              {scenario && (
+                <div className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right" style={{ minWidth: 190 }}>
+                  <p className="text-xs text-slate-300 truncate" style={{ maxWidth: 200 }}>{borrower || scenario.scenarioName || 'No Borrower'}</p>
+                  <p className="text-lg font-black text-white">{scenario.loanAmount ? '$' + parseInt(scenario.loanAmount).toLocaleString() : '—'}</p>
+                  <p className="text-xs text-slate-400">
+                    {scenario.loanType || 'Purchase'}
+                    {totalIncome > 0 && <span className="text-indigo-300 font-bold"> · {fmt$(totalIncome)}/mo</span>}
+                    {totalIncome > 0 && totalHousing > 0 && (
+                      <span className={`font-bold ml-1 ${backDTI > 50 ? 'text-red-300' : backDTI > 43 ? 'text-amber-300' : 'text-emerald-300'}`}>· {fmtPct(backDTI)} DTI</span>
+                    )}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* ════════════════════════════════════════════════════════
-          2. SCENARIO HEADER BAR
-      ════════════════════════════════════════════════════════ */}
-      {scenario && (
-        <div style={{ background: '#1a2744', padding: '8px 32px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', borderBottom: '1px solid #0f172a' }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{borrower || 'Unknown Borrower'}</span>
-          {coBorrowerNames.map((n, i) => <span key={i} style={{ fontSize: 11, color: '#64748b' }}>+ {n}</span>)}
-          {propertyAddress && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>{propertyAddress}</span></>}
-          {scenario.loanAmount && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>Loan <span style={{ color: '#cbd5e1', fontWeight: 500 }}>${Number(scenario.loanAmount).toLocaleString()}</span></span></>}
-          {scenario.loanType   && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}>Type <span style={{ color: '#cbd5e1', fontWeight: 500 }}>{scenario.loanType}</span></span></>}
-          {scenario.loanPurpose && <><span style={{ color: '#334155', fontSize: 10 }}>|</span><span style={{ fontSize: 11, color: '#64748b' }}><span style={{ color: '#cbd5e1', fontWeight: 500 }}>{scenario.loanPurpose}</span></span></>}
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════
-          3. MODULE NAV BAR (Canonical Sequence + AE Share)
-      ════════════════════════════════════════════════════════ */}
-      <ModuleNav moduleNumber={3} />
-
-      {/* ════════════════════════════════════════════════════════
-          4. DECISION RECORD BANNER — green on save + NSI pill
-      ════════════════════════════════════════════════════════ */}
-      <DRBanner
-        savedRecordId={savedRecordId}
-        saving={recordSaving}
-        onSave={handleSaveToRecord}
-        nsiSuggestion={findingsReported ? primarySuggestion : null}
-        onNsiNavigate={(path) => { logFollow(); navigate(`${path}?scenarioId=${scenarioId}`); }}
-      />
+      {/* ── 4. Scenario Header ── */}
+      <div className="max-w-7xl mx-auto px-6">
+        <ScenarioHeader moduleTitle="Qualifying Intelligence™" moduleNumber={3} scenarioId={scenarioId} />
+      </div>
 
       {/* ── Unsaved changes bar ── */}
       {hasUnsavedChanges && (
-        <div style={{ background: '#fffbeb', borderBottom: '1px solid #fde68a', padding: '8px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 12, color: '#92400e', fontWeight: 600 }}>⚠ Unsaved changes — save to Decision Record to preserve qualifying results</span>
-          <button onClick={handleSaveToRecord} disabled={recordSaving}
-            style={{ background: '#f59e0b', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer', opacity: recordSaving ? 0.6 : 1 }}>
-            {recordSaving ? '⏳ Saving…' : '💾 Save Now'}
-          </button>
+        <div className="max-w-7xl mx-auto px-6 mt-2">
+          <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-2.5 flex items-center justify-between">
+            <span className="text-xs text-amber-800 font-semibold">⚠ Unsaved changes — save to preserve qualifying results</span>
+            <button onClick={handleSaveToRecord} disabled={recordSaving}
+              className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold px-4 py-1.5 rounded-lg transition-colors disabled:opacity-60">
+              {recordSaving ? '⏳ Saving…' : '💾 Save Now'}
+            </button>
+          </div>
         </div>
       )}
 
