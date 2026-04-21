@@ -402,6 +402,7 @@ export default function QualifyingIntel() {
   const [loProfileSaving,   setLoProfileSaving]   = useState(false);
   const [loProfileSaved,    setLoProfileSaved]    = useState(false);
   // Letter loan product inputs
+  const [selectedProgramKey, setSelectedProgramKey] = useState(''); // LO's active program selection
   const [letterProgram,     setLetterProgram]     = useState('');
   const [letterPurchasePrice, setLetterPurchasePrice] = useState('');
   const [letterLoanAmount,  setLetterLoanAmount]  = useState('');
@@ -903,7 +904,7 @@ export default function QualifyingIntel() {
       'Independent verification of all income and employment information.',
       'Independent verification of all assets and funds required for closing.',
       'Successful completion of final underwriting review and approval.',
-      'No material change in the borrower's financial condition, credit profile, or employment status prior to closing.',
+      'No material change in the borrower\'s financial condition, credit profile, or employment status prior to closing.',
       'Satisfactory evidence of required homeowners insurance and, if applicable, flood insurance.',
     ];
     if (prog === 'FHA') baseConditions.push('Property must meet all FHA Minimum Property Standards as determined by an FHA-approved appraiser.');
@@ -1004,23 +1005,7 @@ export default function QualifyingIntel() {
 
     setGeneratedLetter(html);
     setLetterError('');
-  };  // ─── Letter Generator ────────────────────────────────────────────────────────
-  const generateLetter = async () => {
-    setLetterGenerating(true);
-    setLetterError('');
-    setGeneratedLetter('');
-
-    const borrowerName  = scenario ? (scenario.firstName||'') + ' ' + (scenario.lastName||'') : 'Borrower';
-    const bestProgram   = maxPurchasePrices.filter(p=>programResults.find(r=>r.key===p.key)?.eligible&&p.maxPurchase>0).sort((a,b)=>b.maxPurchase-a.maxPurchase)[0];
-    const maxPrice      = bestProgram ? '$' + bestProgram.maxPurchase.toLocaleString() : 'N/A';
-    const qualProgs     = eligiblePrograms.map(r=>r.prog?.label||r.key).join(', ') || 'N/A';
-    const expDays       = parseInt(letterExpiry||'30');
-    const expDate       = new Date(); expDate.setDate(expDate.getDate() + expDays);
-    const expiryDate    = expDate.toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
-    const today         = new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
-    const isPreApproval = letterType === 'preapproval';
-    const letterLabel   = isPreApproval ? 'Pre-Approval' : 'Pre-Qualification';
-
+  };
 
   // ─── Decision Record ──────────────────────────────────────────────────────
   const handleSaveToRecord = async () => {
@@ -1477,7 +1462,56 @@ export default function QualifyingIntel() {
 
               {/* Housing & Debts — compact grid */}
               <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
-                <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-4">🏠 Housing & Debts</h2>
+                <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-3">🏠 Housing & Debts</h2>
+
+                {/* Selected Program Banner */}
+                {selectedProgramKey && PROGRAMS[selectedProgramKey] ? (
+                  <div className={`rounded-xl border-2 px-4 py-3 mb-4 ${
+                    programResults.find(r=>r.key===selectedProgramKey)?.eligible
+                      ? 'border-emerald-300 bg-emerald-50'
+                      : 'border-amber-300 bg-amber-50'
+                  }`}>
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-xs font-black px-2.5 py-1 rounded-full ${
+                          programResults.find(r=>r.key===selectedProgramKey)?.eligible
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-amber-500 text-white'
+                        }`}>{PROGRAMS[selectedProgramKey].label}</span>
+                        <span className="text-xs text-slate-600 font-semibold">Selected Program</span>
+                        {programResults.find(r=>r.key===selectedProgramKey)?.eligible
+                          ? <span className="text-xs text-emerald-700 font-bold">✓ Qualifies at current DTI</span>
+                          : <span className="text-xs text-amber-700 font-bold">⚠ Review DTI</span>
+                        }
+                      </div>
+                      <button onClick={() => setSelectedProgramKey('')}
+                        className="text-xs text-slate-400 hover:text-slate-600 border border-slate-200 bg-white px-2 py-1 rounded-lg transition-colors">
+                        Clear Selection
+                      </button>
+                    </div>
+                    <div className="flex gap-6 mt-2 flex-wrap">
+                      {[
+                        { label: 'Purchase Price', val: fmt$0(maxPurchasePrices.find(p=>p.key===selectedProgramKey)?.maxPurchase || 0) },
+                        { label: 'Max Loan',       val: fmt$0(maxPurchasePrices.find(p=>p.key===selectedProgramKey)?.maxLoan || 0) },
+                        { label: 'Est. MI/MIP',    val: (maxPurchasePrices.find(p=>p.key===selectedProgramKey)?.estMI || 0) > 0
+                            ? fmt$(maxPurchasePrices.find(p=>p.key===selectedProgramKey).estMI) + '/mo'
+                            : '$0' },
+                        { label: 'DTI Target',     val: fmtPct(maxPurchasePrices.find(p=>p.key===selectedProgramKey)?.targetPct || 0) + '%' },
+                      ].map(({ label, val }) => (
+                        <div key={label}>
+                          <p className="text-xs text-slate-400">{label}</p>
+                          <p className="text-sm font-black text-slate-800 font-mono">{val}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-2">Override the inputs below — changes update PITI, DTI, and the letter tab in real time.</p>
+                  </div>
+                ) : (
+                  <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl px-4 py-2.5 mb-4 flex items-center gap-2">
+                    <span className="text-slate-400 text-xs">No program selected —</span>
+                    <span className="text-xs text-indigo-600 font-semibold">click ← Use This on a program card below to set qualifying figures</span>
+                  </div>
+                )}
                 <div className="grid grid-cols-3 md:grid-cols-4 gap-3 mb-3">
                   {/* Loan Amount Warning — when current loan exceeds max for eligible programs */}
                   {parseFloat(loanAmount) > 0 && (() => {
@@ -1492,7 +1526,7 @@ export default function QualifyingIntel() {
                             <p className="text-xs text-amber-700">Max qualifying loan: <span className="font-mono font-bold">{fmt$0(lowestEligibleMax)}</span> — click "← Use This" on a program card below</p>
                           </div>
                         </div>
-                        <button onClick={() => setLoanAmount(String(lowestEligibleMax))}
+                        <button onClick={() => { setLoanAmount(String(lowestEligibleMax)); setSelectedProgramKey(''); }}
                           className="shrink-0 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors whitespace-nowrap">
                           Fix It →
                         </button>
@@ -1734,6 +1768,11 @@ export default function QualifyingIntel() {
                                       setLoanAmount(String(mp.maxLoan));
                                       if (mp.estMI > 0) setMi(String(mp.estMI));
                                       else setMi('0');
+                                      // Set as the selected/active program — feeds Housing bar + letter tab
+                                      setSelectedProgramKey(key);
+                                      setLetterProgram(key);
+                                      setLetterPurchasePrice(String(mp.maxPurchase));
+                                      setLetterLoanAmount(String(mp.maxLoan));
                                     }}
                                     className={`flex flex-col items-center px-3 py-2 rounded-xl text-xs font-bold border-2 transition-all ${
                                       parseFloat(loanAmount) === mp.maxLoan
@@ -1854,7 +1893,13 @@ export default function QualifyingIntel() {
                         <span className="text-indigo-300">Max Loan</span>
                         <div className="flex items-center gap-2">
                           <span className="font-mono font-bold">{fmt$0(best.maxLoan)}</span>
-                          <button onClick={() => setLoanAmount(String(best.maxLoan))}
+                          <button onClick={() => {
+                            setLoanAmount(String(best.maxLoan));
+                            setSelectedProgramKey(best.key);
+                            setLetterProgram(best.key);
+                            setLetterPurchasePrice(String(best.maxPurchase));
+                            setLetterLoanAmount(String(best.maxLoan));
+                          }}
                             className={`px-2 py-0.5 rounded-lg text-xs font-bold border transition-all ${
                               parseFloat(loanAmount) === best.maxLoan
                                 ? 'bg-emerald-400/30 text-emerald-200 border-emerald-400/40'
