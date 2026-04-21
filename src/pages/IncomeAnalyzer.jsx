@@ -3,9 +3,9 @@
 // Income Analyzer™ v4.0 — Smart upload workflow
 // Upload 1040 once → AI auto-detects all income types
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import DecisionRecordBanner from '../components/DecisionRecordBanner';
@@ -46,7 +46,19 @@ const CALCS = {
     return (parseFloat(f.gross_rents) || 0) * (1 - (parseFloat(f.vacancy_pct) || 25) / 100);
   },
   W2: f => (parseFloat(f.base_monthly) || 0) + (parseFloat(f.overtime_monthly) || 0) + (parseFloat(f.bonus_monthly) || 0) + (parseFloat(f.commission_monthly) || 0),
-  SOCIAL_SECURITY: f => (parseFloat(f.monthly_benefit) || 0) * (f.gross_up === 'yes' ? 1.25 : 1),
+  SOCIAL_SECURITY: f => {
+    const gross = parseFloat(f.monthly_benefit) || 0;
+    const nonTaxable = parseFloat(f.non_taxable_monthly) || 0;
+    if (f.gross_up === 'yes') {
+      if (nonTaxable > 0 && nonTaxable < gross) {
+        // Partial gross-up: only non-taxable portion × 1.25 per Fannie B3-3.1-09 / FHA 4000.1
+        return (gross - nonTaxable) + (nonTaxable * 1.25);
+      }
+      // Fully non-taxable (e.g. SSA award letter with no tax return) — gross up entire amount
+      return gross * 1.25;
+    }
+    return gross;
+  },
   PENSION: f => {
     const total = parseFloat(f.monthly_amount) || 0;
     const nontaxable = parseFloat(f.nontaxable_portion) || 0;
@@ -95,10 +107,17 @@ const TAX_RETURN_PROMPT = `Extract ALL income data from this federal tax return.
 "schedule_e_net":0,"schedule_e_gross_rents":0,"schedule_e_depreciation":0,
 "schedule_d_net":0,
 "k1_ordinary":0,"k1_ownership_pct":0,
-"social_security_annual":0,"social_security_monthly":0,"ss_taxable_portion":0,
+"social_security_annual":0,"social_security_monthly":0,"ss_taxable_portion":0,"ss_non_taxable_annual":0,
 "agi":0,"sep_ira_deduction":0,"self_employed_health_ins":0,
 "flags":[]}
-CRITICAL: Put ACTUAL numbers from the return — not 0 unless truly zero. schedule_c_net = Schedule C Line 31. schedule_e_net = Schedule E Part I total. schedule_c_depreciation = Schedule C Line 13. schedule_e_depreciation = Schedule E depreciation column total. social_security_monthly = annual SS / 12. Flag any traps: SEP IRA is NOT an addback, meals are NOT an addback.`;
+CRITICAL EXTRACTION RULES:
+(1) w2_wages = Form 1040 Line 1a ONLY — employer W-2 Box 1 wages. NEVER put Social Security, pension, or retirement income here. If no employer W-2 exists, w2_wages = 0.
+(2) social_security_annual = Form 1040 Line 6a GROSS (total SS benefits received) — NOT Line 6b. Line 6b is taxable only — never use Line 6b for social_security_annual.
+(3) social_security_monthly = Line 6a divided by 12.
+(4) ss_taxable_portion = Form 1040 Line 6b (taxable SS only).
+(5) ss_non_taxable_annual = Line 6a minus Line 6b.
+(6) schedule_c_net = Schedule C Line 31. schedule_e_net = Schedule E Part I total. schedule_c_depreciation = Schedule C Line 13. schedule_e_depreciation = Schedule E depreciation column total.
+(7) SEP IRA is NOT an addback. Meals are NOT an addback. Flag any traps.`;
 
 const W2_PROMPT = `Extract employment income. Return ONLY valid JSON, no markdown.
 Schema: {"doc_type":"pay_stub","employee_name":"","employer_name":"","employer_ein":"","pay_period_start":"","pay_period_end":"","check_date":"","pay_frequency":"biweekly","current_gross":0,"ytd_gross":0,"earnings":{"base":0,"overtime":0,"bonus":0,"commission":0,"shift_differential":0},"ytd_earnings":{"base":0,"overtime":0,"bonus":0,"commission":0},"net_pay":0,"hire_date":"","prior_employer_ytd_included":false,"prior_employer_amount":0,"prior_employer_name":"","flags":[]}
@@ -195,16 +214,32 @@ function buildSourcesFromTaxReturn(extracted, yearSlot, existingSources) {
     else { sources[idx].yr2Data = extracted; updateFields(idx, { yr2_k1: String(extracted.k1_ordinary) }); }
   }
 
+  // SS: monthly_benefit = Line 6a gross / 12 (NOT Line 6b taxable)
+  // Only gross-up the non-taxable portion per Fannie B3-3.1-09 / FHA 4000.1
   if (extracted.social_security_monthly && extracted.social_security_monthly > 0) {
     const idx = findOrCreate('SOCIAL_SECURITY');
     sources[idx].yr1Data = extracted;
-    updateFields(idx, { monthly_benefit: String(extracted.social_security_monthly), gross_up: 'yes' });
+    const grossMonthly = extracted.social_security_monthly; // Line 6a / 12
+    const taxableMonthly = (extracted.ss_taxable_portion || 0) / 12;
+    const nonTaxableMonthly = Math.max(0, grossMonthly - taxableMonthly);
+    updateFields(idx, {
+      monthly_benefit: String(grossMonthly.toFixed(2)),
+      non_taxable_monthly: String(nonTaxableMonthly.toFixed(2)),
+      gross_up: nonTaxableMonthly > 0 ? 'yes' : 'no',
+    });
   }
 
+  // W2: guard against SS/pension amounts bleeding into W2 card
+  // Haiku sometimes puts SS Line 6a or pension into w2_wages — detect and block
   if (extracted.w2_wages && extracted.w2_wages > 0) {
-    const idx = findOrCreate('W2');
-    sources[idx].yr1Data = extracted;
-    updateFields(idx, { base_monthly: String((extracted.w2_wages / 12).toFixed(2)) });
+    const ssGrossAnnual = extracted.social_security_annual || (extracted.social_security_monthly * 12) || 0;
+    const isSSBleed = ssGrossAnnual > 0 && Math.abs(extracted.w2_wages - ssGrossAnnual) < 200;
+    const isPensionBleed = extracted.schedule_c_net > 0 && !extracted.w2_wages;
+    if (!isSSBleed && !isPensionBleed) {
+      const idx = findOrCreate('W2');
+      sources[idx].yr1Data = extracted;
+      updateFields(idx, { base_monthly: String((extracted.w2_wages / 12).toFixed(2)) });
+    }
   }
 
   return sources;
@@ -572,7 +607,14 @@ function SourceCard({ source, onRemove, onUpdateField, onUploadOtherDoc }) {
         </div>
         {ext && !ext.parse_error && (
           <div style={{ padding: '8px 14px', background: 'var(--color-background-secondary)', fontSize: 11, color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>
-            {source.method === 'SOCIAL_SECURITY' && <>${ (parseFloat(source.fields.monthly_benefit) || 0).toFixed(2)} × 1.25 gross-up = <strong style={{ color: 'var(--color-text-primary)' }}>{fmt$(calc)}/mo</strong> — FHA 4000.1 / Fannie B3-3.1-09</>}
+            {source.method === 'SOCIAL_SECURITY' && (() => {
+              const grossMo = parseFloat(source.fields.monthly_benefit) || 0;
+              const nonTaxMo = parseFloat(source.fields.non_taxable_monthly) || 0;
+              const taxMo = Math.max(0, grossMo - nonTaxMo);
+              return <>{source.fields.gross_up === 'yes' && nonTaxMo > 0
+                ? `$${taxMo.toFixed(2)} taxable + $${nonTaxMo.toFixed(2)} non-taxable × 1.25`
+                : `$${grossMo.toFixed(2)}/mo`} = <strong style={{ color: 'var(--color-text-primary)' }}>{fmt$(calc)}/mo</strong> — Fannie B3-3.1-09</>;
+            })()}
             {source.method === 'MILITARY' && <>Base pay + BAH × 1.25 + BAS × 1.25 = <strong style={{ color: 'var(--color-text-primary)' }}>{fmt$(calc)}/mo</strong></>}
             {source.method === 'PENSION' && <><strong style={{ color: 'var(--color-text-primary)' }}>{fmt$(calc)}/mo</strong> {source.fields.taxable === 'no' ? '(non-taxable gross-up applied)' : '(taxable — no gross-up)'}</>}
             {source.method === 'CHILD_SUPPORT' && <><strong style={{ color: (parseFloat(source.fields.months_remaining) || 0) >= 36 ? 'var(--color-text-primary)' : '#dc2626' }}>{fmt$(calc)}/mo</strong> — {(parseFloat(source.fields.months_remaining) || 0) >= 36 ? 'qualifies (36+ months remaining)' : 'excluded (< 36 months)'}</>}
@@ -682,7 +724,7 @@ const FIELD_DEFS = {
   SELF_EMPLOYED: [['yr1_net', 'Year 1 net profit ($)'], ['yr2_net', 'Year 2 net profit ($)'], ['depreciation', 'Depreciation addback ($)'], ['depletion', 'Depletion addback ($)'], ['home_office', 'Home office addback ($)']],
   RENTAL: [['yr1_net', 'Year 1 Sch E net ($)'], ['yr1_depr', 'Year 1 depreciation ($)'], ['yr2_net', 'Year 2 Sch E net ($)'], ['yr2_depr', 'Year 2 depreciation ($)'], ['gross_rents', 'Gross monthly rents ($)'], ['vacancy_pct', 'Vacancy factor (%)']],
   W2: [['base_monthly', 'Base monthly ($)'], ['overtime_monthly', 'OT monthly (2yr avg, $)'], ['bonus_monthly', 'Bonus monthly (2yr avg, $)'], ['commission_monthly', 'Commission monthly ($)']],
-  SOCIAL_SECURITY: [['monthly_benefit', 'Monthly benefit ($)'], ['gross_up', 'Non-taxable (gross-up)?']],
+  SOCIAL_SECURITY: [['monthly_benefit', 'Gross monthly benefit ($)'], ['non_taxable_monthly', 'Non-taxable portion ($/mo)'], ['gross_up', 'Gross-up non-taxable?']],
   PENSION: [['monthly_amount', 'Monthly amount ($)'], ['taxable', 'Is taxable?'], ['taxable_portion', 'Taxable portion ($/mo)'], ['nontaxable_portion', 'Non-taxable portion ($/mo)']],
   MILITARY: [['base_pay', 'Base pay ($/mo)'], ['bah', 'BAH ($/mo)'], ['bas', 'BAS ($/mo)'], ['other', 'Other allotments ($/mo)']],
   CHILD_SUPPORT: [['monthly_amount', 'Monthly amount ($)'], ['months_remaining', 'Months remaining']],
@@ -891,6 +933,9 @@ export default function IncomeAnalyzer() {
   const [savedRecordId, setSavedRecordId] = useState(null);
 
   const [borrowerGroups, setBorrowerGroups] = useState([]);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [firestoreSaving, setFirestoreSaving] = useState(false);
+  const initialLoadDone = useRef(false);
 
   const { reportFindings } = useDecisionRecord(scenarioId);
 
@@ -920,6 +965,24 @@ export default function IncomeAnalyzer() {
   }, [lsKey, borrowerGroups, notes, aiAnalysis, savedRecordId, verification]);
 
   useEffect(() => { saveToStorage(); }, [saveToStorage]);
+
+  // Mark dirty when income data changes (skip on initial load)
+  useEffect(() => {
+    if (!initialLoadDone.current) return;
+    setHasUnsavedChanges(true);
+  }, [borrowerGroups, notes]);
+
+  // Warn before browser close / tab close if unsaved
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   useEffect(() => {
     if (!scenarioId) {
@@ -953,6 +1016,8 @@ export default function IncomeAnalyzer() {
         }
         setBorrowerGroups(groups);
       }
+      // Mark load complete — dirty tracking starts AFTER this
+      setTimeout(() => { initialLoadDone.current = true; }, 100);
     }).catch(console.error).finally(() => setLoading(false));
   }, [scenarioId, lsKey, makeGroup]);
 
@@ -1155,16 +1220,57 @@ export default function IncomeAnalyzer() {
 
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
+    setFirestoreSaving(true);
     try {
       const riskFlags = [];
       borrowerGroups.forEach(g => g.sources.forEach(s => {
-        if (s.method === 'CHILD_SUPPORT' && (parseFloat(s.fields.months_remaining) || 0) < 36) riskFlags.push({ field: 'cs', message: 'Child support < 36 months continuance', severity: 'HIGH' });
-        if (s.method === 'W2' && (parseFloat(s.fields.overtime_monthly) > 0 || parseFloat(s.fields.bonus_monthly) > 0)) riskFlags.push({ field: 'variable', message: 'Variable income — verify 2-year history', severity: 'MEDIUM' });
+        if (s.method === 'CHILD_SUPPORT' && (parseFloat(s.fields.months_remaining) || 0) < 36)
+          riskFlags.push({ flagCode: 'CS_CONTINUANCE', sourceModule: 'INCOME_ANALYZER', severity: 'HIGH', detail: 'Child support < 36 months continuance' });
+        if (s.method === 'W2' && (parseFloat(s.fields.overtime_monthly) > 0 || parseFloat(s.fields.bonus_monthly) > 0))
+          riskFlags.push({ flagCode: 'VARIABLE_INCOME', sourceModule: 'INCOME_ANALYZER', severity: 'MEDIUM', detail: 'Variable income — verify 2-year history' });
+        if (s.method === 'SELF_EMPLOYED') {
+          const y1 = parseFloat(s.fields.yr1_net) || 0;
+          const y2 = parseFloat(s.fields.yr2_net) || 0;
+          if (y1 > 0 && y2 > 0 && y2 < y1 * 0.90)
+            riskFlags.push({ flagCode: 'SE_DECLINING', sourceModule: 'INCOME_ANALYZER', severity: 'HIGH', detail: `SE income declining — lower year used per Fannie B3-3.4-02` });
+        }
       }));
-      const writtenId = await reportFindings('INCOME_ANALYZER', { totalQualifyingMonthly: totalQualifying, totalQualifyingAnnual: totalQualifying * 12, borrowers: borrowerGroups.map(g => ({ name: g.name, role: g.role, monthlyIncome: g.sources.reduce((s, src) => s + Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0), 0) })), loNotes: notes, aiAnalysis, timestamp: new Date().toISOString() }, [], riskFlags, '4.0.0');
+
+      const incomeSnapshot = {
+        totalQualifyingMonthly: totalQualifying,
+        totalQualifyingAnnual: totalQualifying * 12,
+        borrowers: borrowerGroups.map(g => ({
+          name: g.name,
+          role: g.role,
+          monthlyIncome: g.sources.reduce((s, src) => s + Math.max(0, CALCS[src.method] ? CALCS[src.method](src.fields) : 0), 0),
+          sources: g.sources.map(s => ({
+            method: s.method,
+            label: METHOD_META[s.method]?.label || s.method,
+            monthly: Math.max(0, CALCS[s.method] ? CALCS[s.method](s.fields) : 0),
+            fields: s.fields,
+          })),
+        })),
+        loNotes: notes,
+        aiAnalysis,
+        savedAt: new Date().toISOString(),
+        moduleVersion: '4.2',
+      };
+
+      // Save to Firestore scenario doc so M03+ can read qualifying income
+      if (scenarioId) {
+        await updateDoc(doc(db, 'scenarios', scenarioId), {
+          income: incomeSnapshot,
+          incomeUpdatedAt: serverTimestamp(),
+        });
+      }
+
+      // Report to Decision Record
+      const writtenId = await reportFindings('INCOME_ANALYZER', incomeSnapshot, [], riskFlags, '4.2.0');
       if (writtenId) setSavedRecordId(writtenId);
-    } catch (e) { console.error(e); }
+      setHasUnsavedChanges(false);
+    } catch (e) { console.error('Save error:', e); }
     setRecordSaving(false);
+    setFirestoreSaving(false);
   };
 
   const rawPurpose = (scenario?.loanPurpose || '').toLowerCase();
@@ -1253,7 +1359,10 @@ export default function IncomeAnalyzer() {
         <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl px-6 py-5">
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <div style={{ flex: 1 }}>
-              <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white text-xs mb-2 block">← Dashboard</button>
+              <button onClick={() => {
+                if (hasUnsavedChanges && !window.confirm('You have unsaved income results.\n\nSave to Decision Record before leaving?\n\nClick Cancel to go back and save.')) return;
+                navigate('/');
+              }} className="text-slate-400 hover:text-white text-xs mb-2 block">← Dashboard</button>
               <h1 className="text-2xl font-bold text-white" style={{ fontFamily: 'DM Serif Display,serif' }}>Income Analyzer™</h1>
               <p className="text-slate-400 text-sm mt-1">{allNames || 'Smart upload · Auto income detection · AI verification'}</p>
             </div>
@@ -1288,7 +1397,19 @@ export default function IncomeAnalyzer() {
             {TABS.map(t => (
               <button key={t.id} onClick={() => setActiveTab(t.id)} className={`px-5 py-3.5 text-sm font-semibold border-b-2 transition-all ${activeTab === t.id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>{t.icon} {t.label}</button>
             ))}
-            <div className="ml-auto flex items-center px-4 gap-2">
+            <div className="ml-auto flex items-center px-4 gap-3">
+              {hasUnsavedChanges && (
+                <button
+                  onClick={handleSaveToRecord}
+                  disabled={recordSaving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors"
+                >
+                  {recordSaving ? '⏳ Saving…' : '💾 Save'}
+                </button>
+              )}
+              {!hasUnsavedChanges && savedRecordId && (
+                <span className="text-xs text-emerald-600 font-semibold">✅ Saved</span>
+              )}
               <span className="text-xs text-slate-400">Total:</span>
               <span className="text-base font-black text-indigo-600">{fmt$(totalQualifying)}/mo</span>
             </div>
