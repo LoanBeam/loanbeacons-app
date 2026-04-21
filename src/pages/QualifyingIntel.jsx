@@ -780,52 +780,68 @@ export default function QualifyingIntel() {
     setLetterGenerating(true);
     setLetterError('');
     setGeneratedLetter('');
-    const borrowerName = scenario ? `${scenario.firstName||''} ${scenario.lastName||''}`.trim() || scenario.scenarioName || 'Borrower' : 'Borrower';
-    const bestProgram  = maxPurchasePrices.filter(p=>programResults.find(r=>r.key===p.key)?.eligible&&p.maxPurchase>0).sort((a,b)=>b.maxPurchase-a.maxPurchase)[0];
-    const maxPrice     = bestProgram ? `$${bestProgram.maxPurchase.toLocaleString()}` : 'N/A';
-    const qualProgs    = eligiblePrograms.map(r=>r.prog?.label||r.key).join(', ') || 'N/A';
-    const expiryDate   = (() => {
-      const d = new Date(); d.setDate(d.getDate() + parseInt(letterExpiry||30));
-      return d.toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
-    })();
-    const today        = new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+
+    const borrowerName  = scenario ? (scenario.firstName||'') + ' ' + (scenario.lastName||'') : 'Borrower';
+    const bestProgram   = maxPurchasePrices.filter(p=>programResults.find(r=>r.key===p.key)?.eligible&&p.maxPurchase>0).sort((a,b)=>b.maxPurchase-a.maxPurchase)[0];
+    const maxPrice      = bestProgram ? '$' + bestProgram.maxPurchase.toLocaleString() : 'N/A';
+    const qualProgs     = eligiblePrograms.map(r=>r.prog?.label||r.key).join(', ') || 'N/A';
+    const expDays       = parseInt(letterExpiry||'30');
+    const expDate       = new Date(); expDate.setDate(expDate.getDate() + expDays);
+    const expiryDate    = expDate.toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+    const today         = new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
     const isPreApproval = letterType === 'preapproval';
+    const letterLabel   = isPreApproval ? 'Pre-Approval' : 'Pre-Qualification';
 
-    const systemPrompt = `You are a licensed mortgage compliance officer writing a ${isPreApproval ? 'Pre-Approval' : 'Pre-Qualification'} Letter for a loan officer.
+    // Build system prompt using array join to avoid multi-line template literal encoding issues
+    const sysLines = [
+      'You are a licensed mortgage compliance officer writing a ' + letterLabel + ' Letter for a loan officer.',
+      '',
+      'COMPLIANCE REQUIREMENTS - every letter MUST include all of these:',
+      '',
+      '1. COMMITMENT DISCLAIMER: State clearly this is NOT a commitment to lend, NOT a guarantee of loan approval, and NOT a final credit decision.',
+      '2. CONDITIONS: Include subject-to conditions: satisfactory appraisal, clear title, verification of income/assets, final underwriting review, no material change in financial condition, satisfactory insurance.',
+      isPreApproval
+        ? '3. AUS DISCLOSURE: Reference the ' + ausSystem + ' finding (' + ausFinding + ') but state final approval is subject to complete underwriting review.'
+        : '3. INFORMATION BASIS: State the letter is based on information provided by the borrower that has not been independently verified.',
+      '4. EQUAL HOUSING LENDER: Include the Equal Housing Lender statement and Equal Housing Opportunity prominently.',
+      '5. NMLS DISCLOSURE: Include both LO NMLS# and Company NMLS# with: "NMLS Consumer Access: www.nmlsconsumeraccess.org".',
+      '6. INTEREST RATE: Do NOT state any specific interest rate - rates are subject to market conditions and credit approval.',
+      '7. FAIR HOUSING: Neutral professional language only. Do not reference race, color, religion, national origin, sex, disability, or familial status.',
+      '8. EXPIRATION: Clearly state the letter expires on ' + expiryDate + ' and has no validity after that date.',
+      '9. ECOA NOTICE: Include the federal Equal Credit Opportunity Act notice about non-discrimination in credit decisions.',
+      '10. FOOTER: Include "This ' + letterLabel.toLowerCase() + ' letter does not constitute a loan commitment or lock-in agreement."',
+      '',
+      'FORMAT: Professional business letter, plain text, no markdown. Include: date, salutation (Dear Home Seller/Real Estate Professional), body paragraphs, numbered conditions list, signature block, compliance footer. 400-600 words. Use actual data provided - no placeholder brackets.',
+    ];
+    const systemPrompt = sysLines.join('
+');
 
-CRITICAL COMPLIANCE REQUIREMENTS — every letter MUST include all of these:
-
-1. COMMITMENT DISCLAIMER: State clearly this is NOT a commitment to lend, NOT a guarantee of loan approval, and NOT a final credit decision.
-2. CONDITIONS LANGUAGE: Include "subject to" conditions — at minimum: satisfactory property appraisal, clear title, verification of income/assets, final underwriting review, no material change in borrower's financial condition, and satisfactory property insurance.
-3. ${isPreApproval ? 'AUS DISCLOSURE: Reference the automated underwriting finding (' + ausSystem + ' — ' + ausFinding + ') but state that final approval is subject to complete underwriting review.' : 'INFORMATION BASIS: State the letter is based on information provided by the borrower that has not been independently verified by an appraiser or underwriter.'}
-4. EQUAL HOUSING LENDER: Include the Equal Housing Lender statement and the phrase "Equal Housing Opportunity" prominently.
-5. NMLS DISCLOSURE: Include both the loan officer NMLS# and company NMLS# with the disclosure "NMLS Consumer Access: www.nmlsconsumeraccess.org".
-6. INTEREST RATE: Do NOT state any specific interest rate — rates are subject to market conditions and credit approval.
-7. FAIR HOUSING: Use neutral, professional language. Do not reference race, color, religion, national origin, sex, disability, or familial status in any way.
-8. EXPIRATION: Clearly state the letter expires on ${expiryDate} and has no validity after that date.
-9. ECOA NOTICE: Include "The federal Equal Credit Opportunity Act prohibits creditors from discriminating against credit applicants…" or equivalent.
-10. REGULATORY FOOTER: Include "This pre-${isPreApproval ? 'approval' : 'qualification'} letter does not constitute a loan commitment or lock-in agreement."
-
-FORMAT: Write a professional business letter in plain text (no markdown). Use proper letter format: date, recipient section (Dear Home Seller/Real Estate Professional), body paragraphs, conditions list, signature block, and compliance footer. Be concise — 400-600 words. Do not include any placeholder brackets like [NAME] — use the actual data provided.`;
-
-    const userMsg = `Generate the letter with this data:
-
-Borrower: ${borrowerName}
-${scenario?.coBorrowers?.length ? 'Co-Borrower: ' + (scenario.coBorrowers[0]?.firstName||'') + ' ' + (scenario.coBorrowers[0]?.lastName||'') : ''}
-Letter Date: ${today}
-Letter Expiration: ${expiryDate}
-Maximum Purchase Price: ${maxPrice}
-Qualifying Programs: ${qualProgs}
-${letterProperty ? 'Subject Property: ' + letterProperty : 'No specific property (open letter)'}
-${isPreApproval ? 'AUS System: ' + ausSystem : ''}
-${isPreApproval ? 'AUS Finding: ' + ausFinding : ''}
-
-Loan Officer: ${letterLoName || 'Loan Officer'}
-LO NMLS#: ${letterLoNmls || 'NMLS# on file'}
-Company: ${letterCompany || 'Lending Company'}
-Company NMLS#: ${letterCompanyNmls || 'Company NMLS# on file'}
-${letterPhone ? 'Phone: ' + letterPhone : ''}
-${letterEmail ? 'Email: ' + letterEmail : ''}`;
+    // Build user message using array join
+    const coBorrower = scenario?.coBorrowers?.length
+      ? 'Co-Borrower: ' + (scenario.coBorrowers[0]?.firstName||'') + ' ' + (scenario.coBorrowers[0]?.lastName||'')
+      : '';
+    const msgLines = [
+      'Generate the letter with this data:',
+      '',
+      'Borrower: ' + borrowerName.trim(),
+      coBorrower,
+      'Letter Date: ' + today,
+      'Letter Expiration: ' + expiryDate,
+      'Maximum Purchase Price: ' + maxPrice,
+      'Qualifying Programs: ' + qualProgs,
+      letterProperty ? 'Subject Property: ' + letterProperty : 'No specific property (open letter - valid for any property up to max)',
+      isPreApproval ? 'AUS System: ' + ausSystem : '',
+      isPreApproval ? 'AUS Finding: ' + ausFinding : '',
+      '',
+      'Loan Officer: ' + (letterLoName || 'Loan Officer'),
+      'LO NMLS#: ' + (letterLoNmls || 'NMLS# on file'),
+      'Company: ' + (letterCompany || 'Lending Company'),
+      'Company NMLS#: ' + (letterCompanyNmls || 'Company NMLS# on file'),
+      letterPhone ? 'Phone: ' + letterPhone : '',
+      letterEmail ? 'Email: ' + letterEmail : '',
+    ].filter(l => l !== '').join('
+');
+    const userMsg = msgLines;
 
     try {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -2028,6 +2044,9 @@ ${letterEmail ? 'Email: ' + letterEmail : ''}`;
                 {recordSaving?'⏳ Saving…':'💾 Save to Decision Record'}
               </button>
             </Section>
+
+          </div>
+        )}
 
         {/* ════ TAB 3: LETTERS ════ */}
         {activeTab === 3 && (
