@@ -1253,7 +1253,11 @@ export default function QualifyingIntel() {
               {scenario && (
                 <div className="bg-white/10 border border-white/10 rounded-2xl px-4 py-3 text-right" style={{ minWidth: 190 }}>
                   <p className="text-xs text-slate-300 truncate" style={{ maxWidth: 200 }}>{borrower || scenario.scenarioName || 'No Borrower'}</p>
-                  <p className="text-lg font-black text-white">{scenario.loanAmount ? '$' + parseInt(scenario.loanAmount).toLocaleString() : '—'}</p>
+                  <p className="text-lg font-black text-white">
+                    {loanAmount && parseFloat(loanAmount) > 0
+                      ? '$' + parseInt(loanAmount).toLocaleString()
+                      : scenario.loanAmount ? '$' + parseInt(scenario.loanAmount).toLocaleString() : '—'}
+                  </p>
                   <p className="text-xs text-slate-400">
                     {scenario.loanType || 'Purchase'}
                     {totalIncome > 0 && <span className="text-indigo-300 font-bold"> · {fmt$(totalIncome)}/mo</span>}
@@ -1502,22 +1506,79 @@ export default function QualifyingIntel() {
                         Clear Selection
                       </button>
                     </div>
-                    <div className="flex gap-6 mt-2 flex-wrap">
-                      {[
-                        { label: 'Purchase Price', val: fmt$0(maxPurchasePrices.find(p=>p.key===selectedProgramKey)?.maxPurchase || 0) },
-                        { label: 'Max Loan',       val: fmt$0(maxPurchasePrices.find(p=>p.key===selectedProgramKey)?.maxLoan || 0) },
-                        { label: 'Est. MI/MIP',    val: (maxPurchasePrices.find(p=>p.key===selectedProgramKey)?.estMI || 0) > 0
-                            ? fmt$(maxPurchasePrices.find(p=>p.key===selectedProgramKey).estMI) + '/mo'
-                            : '$0' },
-                        { label: 'DTI Target',     val: fmtPct(maxPurchasePrices.find(p=>p.key===selectedProgramKey)?.targetPct || 0) + '%' },
-                      ].map(({ label, val }) => (
-                        <div key={label}>
-                          <p className="text-xs text-slate-400">{label}</p>
-                          <p className="text-sm font-black text-slate-800 font-mono">{val}</p>
+                    {/* Two-row live comparison: current working vs calculated max */}
+                    {(() => {
+                      const mp       = maxPurchasePrices.find(p=>p.key===selectedProgramKey);
+                      const curLoan  = parseFloat(loanAmount) || 0;
+                      const dp       = parseFloat(downPaymentPct) || 5;
+                      const curPP    = curLoan > 0 && dp < 100 ? Math.round(curLoan / (1 - dp/100)) : 0;
+                      const maxLoan  = mp?.maxLoan || 0;
+                      const maxPP    = mp?.maxPurchase || 0;
+                      const diff     = curLoan - maxLoan;
+                      const isOver   = diff > 0;
+                      const isElig   = programResults.find(r=>r.key===selectedProgramKey)?.eligible;
+                      return (
+                        <div className="mt-3 space-y-2">
+                          {/* Row 1: Current working figures (live) */}
+                          <div className="bg-white rounded-xl px-3 py-2.5 border border-slate-200">
+                            <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Current Working</p>
+                            <div className="grid grid-cols-4 gap-3">
+                              <div>
+                                <p className="text-xs text-slate-400">Loan Amount</p>
+                                <p className="text-sm font-black text-slate-900 font-mono">{curLoan > 0 ? fmt$0(curLoan) : '—'}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-slate-400">Purchase Price</p>
+                                <p className="text-sm font-black text-slate-900 font-mono">{curPP > 0 ? fmt$0(curPP) : '—'}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-slate-400">Back DTI</p>
+                                <p className={`text-sm font-black font-mono ${isElig ? 'text-emerald-600' : 'text-red-600'}`}>
+                                  {fmtPct(backDTI)}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-slate-400">Total PITI</p>
+                                <p className="text-sm font-black text-slate-900 font-mono">{fmt$(totalHousing)}/mo</p>
+                              </div>
+                            </div>
+                          </div>
+                          {/* Row 2: Calculated max (algorithm reference) */}
+                          <div className="bg-slate-50 rounded-xl px-3 py-2.5 border border-slate-100">
+                            <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Calculated Max ({activeDTITarget.label} Target)</p>
+                            <div className="grid grid-cols-4 gap-3">
+                              <div>
+                                <p className="text-xs text-slate-400">Max Loan</p>
+                                <p className="text-sm font-black text-slate-600 font-mono">{maxLoan > 0 ? fmt$0(maxLoan) : '—'}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-slate-400">Max Purchase</p>
+                                <p className="text-sm font-black text-slate-600 font-mono">{maxPP > 0 ? fmt$0(maxPP) : '—'}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-slate-400">Max Back DTI</p>
+                                <p className="text-sm font-black text-slate-600 font-mono">{mp?.targetPct || 0}%</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-slate-400">Est. MI/MIP</p>
+                                <p className="text-sm font-black text-slate-600 font-mono">{(mp?.estMI||0)>0 ? fmt$(mp.estMI)+'/mo' : '$0'}</p>
+                              </div>
+                            </div>
+                          </div>
+                          {/* Diff indicator */}
+                          {curLoan > 0 && maxLoan > 0 && (
+                            <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold ${isOver ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+                              <span>{isOver ? '⚠' : '✓'}</span>
+                              <span>
+                                {isOver
+                                  ? 'Current loan is ' + fmt$0(Math.abs(diff)) + ' above the calculated max — letter will use current figures'
+                                  : 'Current loan is ' + fmt$0(Math.abs(diff)) + ' below the calculated max — good qualification cushion'}
+                              </span>
+                            </div>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                    <p className="text-xs text-slate-400 mt-2">Override the inputs below — changes update PITI, DTI, and the letter tab in real time.</p>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl px-4 py-2.5 mb-4 flex items-center gap-2">
