@@ -168,6 +168,46 @@ function calcPI(principal, annualRate, termMonths) {
   return principal * (r * Math.pow(1 + r, termMonths)) / (Math.pow(1 + r, termMonths) - 1);
 }
 
+// Returns monthly MI as a rate of loan amount (not a dollar amount)
+// Sources: FHA ML 2023-05 · Fannie Desktop Underwriter PMI tables · USDA 3555 · VA Circ 26-8
+function getMIRate(programKey, downPctNum, ficoScore) {
+  const ltv  = (100 - downPctNum) / 100;
+  const fico = parseInt(ficoScore) || 680;
+  switch (programKey) {
+    case 'FHA':
+      // FHA MIP (post-March 2023 reduced rates, 30-year term)
+      // < 10% down = LTV > 90%: 0.55%/yr; >= 10% down = LTV ≤ 90%: 0.50%/yr
+      return (downPctNum >= 10 ? 0.0050 : 0.0055) / 12;
+    case 'CONVENTIONAL':
+      if (downPctNum >= 20) return 0;
+      if (ltv > 0.97) return (fico>=720?0.0072:fico>=680?0.0089:fico>=660?0.0104:0.0120)/12;
+      if (ltv > 0.95) return (fico>=720?0.0054:fico>=680?0.0073:fico>=660?0.0090:0.0108)/12;
+      if (ltv > 0.90) return (fico>=720?0.0038:fico>=680?0.0055:fico>=660?0.0073:0.0090)/12;
+      if (ltv > 0.85) return (fico>=720?0.0025:fico>=680?0.0040:fico>=660?0.0057:0.0074)/12;
+      return              (fico>=720?0.0016:fico>=680?0.0025:fico>=660?0.0038:0.0052)/12;
+    case 'HOMEREADY':
+      // HomeReady: reduced MI ~25-35% below standard Conventional
+      if (downPctNum >= 20) return 0;
+      if (ltv > 0.95) return (fico>=720?0.0050:fico>=680?0.0063:fico>=660?0.0073)/12;
+      if (ltv > 0.90) return (fico>=720?0.0027:fico>=680?0.0039:fico>=660?0.0052)/12;
+      if (ltv > 0.85) return (fico>=720?0.0018:fico>=680?0.0028:fico>=660?0.0040)/12;
+      return              (fico>=720?0.0011:fico>=680?0.0018:fico>=660?0.0027)/12;
+    case 'HOMEPOSSIBLE':
+      // Home Possible: similar reduced MI to HomeReady
+      if (downPctNum >= 20) return 0;
+      if (ltv > 0.95) return (fico>=720?0.0050:fico>=680?0.0063:fico>=660?0.0073)/12;
+      if (ltv > 0.90) return (fico>=720?0.0027:fico>=680?0.0039:fico>=660?0.0052)/12;
+      if (ltv > 0.85) return (fico>=720?0.0018:fico>=680?0.0028:fico>=660?0.0040)/12;
+      return              (fico>=720?0.0011:fico>=680?0.0018:fico>=660?0.0027)/12;
+    case 'USDA':
+      return 0.0035/12; // 0.35%/yr annual guarantee fee
+    case 'VA':
+      return 0; // no monthly MI (funding fee is one-time, typically financed)
+    default:
+      return 0;
+  }
+}
+
 function dtiColor(dti, max) {
   if (!dti || isNaN(dti)) return 'text-slate-400';
   if (!max) return dti > 50 ? 'text-red-600' : dti > 43 ? 'text-amber-600' : 'text-emerald-600';
@@ -581,6 +621,7 @@ export default function QualifyingIntel() {
   // ─── Feature computed values ──────────────────────────────────────────────
   const baseRate           = parseFloat(rate) || 0;
   const fixedCosts         = (parseFloat(taxes)||0) + (parseFloat(insurance)||0) + (parseFloat(hoa)||0) + (parseFloat(mi)||0);
+  const otherFixed         = (parseFloat(taxes)||0) + (parseFloat(insurance)||0) + (parseFloat(hoa)||0); // excl MI — used in per-program max loan calc
   const monthlyPayFactor   = (() => {
     const r = baseRate / 100 / 12, n = parseInt(term) || 360;
     if (!r || !n) return 0;
@@ -595,37 +636,58 @@ export default function QualifyingIntel() {
   };
   const activeDTITarget = DTI_TARGETS[dtiTarget] || DTI_TARGETS.standard;
 
-  // Feature 1 — Max Purchase Price per program (uses selected DTI target)
+  // Feature 1 — Max Purchase Price per program (uses selected DTI target + auto MI)
   const downPct = parseFloat(downPaymentPct) || 5;
   const maxPurchasePrices = Object.entries(PROGRAMS).map(([key, prog]) => {
+    const ficoNum    = parseInt(creditScore) || 680;
+    // Per-program monthly MI rate (fraction of loan amount)
+    const miRate     = getMIRate(key, downPct, ficoNum);
     // Effective DTI = min(target%, program max) — never exceed program limit
-    const targetPct    = dtiTarget === 'maximum' ? prog.backMax : Math.min(activeDTITarget.pct, prog.backMax);
-    const frontTarget  = prog.frontMax ? Math.min(prog.frontMax, dtiTarget === 'maximum' ? prog.frontMax : (prog.frontMax < activeDTITarget.pct ? prog.frontMax : activeDTITarget.pct)) : Infinity;
-    const maxPITIBack  = totalIncome > 0 ? totalIncome * (targetPct / 100) - (parseFloat(debts)||0) - slQualPayment : 0;
-    const maxPITIFront = prog.frontMax && totalIncome > 0 ? totalIncome * (frontTarget / 100) : Infinity;
-    const maxPI        = Math.min(maxPITIBack, maxPITIFront) - fixedCosts;
-    const maxLoan      = monthlyPayFactor > 0 && maxPI > 0 ? maxPI / monthlyPayFactor : 0;
-    const maxPurchase  = maxLoan > 0 ? maxLoan / (1 - downPct / 100) : 0;
-    // Project what the DTI bar will show if LO uses this max loan
-    const projPI       = monthlyPayFactor > 0 && maxLoan > 0 ? Math.round(maxLoan) * monthlyPayFactor : 0;
-    const projDTI      = totalIncome > 0 && projPI > 0 ? ((projPI + fixedCosts + totalDebts) / totalIncome) * 100 : 0;
+    const targetPct  = dtiTarget === 'maximum' ? prog.backMax : Math.min(activeDTITarget.pct, prog.backMax);
+    const frontTgt   = prog.frontMax ? Math.min(prog.frontMax, dtiTarget === 'maximum' ? prog.frontMax : (prog.frontMax < activeDTITarget.pct ? prog.frontMax : activeDTITarget.pct)) : Infinity;
+    const maxBudget  = totalIncome > 0 ? totalIncome * (targetPct / 100) - (parseFloat(debts)||0) - slQualPayment : 0;
+    const maxFront   = prog.frontMax && totalIncome > 0 ? totalIncome * (frontTgt / 100) : Infinity;
+    // Subtract non-MI fixed costs; MI is handled by effective rate below
+    const maxAvail   = Math.min(maxBudget, maxFront) - otherFixed;
+    // Solve: loan × (payFactor + miRate) = maxAvail  →  maxLoan = maxAvail / (payFactor + miRate)
+    // This properly handles the circular dependency (MI depends on loan amount)
+    const effFactor  = monthlyPayFactor + miRate;
+    const maxLoan    = effFactor > 0 && maxAvail > 0 ? maxAvail / effFactor : 0;
+    const maxPurchase = maxLoan > 0 ? maxLoan / (1 - downPct / 100) : 0;
+    const estMI      = Math.round(maxLoan * miRate);
+    // Projected DTI if LO uses this exact max loan (accurate: includes program MI)
+    const projLoan   = Math.max(0, Math.round(maxLoan));
+    const projPI     = monthlyPayFactor > 0 && projLoan > 0 ? projLoan * monthlyPayFactor : 0;
+    const projMI     = projLoan * miRate;
+    const projDTI    = totalIncome > 0 && projPI > 0
+      ? ((projPI + otherFixed + projMI + totalDebts) / totalIncome) * 100
+      : 0;
     return {
       key, label: prog.label,
-      maxLoan:     Math.max(0, Math.round(maxLoan)),
+      maxLoan:    Math.max(0, Math.round(maxLoan)),
       maxPurchase: Math.max(0, Math.round(maxPurchase)),
-      projDTI:     parseFloat(projDTI.toFixed(1)),
+      projDTI:    parseFloat(projDTI.toFixed(1)),
       targetPct,
+      estMI,        // auto-calculated monthly MI for this program at this loan amount
+      miRate,       // monthly rate fraction (for display)
+      miAnnualPct:  parseFloat((miRate * 12 * 100).toFixed(3)), // e.g. 0.55
     };
   });
 
-  // Feature 2 — Required Income by Program
+  // Feature 2 — Required Income by Program (includes per-program auto-MI)
   const requiredIncomeByProg = Object.entries(PROGRAMS).map(([key, prog]) => {
-    const reqBack  = (totalHousing + totalDebts) > 0 ? (totalHousing + totalDebts) / (prog.backMax / 100) : 0;
-    const reqFront = prog.frontMax && totalHousing > 0 ? totalHousing / (prog.frontMax / 100) : 0;
-    const required = Math.max(reqBack, reqFront);
-    const gap      = required - totalIncome;
-    const eligible = programResults.find(r => r.key === key)?.eligible;
-    return { key, label: prog.label, required, gap, eligible };
+    // Use auto-calculated MI for this program at current loan amount
+    const curLoan     = parseFloat(loanAmount) || 0;
+    const miRate      = getMIRate(key, downPct, parseInt(creditScore)||680);
+    const autoMI      = curLoan * miRate;
+    // Housing with program-specific MI (overrides manual mi field for per-program comparison)
+    const housingWithMI = pi + otherFixed + autoMI;
+    const reqBack     = (housingWithMI + totalDebts) > 0 ? (housingWithMI + totalDebts) / (prog.backMax / 100) : 0;
+    const reqFront    = prog.frontMax && housingWithMI > 0 ? housingWithMI / (prog.frontMax / 100) : 0;
+    const required    = Math.max(reqBack, reqFront);
+    const gap         = required - totalIncome;
+    const eligible    = programResults.find(r => r.key === key)?.eligible;
+    return { key, label: prog.label, required, gap, eligible, autoMI: Math.round(autoMI) };
   });
 
   // Feature 3 — Rate Sensitivity Table
@@ -1132,7 +1194,7 @@ export default function QualifyingIntel() {
                     { label: 'Taxes /mo',   val: taxes,      set: setTaxes,      ph: '417'    },
                     { label: 'Insurance',   val: insurance,  set: setInsurance,  ph: '250'    },
                     { label: 'HOA /mo',     val: hoa,        set: setHoa,        ph: '0'      },
-                    { label: 'MI / MIP',    val: mi,         set: setMi,         ph: '0'      },
+                    { label: 'MI/MIP (auto↓)', val: mi, set: setMi, ph: 'auto' },
                     { label: 'Monthly Debts', val: debts,    set: setDebt,       ph: '850'    },
                   ].map(f => (
                     <div key={f.label}>
@@ -1163,6 +1225,9 @@ export default function QualifyingIntel() {
                       className={`w-full border rounded-lg px-2 py-1.5 text-xs ${parseInt(creditScore) >= 740 ? 'border-emerald-300' : parseInt(creditScore) >= 620 ? 'border-amber-300' : 'border-slate-200'}`} />
                   </div>
                 </div>
+                <p className="text-xs text-slate-400 mt-1 mb-2">
+                  MI/MIP auto-populates when you click <strong>← Use This</strong> on a program card below. Rates are estimates — verify with MI provider at underwrite.
+                </p>
                 {totalHousing > 0 && (
                   <div className="bg-slate-900 rounded-xl px-4 py-2.5 flex items-center justify-between">
                     <div className="flex gap-4 text-xs flex-wrap">
@@ -1334,6 +1399,20 @@ export default function QualifyingIntel() {
                                     <p className="text-xs text-indigo-500 mb-0.5">Max Purchase Price</p>
                                     <p className="text-2xl font-black text-indigo-700 font-mono">{fmt$0(mp.maxPurchase)}</p>
                                   </div>
+                                  {/* MI badge */}
+                                  {mp.miAnnualPct > 0 ? (
+                                    <div className="text-right">
+                                      <p className="text-xs text-slate-400">Est. MI/MIP</p>
+                                      <p className="text-sm font-black text-slate-700 font-mono">{fmt$(mp.estMI)}/mo</p>
+                                      <p className="text-xs text-slate-400">{mp.miAnnualPct}%/yr</p>
+                                    </div>
+                                  ) : (
+                                    <div className="text-right">
+                                      <p className="text-xs text-slate-400">MI/MIP</p>
+                                      <p className="text-sm font-black text-emerald-600">$0</p>
+                                      <p className="text-xs text-slate-400">{key==='VA'?'VA — none':key==='USDA'?'0.35% financed':'≥20% down'}</p>
+                                    </div>
+                                  )}
                                 </div>
                                 <div className="flex items-center justify-between mt-2">
                                   <div>
@@ -1341,7 +1420,11 @@ export default function QualifyingIntel() {
                                     <p className="text-base font-black text-slate-800 font-mono">{fmt$0(mp.maxLoan)}</p>
                                   </div>
                                   <button
-                                    onClick={() => setLoanAmount(String(mp.maxLoan))}
+                                    onClick={() => {
+                                      setLoanAmount(String(mp.maxLoan));
+                                      if (mp.estMI > 0) setMi(String(mp.estMI));
+                                      else setMi('0');
+                                    }}
                                     className={`flex flex-col items-center px-3 py-2 rounded-xl text-xs font-bold border-2 transition-all ${
                                       parseFloat(loanAmount) === mp.maxLoan
                                         ? dtiTarget === 'conservative' ? 'bg-emerald-100 text-emerald-700 border-emerald-400'
@@ -1349,7 +1432,7 @@ export default function QualifyingIntel() {
                                         : 'bg-red-100 text-red-700 border-red-400'
                                         : 'bg-white text-indigo-700 border-indigo-400 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'
                                     }`}
-                                    title={`Projected DTI: ${mp.projDTI}% using ${activeDTITarget.label} target`}
+                                    title={`Projected DTI: ${mp.projDTI}% · MI/MIP ${mp.estMI > 0 ? fmt$(mp.estMI)+'/mo auto-set' : '$0 — none required'}`}
                                   >
                                     <span>{parseFloat(loanAmount) === mp.maxLoan ? '✓ Using' : '← Use This'}</span>
                                     {mp.projDTI > 0 && (
