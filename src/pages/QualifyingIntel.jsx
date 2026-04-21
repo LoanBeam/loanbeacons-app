@@ -382,6 +382,22 @@ export default function QualifyingIntel() {
   const { reportFindings }                = useDecisionRecord(scenarioId);
   const [savedRecordId, setSavedRecordId] = useState(null);
   const [recordSaving,  setRecordSaving]  = useState(false);
+  // Letter generator state
+  const [letterType,        setLetterType]        = useState('prequal');
+  const [letterExpiry,      setLetterExpiry]      = useState('30');
+  const [letterProperty,    setLetterProperty]    = useState('');
+  const [letterLoName,      setLetterLoName]      = useState('');
+  const [letterLoNmls,      setLetterLoNmls]      = useState('');
+  const [letterCompany,     setLetterCompany]     = useState('');
+  const [letterCompanyNmls, setLetterCompanyNmls] = useState('');
+  const [letterPhone,       setLetterPhone]       = useState('');
+  const [letterEmail,       setLetterEmail]       = useState('');
+  const [ausOnFile,         setAusOnFile]         = useState(false);
+  const [ausSystem,         setAusSystem]         = useState('DU');
+  const [ausFinding,        setAusFinding]        = useState('Approve/Eligible');
+  const [letterGenerating,  setLetterGenerating]  = useState(false);
+  const [generatedLetter,   setGeneratedLetter]   = useState('');
+  const [letterError,       setLetterError]       = useState('');
   const [findingsReported, setFindingsReported] = useState(false);
   const [m02Imported,     setM02Imported]     = useState(false);
   const [activeTab,       setActiveTab]       = useState(0);
@@ -759,6 +775,87 @@ export default function QualifyingIntel() {
       onWriteToDecisionRecord: null,
     });
 
+  // ─── Letter Generator ────────────────────────────────────────────────────────
+  const generateLetter = async () => {
+    setLetterGenerating(true);
+    setLetterError('');
+    setGeneratedLetter('');
+    const borrowerName = scenario ? `${scenario.firstName||''} ${scenario.lastName||''}`.trim() || scenario.scenarioName || 'Borrower' : 'Borrower';
+    const bestProgram  = maxPurchasePrices.filter(p=>programResults.find(r=>r.key===p.key)?.eligible&&p.maxPurchase>0).sort((a,b)=>b.maxPurchase-a.maxPurchase)[0];
+    const maxPrice     = bestProgram ? `$${bestProgram.maxPurchase.toLocaleString()}` : 'N/A';
+    const qualProgs    = eligiblePrograms.map(r=>r.prog?.label||r.key).join(', ') || 'N/A';
+    const expiryDate   = (() => {
+      const d = new Date(); d.setDate(d.getDate() + parseInt(letterExpiry||30));
+      return d.toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+    })();
+    const today        = new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+    const isPreApproval = letterType === 'preapproval';
+
+    const systemPrompt = `You are a licensed mortgage compliance officer writing a ${isPreApproval ? 'Pre-Approval' : 'Pre-Qualification'} Letter for a loan officer.
+
+CRITICAL COMPLIANCE REQUIREMENTS — every letter MUST include all of these:
+
+1. COMMITMENT DISCLAIMER: State clearly this is NOT a commitment to lend, NOT a guarantee of loan approval, and NOT a final credit decision.
+2. CONDITIONS LANGUAGE: Include "subject to" conditions — at minimum: satisfactory property appraisal, clear title, verification of income/assets, final underwriting review, no material change in borrower's financial condition, and satisfactory property insurance.
+3. ${isPreApproval ? 'AUS DISCLOSURE: Reference the automated underwriting finding (' + ausSystem + ' — ' + ausFinding + ') but state that final approval is subject to complete underwriting review.' : 'INFORMATION BASIS: State the letter is based on information provided by the borrower that has not been independently verified by an appraiser or underwriter.'}
+4. EQUAL HOUSING LENDER: Include the Equal Housing Lender statement and the phrase "Equal Housing Opportunity" prominently.
+5. NMLS DISCLOSURE: Include both the loan officer NMLS# and company NMLS# with the disclosure "NMLS Consumer Access: www.nmlsconsumeraccess.org".
+6. INTEREST RATE: Do NOT state any specific interest rate — rates are subject to market conditions and credit approval.
+7. FAIR HOUSING: Use neutral, professional language. Do not reference race, color, religion, national origin, sex, disability, or familial status in any way.
+8. EXPIRATION: Clearly state the letter expires on ${expiryDate} and has no validity after that date.
+9. ECOA NOTICE: Include "The federal Equal Credit Opportunity Act prohibits creditors from discriminating against credit applicants…" or equivalent.
+10. REGULATORY FOOTER: Include "This pre-${isPreApproval ? 'approval' : 'qualification'} letter does not constitute a loan commitment or lock-in agreement."
+
+FORMAT: Write a professional business letter in plain text (no markdown). Use proper letter format: date, recipient section (Dear Home Seller/Real Estate Professional), body paragraphs, conditions list, signature block, and compliance footer. Be concise — 400-600 words. Do not include any placeholder brackets like [NAME] — use the actual data provided.`;
+
+    const userMsg = `Generate the letter with this data:
+
+Borrower: ${borrowerName}
+${scenario?.coBorrowers?.length ? 'Co-Borrower: ' + (scenario.coBorrowers[0]?.firstName||'') + ' ' + (scenario.coBorrowers[0]?.lastName||'') : ''}
+Letter Date: ${today}
+Letter Expiration: ${expiryDate}
+Maximum Purchase Price: ${maxPrice}
+Qualifying Programs: ${qualProgs}
+${letterProperty ? 'Subject Property: ' + letterProperty : 'No specific property (open letter)'}
+${isPreApproval ? 'AUS System: ' + ausSystem + '
+AUS Finding: ' + ausFinding : ''}
+
+Loan Officer: ${letterLoName || 'Loan Officer'}
+LO NMLS#: ${letterLoNmls || 'NMLS# on file'}
+Company: ${letterCompany || 'Lending Company'}
+Company NMLS#: ${letterCompanyNmls || 'Company NMLS# on file'}
+${letterPhone ? 'Phone: ' + letterPhone : ''}
+${letterEmail ? 'Email: ' + letterEmail : ''}`;
+
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 1500,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userMsg }],
+        }),
+      });
+      const data = await res.json();
+      if (data.content?.[0]?.text) {
+        setGeneratedLetter(data.content[0].text);
+      } else {
+        setLetterError('Letter generation failed — ' + (data.error?.message || 'unknown error'));
+      }
+    } catch (e) {
+      setLetterError('Network error: ' + e.message);
+    } finally {
+      setLetterGenerating(false);
+    }
+  };
+
   // ─── Decision Record ──────────────────────────────────────────────────────
   const handleSaveToRecord = async () => {
     setRecordSaving(true);
@@ -1083,6 +1180,7 @@ export default function QualifyingIntel() {
               { id: 0, label: 'Qualify',       icon: '🏠', sub: 'Programs & Purchase Price' },
               { id: 1, label: 'Scenarios',     icon: '📉', sub: 'Rate & Buydown Analysis'   },
               { id: 2, label: 'Docs & Factors',icon: '📋', sub: 'Checklist & LO Notes'      },
+              { id: 3, label: 'Letters',        icon: '📄', sub: 'Pre-Qual · Pre-Approval'   },
             ].map(t => (
               <button key={t.id} onClick={() => setActiveTab(t.id)}
                 className={`px-5 py-3 border-b-2 transition-all text-left ${activeTab === t.id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
@@ -1929,6 +2027,182 @@ export default function QualifyingIntel() {
                 className="mt-3 px-5 py-2.5 bg-indigo-600 text-white text-sm font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50">
                 {recordSaving?'⏳ Saving…':'💾 Save to Decision Record'}
               </button>
+            </Section>
+
+        {/* ════ TAB 3: LETTERS ════ */}
+        {activeTab === 3 && (
+          <div className="max-w-3xl space-y-5">
+            <Section title="Pre-Qualification / Pre-Approval Letter" icon="📄">
+
+              {/* Letter type toggle */}
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                {[
+                  { id:'prequal',     label:'Pre-Qualification Letter',  sub:'Income documented · no AUS required',     ok:true },
+                  { id:'preapproval', label:'Pre-Approval Letter',       sub:'Requires AUS Approve/Eligible on file',   ok:ausOnFile },
+                ].map(t => (
+                  <button key={t.id} onClick={() => { if (t.ok || t.id==='preapproval') setLetterType(t.id); }}
+                    className={`p-3 rounded-xl border-2 text-left transition-all ${letterType===t.id ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                    <p className={`text-sm font-bold ${letterType===t.id ? 'text-indigo-700' : 'text-slate-700'}`}>{t.label}</p>
+                    <p className={`text-xs mt-0.5 ${letterType===t.id ? 'text-indigo-500' : 'text-slate-400'}`}>{t.sub}</p>
+                  </button>
+                ))}
+              </div>
+
+              {/* Pre-Approval AUS gate */}
+              {letterType === 'preapproval' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5">
+                  <p className="text-xs font-bold text-amber-800 mb-3">AUS finding required for Pre-Approval letter</p>
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    {[
+                      { val:false, label:'No AUS on file', sub:'Run M10 AUS Rescue first' },
+                      { val:true,  label:'AUS on file',    sub:'Approve/Eligible confirmed' },
+                    ].map(opt => (
+                      <button key={String(opt.val)} onClick={() => setAusOnFile(opt.val)}
+                        className={`p-2.5 rounded-lg border-2 text-left transition-all ${ausOnFile===opt.val ? opt.val ? 'border-emerald-500 bg-emerald-50' : 'border-red-400 bg-red-50' : 'border-slate-200 bg-white'}`}>
+                        <p className={`text-xs font-bold ${ausOnFile===opt.val ? opt.val ? 'text-emerald-700' : 'text-red-700' : 'text-slate-600'}`}>{opt.label}</p>
+                        <p className={`text-xs ${ausOnFile===opt.val ? opt.val ? 'text-emerald-600' : 'text-red-600' : 'text-slate-400'}`}>{opt.sub}</p>
+                      </button>
+                    ))}
+                  </div>
+                  {ausOnFile && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">AUS System</label>
+                        <select value={ausSystem} onChange={e=>setAusSystem(e.target.value)}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs">
+                          <option value="DU">Desktop Underwriter (DU) — Fannie Mae</option>
+                          <option value="LPA">Loan Product Advisor (LPA) — Freddie Mac</option>
+                          <option value="GUS">GUS — USDA Rural Development</option>
+                          <option value="VA">VA — LAPP / SAR / ACE</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">Finding / Recommendation</label>
+                        <select value={ausFinding} onChange={e=>setAusFinding(e.target.value)}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs">
+                          <option>Approve/Eligible</option>
+                          <option>Accept (Freddie Mac LPA)</option>
+                          <option>Refer/Eligible — manual UW</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Letter fields — two-column grid */}
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Expiration</label>
+                  <select value={letterExpiry} onChange={e=>setLetterExpiry(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs">
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                    <option value="120">120 days</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Subject Property Address <span className="font-normal text-slate-400">(leave blank for open letter valid for any property)</span></label>
+                  <input type="text" value={letterProperty} onChange={e=>setLetterProperty(e.target.value)}
+                    placeholder="123 Main St, Atlanta, GA 30301 — or leave blank"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs" />
+                </div>
+              </div>
+
+              {/* LO signature block */}
+              <div className="border border-slate-200 rounded-xl p-4 mb-4">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Loan Officer Signature Block</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { label:'LO Name',        val:letterLoName,      set:setLetterLoName,      ph:'Full name as licensed' },
+                    { label:'LO NMLS #',      val:letterLoNmls,      set:setLetterLoNmls,      ph:'e.g. 1175947' },
+                    { label:'Company Name',   val:letterCompany,     set:setLetterCompany,     ph:'Clearview Lending Solutions' },
+                    { label:'Company NMLS #', val:letterCompanyNmls, set:setLetterCompanyNmls, ph:'e.g. 2647763' },
+                    { label:'Phone',          val:letterPhone,       set:setLetterPhone,       ph:'(xxx) xxx-xxxx' },
+                    { label:'Email',          val:letterEmail,       set:setLetterEmail,       ph:'lo@company.com' },
+                  ].map(f => (
+                    <div key={f.label}>
+                      <label className="block text-xs text-slate-400 mb-1">{f.label}</label>
+                      <input type="text" value={f.val} onChange={e=>f.set(e.target.value)} placeholder={f.ph}
+                        className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Compliance notice */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mb-4 space-y-1">
+                <p className="text-xs font-bold text-slate-600">Compliance checklist — auto-included in every letter:</p>
+                {[
+                  'Not a commitment to lend — stated clearly',
+                  '"Subject to" conditions: appraisal, title, income/asset verification, final UW',
+                  'Equal Housing Lender / Equal Housing Opportunity statement',
+                  'NMLS disclosure with nmlsconsumeraccess.org reference',
+                  'ECOA notice — no discriminatory language',
+                  'Expiration date stated explicitly',
+                  'No specific interest rate quoted',
+                  letterType==='preapproval' ? 'AUS finding referenced ('+ausSystem+' '+ausFinding+')' : 'Stated-income basis disclosure',
+                ].map((item,i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="text-emerald-500 text-xs shrink-0">✓</span>
+                    <span className="text-xs text-slate-600">{item}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Generate button */}
+              {(letterType === 'prequal' || (letterType === 'preapproval' && ausOnFile)) ? (
+                <button onClick={generateLetter} disabled={letterGenerating}
+                  className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                  {letterGenerating ? (
+                    <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/><span>Generating compliant letter…</span></>
+                  ) : (
+                    <><span>📄</span><span>Generate {letterType === 'prequal' ? 'Pre-Qualification' : 'Pre-Approval'} Letter</span></>
+                  )}
+                </button>
+              ) : (
+                <button disabled className="w-full py-3 bg-slate-100 text-slate-400 text-sm font-bold rounded-xl cursor-not-allowed">
+                  Complete AUS section above to generate Pre-Approval Letter
+                </button>
+              )}
+
+              {/* Error */}
+              {letterError && (
+                <div className="mt-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                  <p className="text-xs text-red-700 font-semibold">{letterError}</p>
+                </div>
+              )}
+
+              {/* Generated letter output */}
+              {generatedLetter && (
+                <div className="mt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Generated Letter</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => {navigator.clipboard.writeText(generatedLetter);}}
+                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 border border-indigo-200 bg-indigo-50 px-3 py-1 rounded-lg transition-colors">
+                        📋 Copy
+                      </button>
+                      <button onClick={() => window.print()}
+                        className="text-xs font-semibold text-slate-600 hover:text-slate-800 border border-slate-200 bg-white px-3 py-1 rounded-lg transition-colors">
+                        🖨 Print
+                      </button>
+                      <button onClick={() => setGeneratedLetter('')}
+                        className="text-xs font-semibold text-slate-400 hover:text-slate-600 border border-slate-200 bg-white px-3 py-1 rounded-lg transition-colors">
+                        ✕ Clear
+                      </button>
+                    </div>
+                  </div>
+                  <div className="bg-white border-2 border-indigo-100 rounded-xl p-5 text-sm text-slate-800 leading-relaxed whitespace-pre-wrap font-mono text-xs">
+                    {generatedLetter}
+                  </div>
+                  <div className="mt-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                    <p className="text-xs text-amber-700"><strong>LO Responsibility:</strong> Review this letter before sending. You are responsible for ensuring accuracy of all figures, borrower information, and compliance with applicable state and federal regulations. This letter is generated as a draft only.</p>
+                  </div>
+                </div>
+              )}
+
             </Section>
 
           </div>
