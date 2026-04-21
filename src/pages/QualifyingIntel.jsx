@@ -817,8 +817,8 @@ Letter Expiration: ${expiryDate}
 Maximum Purchase Price: ${maxPrice}
 Qualifying Programs: ${qualProgs}
 ${letterProperty ? 'Subject Property: ' + letterProperty : 'No specific property (open letter)'}
-${isPreApproval ? 'AUS System: ' + ausSystem + '
-AUS Finding: ' + ausFinding : ''}
+${isPreApproval ? 'AUS System: ' + ausSystem : ''}
+${isPreApproval ? 'AUS Finding: ' + ausFinding : ''}
 
 Loan Officer: ${letterLoName || 'Loan Officer'}
 LO NMLS#: ${letterLoNmls || 'NMLS# on file'}
