@@ -375,6 +375,7 @@ export default function QualifyingIntel() {
   const [incomeTypes,    setIncomeTypes]    = useState({});
   const [notes,          setNotes]          = useState('');
   const [downPaymentPct, setDownPaymentPct] = useState('5');
+  const [dtiTarget,      setDtiTarget]      = useState('standard'); // 'conservative'|'standard'|'maximum'
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const initialLoadDone = useRef(false);
 
@@ -501,6 +502,7 @@ export default function QualifyingIntel() {
             if (p.incomeTypes)                   setIncomeTypes(p.incomeTypes);
             if (p.notes !== undefined)           setNotes(p.notes);
             if (p.downPaymentPct)                setDownPaymentPct(p.downPaymentPct);
+            if (p.dtiTarget)                     setDtiTarget(p.dtiTarget);
           }
         } catch (e) { /* ignore bad cache */ }
         // Mark load complete — dirty tracking starts after this
@@ -516,7 +518,7 @@ export default function QualifyingIntel() {
       incomes, coborrowerIncomes, loanAmount, rate, term,
       taxes, insurance, hoa, mi, debts, creditScore,
       slBalance, slActualPayment, slDeferred, slDeferMonths,
-      compFactors, incomeTypes, notes, downPaymentPct,
+      compFactors, incomeTypes, notes, downPaymentPct, dtiTarget,
     }));
   }, [scenarioId, incomes, coborrowerIncomes, loanAmount, rate, term,
       taxes, insurance, hoa, mi, debts, creditScore,
@@ -582,15 +584,35 @@ export default function QualifyingIntel() {
     return (r * Math.pow(1+r, n)) / (Math.pow(1+r, n) - 1);
   })();
 
-  // Feature 1 — Max Purchase Price per program
+  // ─── DTI Target definitions ───────────────────────────────────────────────
+  const DTI_TARGETS = {
+    conservative: { label: 'Conservative', pct: 43, colorClass: 'emerald', badge: '🟢', desc: 'Clean approval — safe for AUS' },
+    standard:     { label: 'Standard',     pct: 45, colorClass: 'amber',   badge: '🟡', desc: 'Solid approval — common LO target' },
+    maximum:      { label: 'Maximum',      pct: null, colorClass: 'red',   badge: '🔴', desc: 'Program ceiling — AUS stretch' },
+  };
+  const activeDTITarget = DTI_TARGETS[dtiTarget] || DTI_TARGETS.standard;
+
+  // Feature 1 — Max Purchase Price per program (uses selected DTI target)
   const downPct = parseFloat(downPaymentPct) || 5;
   const maxPurchasePrices = Object.entries(PROGRAMS).map(([key, prog]) => {
-    const maxPITIBack  = totalIncome > 0 ? totalIncome * (prog.backMax / 100) - (parseFloat(debts)||0) - slQualPayment : 0;
-    const maxPITIFront = prog.frontMax && totalIncome > 0 ? totalIncome * (prog.frontMax / 100) : Infinity;
+    // Effective DTI = min(target%, program max) — never exceed program limit
+    const targetPct    = dtiTarget === 'maximum' ? prog.backMax : Math.min(activeDTITarget.pct, prog.backMax);
+    const frontTarget  = prog.frontMax ? Math.min(prog.frontMax, dtiTarget === 'maximum' ? prog.frontMax : (prog.frontMax < activeDTITarget.pct ? prog.frontMax : activeDTITarget.pct)) : Infinity;
+    const maxPITIBack  = totalIncome > 0 ? totalIncome * (targetPct / 100) - (parseFloat(debts)||0) - slQualPayment : 0;
+    const maxPITIFront = prog.frontMax && totalIncome > 0 ? totalIncome * (frontTarget / 100) : Infinity;
     const maxPI        = Math.min(maxPITIBack, maxPITIFront) - fixedCosts;
     const maxLoan      = monthlyPayFactor > 0 && maxPI > 0 ? maxPI / monthlyPayFactor : 0;
     const maxPurchase  = maxLoan > 0 ? maxLoan / (1 - downPct / 100) : 0;
-    return { key, label: prog.label, maxLoan: Math.max(0, Math.round(maxLoan)), maxPurchase: Math.max(0, Math.round(maxPurchase)) };
+    // Project what the DTI bar will show if LO uses this max loan
+    const projPI       = monthlyPayFactor > 0 && maxLoan > 0 ? Math.round(maxLoan) * monthlyPayFactor : 0;
+    const projDTI      = totalIncome > 0 && projPI > 0 ? ((projPI + fixedCosts + totalDebts) / totalIncome) * 100 : 0;
+    return {
+      key, label: prog.label,
+      maxLoan:     Math.max(0, Math.round(maxLoan)),
+      maxPurchase: Math.max(0, Math.round(maxPurchase)),
+      projDTI:     parseFloat(projDTI.toFixed(1)),
+      targetPct,
+    };
   });
 
   // Feature 2 — Required Income by Program
@@ -1143,6 +1165,49 @@ export default function QualifyingIntel() {
               </div>
 
               {/* Down Payment Control */}
+              {/* ── DTI Target Selector ── */}
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">🎯 Qualifying DTI Target</h2>
+                  <span className="text-xs text-slate-400">Controls max loan calculation</span>
+                </div>
+                <div className="grid grid-cols-3 gap-3 mb-3">
+                  {Object.entries(DTI_TARGETS).map(([key, t]) => (
+                    <button key={key} onClick={() => setDtiTarget(key)}
+                      className={`py-3 px-2 rounded-xl border-2 text-center transition-all ${dtiTarget === key
+                        ? key === 'conservative' ? 'border-emerald-500 bg-emerald-50'
+                        : key === 'standard'     ? 'border-amber-500 bg-amber-50'
+                        : 'border-red-400 bg-red-50'
+                        : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                      <div className="text-lg leading-tight">{t.badge}</div>
+                      <div className={`text-sm font-black mt-0.5 ${dtiTarget === key
+                        ? key === 'conservative' ? 'text-emerald-700'
+                        : key === 'standard'     ? 'text-amber-700'
+                        : 'text-red-600' : 'text-slate-700'}`}>
+                        {t.label}
+                      </div>
+                      <div className={`text-xs font-bold ${dtiTarget === key
+                        ? key === 'conservative' ? 'text-emerald-600'
+                        : key === 'standard'     ? 'text-amber-600'
+                        : 'text-red-500' : 'text-slate-400'}`}>
+                        {t.pct ? `≤${t.pct}% DTI` : 'Program max'}
+                      </div>
+                      <div className="text-xs text-slate-400 mt-0.5 leading-tight hidden md:block">{t.desc}</div>
+                    </button>
+                  ))}
+                </div>
+                {dtiTarget === 'maximum' && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                    <p className="text-xs text-red-700 font-semibold">⚠ Maximum uses each program's hard DTI ceiling. AUS approval not guaranteed. Use only with strong compensating factors documented.</p>
+                  </div>
+                )}
+                {dtiTarget === 'conservative' && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+                    <p className="text-xs text-emerald-700 font-semibold">✓ Conservative target keeps DTI at 43% — clean AUS approvals, best for tight files.</p>
+                  </div>
+                )}
+              </div>
+
               <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">💰 Down Payment</h2>
@@ -1261,14 +1326,24 @@ export default function QualifyingIntel() {
                                   </div>
                                   <button
                                     onClick={() => setLoanAmount(String(mp.maxLoan))}
-                                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border-2 transition-all ${
+                                    className={`flex flex-col items-center px-3 py-2 rounded-xl text-xs font-bold border-2 transition-all ${
                                       parseFloat(loanAmount) === mp.maxLoan
-                                        ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                                        ? dtiTarget === 'conservative' ? 'bg-emerald-100 text-emerald-700 border-emerald-400'
+                                        : dtiTarget === 'standard'     ? 'bg-amber-100 text-amber-700 border-amber-400'
+                                        : 'bg-red-100 text-red-700 border-red-400'
                                         : 'bg-white text-indigo-700 border-indigo-400 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'
                                     }`}
-                                    title="Click to use this as your loan amount"
+                                    title={`Projected DTI: ${mp.projDTI}% using ${activeDTITarget.label} target`}
                                   >
-                                    {parseFloat(loanAmount) === mp.maxLoan ? '✓ Using' : '← Use This'}
+                                    <span>{parseFloat(loanAmount) === mp.maxLoan ? '✓ Using' : '← Use This'}</span>
+                                    {mp.projDTI > 0 && (
+                                      <span className={`text-xs mt-0.5 font-black ${
+                                        parseFloat(loanAmount) === mp.maxLoan ? 'opacity-80' :
+                                        mp.projDTI <= 43 ? 'text-emerald-600' :
+                                        mp.projDTI <= 45 ? 'text-amber-600' :
+                                        mp.projDTI <= 50 ? 'text-orange-500' : 'text-red-600'
+                                      }`}>{mp.projDTI}% DTI</span>
+                                    )}
                                   </button>
                                 </div>
                                 {parseFloat(loanAmount) > mp.maxLoan && mp.maxLoan > 0 && (
@@ -1353,9 +1428,17 @@ export default function QualifyingIntel() {
                 const best = maxPurchasePrices.filter(p=>p.maxPurchase>0).sort((a,b)=>b.maxPurchase-a.maxPurchase)[0];
                 return best ? (
                   <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl p-4 text-white">
-                    <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-wide mb-1">🏡 Best Max Purchase</h3>
+                    <div className="flex items-center justify-between mb-1">
+                      <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-wide">🏡 Best Max Purchase</h3>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                        dtiTarget==='conservative'?'bg-emerald-400/30 text-emerald-200':
+                        dtiTarget==='standard'    ?'bg-amber-400/30 text-amber-200':
+                        'bg-red-400/30 text-red-200'}`}>
+                        {activeDTITarget.badge} {activeDTITarget.label}
+                      </span>
+                    </div>
                     <div className="text-2xl font-black font-mono">{fmt$0(best.maxPurchase)}</div>
-                    <p className="text-xs text-indigo-300 mt-0.5">{best.label} · {downPct}% down</p>
+                    <p className="text-xs text-indigo-300 mt-0.5">{best.label} · {downPct}% down · ≤{best.targetPct}% DTI</p>
                     <div className="mt-3 pt-3 border-t border-indigo-500 text-xs space-y-1">
                       <div className="flex justify-between items-center">
                         <span className="text-indigo-300">Max Loan</span>
