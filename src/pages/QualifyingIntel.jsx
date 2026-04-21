@@ -341,6 +341,7 @@ export default function QualifyingIntel() {
   const [recordSaving,  setRecordSaving]  = useState(false);
   const [findingsReported, setFindingsReported] = useState(false);
   const [m02Imported,     setM02Imported]     = useState(false);
+  const [activeTab,       setActiveTab]       = useState(0);
 
   const [scenario,  setScenario]  = useState(null);
   const [loading,   setLoading]   = useState(!!scenarioId);
@@ -925,697 +926,675 @@ export default function QualifyingIntel() {
       )}
 
       {/* ════════════════════════════════════════════════════════
-          5. CONTENT
+          5. THREE-TAB LAYOUT
       ════════════════════════════════════════════════════════ */}
-      <div className="max-w-5xl mx-auto px-4 py-6">
 
-        {/* Borrower Name Mismatch Warning */}
-        {scenario && borrower && scenario.scenarioName &&
-          !scenario.scenarioName.toLowerCase().includes((scenario.firstName || '').toLowerCase()) &&
-          !scenario.scenarioName.toLowerCase().includes((scenario.lastName || '').toLowerCase()) && (
-          <div className="bg-red-50 border-l-4 border-red-500 rounded-xl px-5 py-4 flex items-start gap-3 mb-5">
-            <span className="text-red-500 text-xl shrink-0">⚠</span>
-            <div>
-              <p className="text-sm font-bold text-red-800">Borrower Name Mismatch Detected</p>
-              <p className="text-sm text-red-700 mt-1">The scenario is named <strong>"{scenario.scenarioName}"</strong> but the borrower on file is <strong>{borrower}</strong>.</p>
-              <button onClick={() => navigate(`/scenario-creator/${scenarioId}`)} className="mt-2 text-xs font-bold text-red-700 hover:text-red-900 underline">→ Go to Scenario Creator to fix</button>
+      {/* ── Tab Navigation Bar ── */}
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-30">
+        <div className="max-w-6xl mx-auto px-6">
+          <div className="flex items-center">
+            {[
+              { id: 0, label: 'Qualify',       icon: '🏠', sub: 'Programs & Purchase Price' },
+              { id: 1, label: 'Scenarios',     icon: '📉', sub: 'Rate & Buydown Analysis'   },
+              { id: 2, label: 'Docs & Factors',icon: '📋', sub: 'Checklist & LO Notes'      },
+            ].map(t => (
+              <button key={t.id} onClick={() => setActiveTab(t.id)}
+                className={`px-5 py-3 border-b-2 transition-all text-left ${activeTab === t.id ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+                <div className="text-sm font-bold">{t.icon} {t.label}</div>
+                <div className="hidden md:block text-xs text-slate-400 leading-none mt-0.5">{t.sub}</div>
+              </button>
+            ))}
+            <div className="ml-auto flex items-center gap-4 pr-2">
+              {totalIncome > 0 && (
+                <div className="text-right">
+                  <div className="text-xs text-slate-400">Total Income</div>
+                  <div className="text-sm font-black text-emerald-600">{fmt$(totalIncome)}/mo</div>
+                </div>
+              )}
+              {totalIncome > 0 && totalHousing > 0 && (
+                <div className="text-right">
+                  <div className="text-xs text-slate-400">Back DTI</div>
+                  <div className={`text-sm font-black font-mono ${backDTI > 56.9 ? 'text-red-600' : backDTI > 50 ? 'text-amber-600' : backDTI > 43 ? 'text-amber-500' : 'text-emerald-600'}`}>{fmtPct(backDTI)}</div>
+                </div>
+              )}
+              {totalIncome > 0 && (
+                <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${overallPass ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                  {overallPass ? `✓ ${eligiblePrograms.length} Eligible` : '✗ None Qualify'}
+                </span>
+              )}
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Tab Content ── */}
+      <div className="max-w-6xl mx-auto px-6 py-6">
+
+        {/* ════ TAB 0: QUALIFY ════ */}
+        {activeTab === 0 && (
+          <div className="grid xl:grid-cols-3 gap-6">
+
+            {/* Left column */}
+            <div className="xl:col-span-2 space-y-5">
+
+              {/* Income Bar */}
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">💼 Borrower Income</h2>
+                  <div className="flex items-center gap-2">
+                    {m02Imported && <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-full">✅ From M02</span>}
+                    <span className="text-sm font-black text-emerald-600">{fmt$(totalBorrowerIncome)}/mo</span>
+                  </div>
+                </div>
+                {m02Imported && (
+                  <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2 mb-3 flex items-center justify-between">
+                    <p className="text-xs text-emerald-700">Imported from M02 Income Analyzer™ — edit below to override</p>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  {incomes.map((inc) => {
+                    const incType = INCOME_TYPES.find(t => t.id === inc.type);
+                    const rawAmt  = parseFloat(inc.gross) || 0;
+                    const grossedUp = incType?.grossUp && inc.nonTaxableConfirmed && rawAmt > 0;
+                    const qualAmt   = grossedUp ? rawAmt / 0.75 : rawAmt;
+                    return (
+                      <div key={inc.id} className={`grid grid-cols-12 gap-2 items-center px-2 py-2 rounded-xl ${grossedUp ? 'bg-purple-50' : 'bg-slate-50'}`}>
+                        <div className="col-span-5">
+                          <select value={inc.type} onChange={e => updateIncome(setIncomes, inc.id, 'type', e.target.value)}
+                            className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 bg-white focus:ring-2 focus:ring-indigo-300">
+                            {INCOME_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                          </select>
+                        </div>
+                        <div className="col-span-4 relative">
+                          <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs">$</span>
+                          <input type="number" value={inc.gross} placeholder="0.00"
+                            onChange={e => updateIncome(setIncomes, inc.id, 'gross', e.target.value)}
+                            className="w-full pl-5 border border-slate-200 rounded-lg py-1.5 text-xs bg-white focus:ring-2 focus:ring-indigo-300" />
+                        </div>
+                        <div className="col-span-2 text-right">
+                          {incType?.grossUp && rawAmt > 0 && (
+                            <label className="flex items-center gap-1 justify-end cursor-pointer">
+                              <input type="checkbox" checked={!!inc.nonTaxableConfirmed}
+                                onChange={e => updateIncome(setIncomes, inc.id, 'nonTaxableConfirmed', e.target.checked)}
+                                className="accent-purple-600 w-3 h-3" />
+                              <span className="text-xs text-purple-600 font-semibold">↑25%</span>
+                            </label>
+                          )}
+                          {qualAmt > 0 && <div className="text-xs font-bold text-indigo-600 font-mono">{fmt$(qualAmt)}</div>}
+                        </div>
+                        <div className="col-span-1 text-center">
+                          {incomes.length > 1 && <button onClick={() => removeIncome(setIncomes, inc.id)} className="text-slate-300 hover:text-red-400 text-sm">✕</button>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-100">
+                  <button onClick={() => addIncome(setIncomes)} className="text-xs text-indigo-600 font-semibold hover:text-indigo-800">+ Add Income Source</button>
+                  {coborrowerIncomes.length === 0 && (
+                    <button onClick={() => addIncome(setCoborrowerIncomes)} className="text-xs text-slate-400 hover:text-slate-600">+ Add Co-Borrower</button>
+                  )}
+                </div>
+                {coborrowerIncomes.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-slate-100">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Co-Borrower</p>
+                      <span className="text-xs font-black text-violet-600">{fmt$(totalCoBorrowerIncome)}/mo</span>
+                    </div>
+                    {coborrowerIncomes.map(inc => (
+                      <div key={inc.id} className="grid grid-cols-12 gap-2 items-center mb-2 bg-slate-50 px-2 py-2 rounded-xl">
+                        <div className="col-span-5">
+                          <select value={inc.type} onChange={e => updateIncome(setCoborrowerIncomes, inc.id, 'type', e.target.value)}
+                            className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-700 bg-white">
+                            {INCOME_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                          </select>
+                        </div>
+                        <div className="col-span-5 relative">
+                          <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs">$</span>
+                          <input type="number" value={inc.gross} placeholder="0.00"
+                            onChange={e => updateIncome(setCoborrowerIncomes, inc.id, 'gross', e.target.value)}
+                            className="w-full pl-5 border border-slate-200 rounded-lg py-1.5 text-xs bg-white" />
+                        </div>
+                        <div className="col-span-2 text-center">
+                          <button onClick={() => removeIncome(setCoborrowerIncomes, inc.id)} className="text-slate-300 hover:text-red-400 text-sm">✕</button>
+                        </div>
+                      </div>
+                    ))}
+                    <button onClick={() => addIncome(setCoborrowerIncomes)} className="text-xs text-slate-400 hover:text-slate-600">+ Add Co-Borrower Income</button>
+                  </div>
+                )}
+              </div>
+
+              {/* Housing & Debts — compact grid */}
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+                <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-4">🏠 Housing & Debts</h2>
+                <div className="grid grid-cols-3 md:grid-cols-4 gap-3 mb-3">
+                  {[
+                    { label: 'Loan Amount', val: loanAmount, set: setLoanAmount, ph: '400000' },
+                    { label: 'Taxes /mo',   val: taxes,      set: setTaxes,      ph: '417'    },
+                    { label: 'Insurance',   val: insurance,  set: setInsurance,  ph: '250'    },
+                    { label: 'HOA /mo',     val: hoa,        set: setHoa,        ph: '0'      },
+                    { label: 'MI / MIP',    val: mi,         set: setMi,         ph: '0'      },
+                    { label: 'Monthly Debts', val: debts,    set: setDebt,       ph: '850'    },
+                  ].map(f => (
+                    <div key={f.label}>
+                      <label className="block text-xs text-slate-400 mb-1">{f.label}</label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1.5 text-slate-400 text-xs">$</span>
+                        <input type="number" value={f.val} placeholder={f.ph} onChange={e => f.set(e.target.value)}
+                          className="w-full pl-5 border border-slate-200 rounded-lg py-1.5 text-xs focus:ring-2 focus:ring-indigo-300" />
+                      </div>
+                    </div>
+                  ))}
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Rate (%)</label>
+                    <input type="number" step="0.001" value={rate} placeholder="6.375" onChange={e => setRate(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-indigo-300" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Term</label>
+                    <select value={term} onChange={e => setTerm(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs">
+                      <option value="360">30yr</option><option value="300">25yr</option>
+                      <option value="240">20yr</option><option value="180">15yr</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Credit Score</label>
+                    <input type="number" value={creditScore} placeholder="720" onChange={e => setCreditScore(e.target.value)}
+                      className={`w-full border rounded-lg px-2 py-1.5 text-xs ${parseInt(creditScore) >= 740 ? 'border-emerald-300' : parseInt(creditScore) >= 620 ? 'border-amber-300' : 'border-slate-200'}`} />
+                  </div>
+                </div>
+                {totalHousing > 0 && (
+                  <div className="bg-slate-900 rounded-xl px-4 py-2.5 flex items-center justify-between">
+                    <div className="flex gap-4 text-xs flex-wrap">
+                      <span className="text-slate-400">P&I <span className="text-white font-bold font-mono">{fmt$(pi)}</span></span>
+                      <span className="text-slate-400">Taxes <span className="text-white font-bold font-mono">{fmt$(parseFloat(taxes)||0)}</span></span>
+                      <span className="text-slate-400">Ins <span className="text-white font-bold font-mono">{fmt$(parseFloat(insurance)||0)}</span></span>
+                      {parseFloat(mi)  > 0 && <span className="text-slate-400">MI <span className="text-white font-bold font-mono">{fmt$(parseFloat(mi))}</span></span>}
+                      {parseFloat(hoa) > 0 && <span className="text-slate-400">HOA <span className="text-white font-bold font-mono">{fmt$(parseFloat(hoa))}</span></span>}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-xs text-slate-400">Total PITI</div>
+                      <div className="text-xl font-black text-white font-mono">{fmt$(totalHousing)}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Down Payment Control */}
+              <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">💰 Down Payment</h2>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400">Custom %:</span>
+                    <div className="relative w-20">
+                      <input type="number" step="0.5" value={downPaymentPct} onChange={e => setDownPaymentPct(e.target.value)}
+                        className="w-full border-2 border-indigo-300 rounded-lg px-2 py-1 text-sm font-black text-center text-indigo-700 focus:ring-2 focus:ring-indigo-400" />
+                    </div>
+                    <span className="text-xs font-bold text-indigo-600">%</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+                  {[
+                    { pct: '0',   label: '0%',   note: 'VA/USDA' },
+                    { pct: '3',   label: '3%',   note: 'Conv' },
+                    { pct: '3.5', label: '3.5%', note: 'FHA min' },
+                    { pct: '5',   label: '5%',   note: 'Conv' },
+                    { pct: '10',  label: '10%',  note: 'Conv' },
+                    { pct: '20',  label: '20%',  note: 'No MI' },
+                  ].map(({ pct, label, note }) => (
+                    <button key={pct} onClick={() => setDownPaymentPct(pct)}
+                      className={`py-2.5 rounded-xl border-2 text-center transition-all ${downPaymentPct === pct ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:bg-indigo-50'}`}>
+                      <div className="text-sm font-black">{label}</div>
+                      <div className={`text-xs ${downPaymentPct === pct ? 'text-indigo-200' : 'text-slate-400'}`}>{note}</div>
+                    </button>
+                  ))}
+                </div>
+                {parseFloat(loanAmount) > 0 && parseFloat(downPaymentPct) > 0 && (
+                  <div className="mt-3 bg-indigo-50 rounded-xl px-4 py-2 flex items-center justify-between">
+                    <span className="text-xs text-indigo-600 font-semibold">Down payment on <span className="font-mono">{fmt$0(parseFloat(loanAmount))}</span> loan:</span>
+                    <span className="text-sm font-black text-indigo-700 font-mono">
+                      {fmt$0(parseFloat(loanAmount) / (1 - Math.min(parseFloat(downPaymentPct),99)/100) * (parseFloat(downPaymentPct)/100))}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Program Cards */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wide">📋 Program Eligibility</h2>
+                  {totalIncome > 0 && totalHousing > 0 && (
+                    <span className={`text-xs font-bold px-3 py-1 rounded-full border ${overallPass ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                      {overallPass ? `✓ ${eligiblePrograms.length} program${eligiblePrograms.length !== 1 ? 's' : ''} qualify` : '✗ No programs qualify'}
+                    </span>
+                  )}
+                </div>
+                {(totalIncome === 0 || totalHousing === 0) ? (
+                  <div className="bg-white rounded-2xl border border-dashed border-slate-200 p-10 text-center">
+                    <p className="text-3xl mb-3">📊</p>
+                    <p className="text-slate-500 text-sm font-semibold">Enter income and housing above</p>
+                    <p className="text-slate-400 text-xs mt-1">Program eligibility and max purchase prices will appear here</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {Object.entries(PROGRAMS).map(([key, prog]) => {
+                      const frontPass  = !prog.frontMax || frontDTI <= prog.frontMax;
+                      const backPass   = key === 'VA' ? true : backDTI <= prog.backMax;
+                      const creditPass = !creditScore || parseInt(creditScore) >= prog.minCredit;
+                      const eligible   = frontPass && backPass && creditPass;
+                      const isVA       = key === 'VA';
+                      const vaOverDTI  = isVA && backDTI > prog.backMax;
+                      const mp         = maxPurchasePrices.find(p => p.key === key);
+                      const MIN_DOWN   = { FHA:3.5, CONVENTIONAL:3, HOMEREADY:3, HOMEPOSSIBLE:3, VA:0, USDA:0 };
+                      const minDown    = MIN_DOWN[key] ?? 3;
+                      const curDown    = parseFloat(downPaymentPct) || 5;
+                      const failReason = !creditPass
+                        ? `Credit ${parseInt(creditScore)||0} below ${prog.minCredit} minimum`
+                        : !backPass  ? `Back DTI ${fmtPct(backDTI)} exceeds ${prog.backMax}% max`
+                        : !frontPass ? `Front DTI ${fmtPct(frontDTI)} exceeds ${prog.frontMax}% max`
+                        : '';
+                      const ri = requiredIncomeByProg.find(r => r.key === key);
+                      return (
+                        <div key={key} className={`rounded-2xl border-2 p-5 transition-all ${eligible ? 'border-emerald-200 bg-white shadow-sm' : 'border-slate-100 bg-slate-50/60'}`}>
+                          {/* Header */}
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-3 h-3 rounded-full ${eligible ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                              <span className="text-base font-black text-slate-800">{prog.label}</span>
+                              {prog.minCredit && <span className="text-xs text-slate-400 font-mono">{prog.minCredit}+ FICO</span>}
+                            </div>
+                            <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${eligible ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : isVA && vaOverDTI ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                              {eligible ? '✓ Qualifies' : isVA && vaOverDTI ? '⚠ Check Residual' : '✗ Fails'}
+                            </span>
+                          </div>
+
+                          {/* DTI Bar */}
+                          <div className="mb-4">
+                            <div className="flex justify-between text-xs mb-1.5">
+                              <span className="text-slate-500">Back-End DTI</span>
+                              <span className={`font-bold font-mono ${backPass ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {fmtPct(backDTI)} <span className="text-slate-400 font-normal">/ {prog.backMax}%</span>
+                              </span>
+                            </div>
+                            <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div className={`h-full rounded-full transition-all ${backDTI > prog.backMax ? 'bg-red-500' : backDTI > prog.backMax * 0.9 ? 'bg-amber-400' : 'bg-emerald-500'}`}
+                                style={{ width: `${Math.min((backDTI / prog.backMax) * 100, 100)}%` }} />
+                            </div>
+                          </div>
+
+                          {/* Max Purchase + Down Payment Grid */}
+                          {mp?.maxPurchase > 0 ? (
+                            <div className="space-y-2">
+                              <div className="bg-indigo-50 rounded-xl px-4 py-3">
+                                <p className="text-xs text-indigo-500 mb-0.5">Max Purchase Price</p>
+                                <p className="text-2xl font-black text-indigo-700 font-mono">{fmt$0(mp.maxPurchase)}</p>
+                                <p className="text-xs text-slate-400 mt-0.5">Max loan: <span className="font-mono">{fmt$0(mp.maxLoan)}</span></p>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2">
+                                <div className="bg-slate-50 rounded-xl p-2 text-center">
+                                  <p className="text-xs text-slate-400">Min Down</p>
+                                  <p className="text-sm font-black text-slate-700">{key==='VA'||key==='USDA'?'0%':`${minDown}%`}</p>
+                                  <p className="text-xs font-mono text-slate-500">{key==='VA'||key==='USDA'?'$0':fmt$0(mp.maxPurchase*minDown/100)}</p>
+                                </div>
+                                <div className={`rounded-xl p-2 text-center ${eligible?'bg-indigo-50':'bg-slate-50'}`}>
+                                  <p className="text-xs text-slate-400">{curDown}% Down</p>
+                                  <p className={`text-sm font-black font-mono ${eligible?'text-indigo-700':'text-slate-500'}`}>{fmt$0(mp.maxPurchase*curDown/100)}</p>
+                                </div>
+                                <div className={`rounded-xl p-2 text-center ${eligible?'bg-emerald-50':'bg-slate-50'}`}>
+                                  <p className="text-xs text-slate-400">20% Down</p>
+                                  <p className={`text-sm font-black font-mono ${eligible?'text-emerald-700':'text-slate-500'}`}>{fmt$0(mp.maxPurchase*0.20)}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="bg-slate-50 rounded-xl p-3 text-center text-xs text-slate-400">—</div>
+                          )}
+
+                          {/* Fail reason + income gap */}
+                          {!eligible && (
+                            <div className="mt-3 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
+                              <p className="text-xs text-red-600 font-semibold">✗ {failReason}</p>
+                              {ri?.gap > 0 && <p className="text-xs text-red-500 mt-0.5">Need <span className="font-bold font-mono">{fmt$(ri.gap)}/mo</span> more income</p>}
+                            </div>
+                          )}
+                          {isVA && <p className="text-xs text-amber-600 mt-2 italic">VA: residual income governs — verify separately</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right sidebar */}
+            <div className="space-y-4">
+              {/* DTI Summary */}
+              {totalIncome > 0 && (
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">DTI Summary</h3>
+                  {[
+                    { label:'Front DTI', val:frontDTI, guide:28, max:46.9 },
+                    { label:'Back DTI',  val:backDTI,  guide:43, max:56.9 },
+                  ].map(item => (
+                    <div key={item.label} className="mb-3">
+                      <div className="flex justify-between mb-1">
+                        <span className="text-xs text-slate-500">{item.label}</span>
+                        <span className={`text-sm font-black font-mono ${dtiColor(item.val, item.max)}`}>{fmtPct(item.val)}</span>
+                      </div>
+                      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${item.val>item.max?'bg-red-500':item.val>item.guide?'bg-amber-400':'bg-emerald-500'}`}
+                          style={{width:`${Math.min(item.val/item.max*100,100)}%`}} />
+                      </div>
+                    </div>
+                  ))}
+                  <div className="border-t border-slate-100 pt-3 space-y-1.5 text-xs">
+                    {[['Total Income',fmt$(totalIncome)+'/mo'],['Total PITI',fmt$(totalHousing)+'/mo'],['Total Debts',fmt$(totalDebts)+'/mo']].map(([l,v])=>(
+                      <div key={l} className="flex justify-between">
+                        <span className="text-slate-400">{l}</span>
+                        <span className="font-bold text-slate-700">{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Best Max Purchase */}
+              {totalIncome > 0 && monthlyPayFactor > 0 && (() => {
+                const best = maxPurchasePrices.filter(p=>p.maxPurchase>0).sort((a,b)=>b.maxPurchase-a.maxPurchase)[0];
+                return best ? (
+                  <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl p-4 text-white">
+                    <h3 className="text-xs font-bold text-indigo-300 uppercase tracking-wide mb-1">🏡 Best Max Purchase</h3>
+                    <div className="text-2xl font-black font-mono">{fmt$0(best.maxPurchase)}</div>
+                    <p className="text-xs text-indigo-300 mt-0.5">{best.label} · {downPct}% down</p>
+                    <div className="mt-3 pt-3 border-t border-indigo-500 text-xs space-y-1">
+                      <div className="flex justify-between"><span className="text-indigo-300">Max Loan</span><span className="font-mono font-bold">{fmt$0(best.maxLoan)}</span></div>
+                      <div className="flex justify-between"><span className="text-indigo-300">Down Payment</span><span className="font-mono font-bold">{fmt$0(best.maxPurchase*downPct/100)}</span></div>
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+
+              {/* Program Quick List */}
+              {totalIncome > 0 && (
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
+                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Programs</h3>
+                  <div className="space-y-1.5">
+                    {programResults.map(({key,prog,eligible}) => {
+                      const mp = maxPurchasePrices.find(p=>p.key===key);
+                      return (
+                        <div key={key} className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs ${eligible?'bg-emerald-50 border border-emerald-100':'bg-slate-50 border border-slate-100'}`}>
+                          <div className="flex items-center gap-2">
+                            <span className={eligible?'text-emerald-600 font-bold':'text-slate-300 font-bold'}>{eligible?'✓':'✗'}</span>
+                            <span className={`font-semibold ${eligible?'text-emerald-700':'text-slate-400'}`}>{prog.label}</span>
+                          </div>
+                          {mp?.maxPurchase > 0 && <span className={`font-mono font-bold text-xs ${eligible?'text-indigo-600':'text-slate-400'}`}>{fmt$0(mp.maxPurchase)}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Key Rules */}
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2">⚠️ Key Rules</h3>
+                <div className="text-xs text-amber-700 space-y-1">
+                  <p>• FHA back-end max: 56.9% (AUS)</p>
+                  <p>• Conventional: 50% (DU/LPA)</p>
+                  <p>• HomeReady/Home Possible: ≤80% AMI</p>
+                  <p>• VA: no hard DTI — residual income</p>
+                  <p>• USDA: 29% front / 41% back</p>
+                  <p>• Non-taxable: gross up 25% (÷0.75)</p>
+                  <p>• OT/bonus: 2-year history required</p>
+                  <p>• SE: 2-year tax return average</p>
+                </div>
+              </div>
+            </div>
+
           </div>
         )}
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-          <div className="xl:col-span-2">
+        {/* ════ TAB 1: SCENARIOS ════ */}
+        {activeTab === 1 && (
+          <div className="space-y-5">
 
-            {/* ── Borrower Income ── */}
-            <Section title="Borrower Income" subtitle="Enter all qualifying income sources. Each type has specific documentation requirements." icon="💼">
-              {m02Imported && (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 mb-4 flex items-start gap-3">
-                  <span className="text-emerald-600 text-lg shrink-0">✅</span>
-                  <div>
-                    <p className="text-xs font-bold text-emerald-800">Income imported from M02 Income Analyzer™</p>
-                    <p className="text-xs text-emerald-700 mt-0.5">All income sources and qualifying amounts have been pre-populated. You can edit any field below — changes here do not affect M02.</p>
-                  </div>
-                </div>
-              )}
-              <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-4">
-                <p className="text-xs font-bold text-blue-800">📄 Always enter the raw amount from the award letter or document</p>
-                <p className="text-xs text-blue-700 mt-1">Enter exactly what the document says — do not pre-calculate gross-ups. LoanBeacons handles the math. For non-taxable income, check the confirmation box and the grossed-up qualifying amount is calculated automatically.</p>
-              </div>
-              <div className="space-y-3">
-                {incomes.map((inc, idx) => {
-                  const incType       = INCOME_TYPES.find(t => t.id === inc.type);
-                  const rawAmt        = parseFloat(inc.gross) || 0;
-                  const grossedUp     = incType?.grossUp && inc.nonTaxableConfirmed && rawAmt > 0;
-                  const qualifyingAmt = grossedUp ? rawAmt / 0.75 : rawAmt;
-                  return (
-                    <div key={inc.id} className={`rounded-xl border p-3 ${grossedUp ? 'border-purple-200 bg-purple-50/30' : 'border-slate-100 bg-white'}`}>
-                      <div className="grid grid-cols-12 gap-2 items-start">
-                        <div className="col-span-5">
-                          {idx === 0 && <label className="block text-xs text-slate-400 mb-1">Income Type</label>}
-                          <select value={inc.type} onChange={e => updateIncome(setIncomes, inc.id, 'type', e.target.value)}
-                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 focus:ring-2 focus:ring-indigo-300">
-                            {INCOME_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}{t.grossUp ? ' (↑25% eligible)' : ''}</option>)}
-                          </select>
-                        </div>
-                        <div className="col-span-4">
-                          {idx === 0 && <label className="block text-xs text-slate-400 mb-1">Raw Monthly Amount ($)</label>}
-                          <div className="relative">
-                            <span className="absolute left-3 top-2 text-slate-400 text-sm">$</span>
-                            <input type="number" value={inc.gross} placeholder="From award letter"
-                              onChange={e => updateIncome(setIncomes, inc.id, 'gross', e.target.value)}
-                              className="w-full pl-7 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
-                          </div>
-                        </div>
-                        <div className="col-span-2">
-                          {idx === 0 && <label className="block text-xs text-slate-400 mb-1">Note</label>}
-                          <input type="text" value={inc.note} placeholder="optional"
-                            onChange={e => updateIncome(setIncomes, inc.id, 'note', e.target.value)}
-                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
-                        </div>
-                        <div className="col-span-1 flex items-end pb-2">
-                          {incomes.length > 1 && <button onClick={() => removeIncome(setIncomes, inc.id)} className="text-slate-300 hover:text-red-400 text-lg leading-none">✕</button>}
-                        </div>
-                        <div className="col-span-12">
-                          <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded px-2 py-1">📎 {incType?.docsNeeded}</p>
-                        </div>
-                        {incType?.grossUp && rawAmt > 0 && (
-                          <div className="col-span-12">
-                            <label className="flex items-start gap-2 cursor-pointer bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">
-                              <input type="checkbox" checked={!!inc.nonTaxableConfirmed}
-                                onChange={e => updateIncome(setIncomes, inc.id, 'nonTaxableConfirmed', e.target.checked)}
-                                className="w-4 h-4 mt-0.5 accent-purple-600 shrink-0" />
-                              <div>
-                                <p className="text-xs font-bold text-purple-800">Confirm non-taxable income (required for gross-up)</p>
-                                <p className="text-xs text-purple-600 mt-0.5">I have verified this income is non-taxable. LoanBeacons will gross up by 25% (÷ 0.75) for qualifying.</p>
-                              </div>
-                            </label>
-                            {inc.nonTaxableConfirmed && (
-                              <div className="mt-2 flex items-center justify-between bg-purple-100 border border-purple-200 rounded-lg px-3 py-2">
-                                <div>
-                                  <p className="text-xs text-purple-700">Raw amount: <span className="font-bold font-mono">{fmt$(rawAmt)}/mo</span></p>
-                                  <p className="text-xs text-purple-700 mt-0.5">Grossed-up qualifying: <span className="font-bold font-mono text-purple-900">{fmt$(qualifyingAmt)}/mo</span></p>
-                                </div>
-                                <span className="text-xs font-bold text-purple-700 bg-white border border-purple-300 px-2 py-1 rounded">÷ 0.75 = ↑25%</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                <button onClick={() => addIncome(setIncomes)} className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 mt-1">+ Add Income Source</button>
-              </div>
-
-              <div className="mt-5 pt-4 border-t border-slate-100">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Co-Borrower Income</p>
-                  {coborrowerIncomes.length === 0 && (
-                    <button onClick={() => addIncome(setCoborrowerIncomes)} className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold">+ Add Co-Borrower</button>
-                  )}
-                </div>
-                {coborrowerIncomes.map(inc => (
-                  <div key={inc.id} className="grid grid-cols-12 gap-2 items-start mb-3">
-                    <div className="col-span-5">
-                      <select value={inc.type} onChange={e => updateIncome(setCoborrowerIncomes, inc.id, 'type', e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300">
-                        {INCOME_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
-                      </select>
-                    </div>
-                    <div className="col-span-4">
-                      <input type="number" value={inc.gross} placeholder="0"
-                        onChange={e => updateIncome(setCoborrowerIncomes, inc.id, 'gross', e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
-                    </div>
-                    <div className="col-span-2">
-                      <input type="text" value={inc.note} placeholder="optional"
-                        onChange={e => updateIncome(setCoborrowerIncomes, inc.id, 'note', e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
-                    </div>
-                    <div className="col-span-1 flex items-center pt-2">
-                      <button onClick={() => removeIncome(setCoborrowerIncomes, inc.id)} className="text-slate-300 hover:text-red-400 text-lg leading-none">✕</button>
-                    </div>
-                  </div>
-                ))}
-                {coborrowerIncomes.length > 0 && (
-                  <button onClick={() => addIncome(setCoborrowerIncomes)} className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1">+ Add Co-Borrower Income Source</button>
-                )}
-              </div>
-            </Section>
-
-            {/* ── Housing + Debts ── */}
-            <Section title="Housing Payment & Debts" subtitle="PITI auto-calculated from loan details. Debts from credit report." icon="🏠">
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-                {[
-                  { label: 'Loan Amount',         val: loanAmount, set: setLoanAmount, ph: '300000' },
-                  { label: 'Property Taxes (mo)', val: taxes,      set: setTaxes,      ph: '350'    },
-                  { label: 'Home Insurance (mo)', val: insurance,  set: setInsurance,  ph: '120'    },
-                  { label: 'HOA Dues (mo)',        val: hoa,        set: setHoa,        ph: '0'      },
-                  { label: 'MI / MIP (mo)',        val: mi,         set: setMi,         ph: '0'      },
-                  { label: 'Monthly Debts',        val: debts,      set: setDebt,       ph: '850'    },
-                ].map(f => (
-                  <div key={f.label}>
-                    <label className="block text-xs font-semibold text-slate-400 mb-1">{f.label}</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-2 text-slate-400 text-sm">$</span>
-                      <input type="number" value={f.val} placeholder={f.ph} onChange={e => f.set(e.target.value)}
-                        className="w-full pl-7 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
-                    </div>
-                    {f.val && parseFloat(f.val) > 0 && <p className="text-xs text-slate-400 mt-0.5 font-mono">{fmt$(parseFloat(f.val))}</p>}
-                  </div>
-                ))}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">Down Payment (%)</label>
-                  <div className="relative">
-                    <input type="number" step="0.5" value={downPaymentPct} placeholder="5"
-                      onChange={e => setDownPaymentPct(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
-                    <span className="absolute right-3 top-2 text-slate-400 text-sm">%</span>
-                  </div>
-                  {downPaymentPct && <p className="text-xs text-slate-400 mt-0.5">{parseFloat(downPaymentPct)||5}% down on purchase</p>}
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">Interest Rate (%)</label>
-                  <div className="relative">
-                    <input type="number" step="0.001" value={rate} placeholder="7.250" onChange={e => setRate(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
-                    <span className="absolute right-3 top-2 text-slate-400 text-sm">%</span>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">Loan Term</label>
-                  <select value={term} onChange={e => setTerm(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300">
-                    <option value="360">30 Years (360 mo)</option>
-                    <option value="300">25 Years (300 mo)</option>
-                    <option value="240">20 Years (240 mo)</option>
-                    <option value="180">15 Years (180 mo)</option>
-                    <option value="120">10 Years (120 mo)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">Credit Score (Mid)</label>
-                  <input type="number" value={creditScore} placeholder="720" onChange={e => setCreditScore(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
-                  {creditScore && (
-                    <p className={`text-xs mt-0.5 font-semibold ${parseInt(creditScore) >= 740 ? 'text-emerald-600' : parseInt(creditScore) >= 680 ? 'text-blue-600' : parseInt(creditScore) >= 620 ? 'text-amber-600' : 'text-red-600'}`}>
-                      {parseInt(creditScore) >= 740 ? '✅ Excellent' : parseInt(creditScore) >= 720 ? '✅ Very Good' : parseInt(creditScore) >= 680 ? '✓ Good' : parseInt(creditScore) >= 640 ? '⚠ Fair' : parseInt(creditScore) >= 620 ? '⚠ Minimum Range' : '❌ Below Minimums'}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {totalHousing > 0 && (
-                <div className="bg-slate-900 rounded-xl px-5 py-3 flex flex-wrap items-center justify-between gap-4 mt-2">
-                  <div className="flex gap-6 text-xs flex-wrap">
-                    <div><span className="text-slate-400">P&I </span><span className="text-white font-bold font-mono">{fmt$(pi)}</span></div>
-                    <div><span className="text-slate-400">Taxes </span><span className="text-white font-bold font-mono">{fmt$(parseFloat(taxes))}</span></div>
-                    <div><span className="text-slate-400">Ins </span><span className="text-white font-bold font-mono">{fmt$(parseFloat(insurance))}</span></div>
-                    {parseFloat(mi)  > 0 && <div><span className="text-slate-400">MI </span><span className="text-white font-bold font-mono">{fmt$(parseFloat(mi))}</span></div>}
-                    {parseFloat(hoa) > 0 && <div><span className="text-slate-400">HOA </span><span className="text-white font-bold font-mono">{fmt$(parseFloat(hoa))}</span></div>}
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xs text-slate-400">Total PITI</div>
-                    <div className="text-xl font-black text-white font-mono">{fmt$(totalHousing)}</div>
-                  </div>
-                </div>
-              )}
-            </Section>
-
-            {/* ── Student Loan Payment Factor ── */}
-            <Section title="Student Loan Payment Factor" subtitle="Program-aware qualifying payment — automatically wired into back-end DTI based on the scenario's loan program." icon="🎓">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Total Student Loan Balance</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2 text-gray-400 text-sm">$</span>
-                    <input type="number" value={slBalance} onChange={e => setSlBalance(e.target.value)} placeholder="e.g. 48000"
-                      className="w-full pl-7 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-300" />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Actual Monthly Payment (IBR/IDR)</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2 text-gray-400 text-sm">$</span>
-                    <input type="number" value={slActualPayment} onChange={e => setSlActualPayment(e.target.value)} placeholder="0 if deferred"
-                      className="w-full pl-7 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-300" />
-                  </div>
-                </div>
-                <div className="flex flex-col justify-between gap-2 pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer mt-5">
-                    <input type="checkbox" checked={slDeferred} onChange={e => setSlDeferred(e.target.checked)} className="accent-indigo-600 w-4 h-4" />
-                    <span className="text-xs font-semibold text-slate-600">Currently Deferred / IBR / $0 payment</span>
-                  </label>
-                  {slDeferred && (
-                    <div>
-                      <label className="block text-xs text-slate-400 mb-1">Months remaining on deferment</label>
-                      <input type="number" value={slDeferMonths} onChange={e => setSlDeferMonths(e.target.value)} placeholder="e.g. 18"
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300" />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {parseFloat(slBalance) > 0 ? (
-                <>
-                  <div className={`rounded-xl border p-4 mb-4 ${slQualPayment === 0 ? 'bg-emerald-50 border-emerald-200' : slQualPayment > 400 ? 'bg-amber-50 border-amber-200' : 'bg-indigo-50 border-indigo-200'}`}>
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div>
-                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-0.5">Qualifying Payment — {scenario?.loanType || 'No program on scenario'}</p>
-                        <p className="text-xs text-slate-400">{slResult.rule}</p>
-                        <p className="text-xs text-slate-400 mt-1 italic">This amount is included in your back-end DTI calculation above.</p>
-                      </div>
-                      <div className="text-right">
-                        <div className={`text-2xl font-black ${slQualPayment === 0 ? 'text-emerald-600' : 'text-amber-600'}`}>{fmt$0(slQualPayment)}/mo</div>
-                        <div className="text-xs text-slate-400">Added to DTI</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
-                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Program-by-Program Comparison</p>
-                      <p className="text-xs text-slate-400 italic">Lower payment = better DTI position</p>
-                    </div>
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-100">
-                          <th className="px-4 py-2 text-left text-slate-400 font-semibold">Program</th>
-                          <th className="px-4 py-2 text-right text-slate-400 font-semibold">Qualifying Pmt</th>
-                          <th className="px-4 py-2 text-right text-slate-400 font-semibold">DTI Impact</th>
-                          <th className="px-4 py-2 text-left text-slate-400 font-semibold">Rule Applied</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {SL_PROGRAM_COMPARISON.map(p => {
-                          const res      = calcSLPayment(slBalance, slActualPayment, slDeferred, slDeferMonths, p.key);
-                          const impact   = totalIncome > 0 ? (res.payment / totalIncome * 100).toFixed(1) : '—';
-                          const isCur    = (scenario?.loanType || '').toUpperCase() === p.key;
-                          const allPmts  = SL_PROGRAM_COMPARISON.map(pp => calcSLPayment(slBalance, slActualPayment, slDeferred, slDeferMonths, pp.key).payment);
-                          const isLowest = res.payment === Math.min(...allPmts);
-                          return (
-                            <tr key={p.key} className={`border-b border-slate-50 ${isCur ? 'bg-indigo-50' : isLowest ? 'bg-emerald-50/50' : ''}`}>
-                              <td className="px-4 py-2.5 font-semibold text-slate-700">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  {p.label}
-                                  {isCur    && <span className="text-xs bg-indigo-100 text-indigo-600 font-bold px-1.5 py-0.5 rounded">Current</span>}
-                                  {isLowest && <span className="text-xs bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">Best</span>}
-                                </div>
-                              </td>
-                              <td className={`px-4 py-2.5 text-right font-black text-base ${res.payment === 0 ? 'text-emerald-600' : res.payment > parseFloat(slBalance) * 0.008 ? 'text-amber-600' : 'text-slate-700'}`}>
-                                {fmt$0(res.payment)}/mo
-                              </td>
-                              <td className="px-4 py-2.5 text-right text-slate-500 font-semibold">{impact !== '—' ? `+${impact}%` : '—'}</td>
-                              <td className="px-4 py-2.5 text-slate-400">{res.rule}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    <div className="px-4 py-3 bg-amber-50 border-t border-amber-100">
-                      <p className="text-xs text-amber-700 font-semibold">⚠ The program with the lowest qualifying payment reduces back-end DTI the most. Consider this when evaluating the best program path for this borrower.</p>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <p className="text-sm text-slate-300 italic">Enter student loan balance above to see program comparison.</p>
-              )}
-            </Section>
-
-            {/* ── DTI Results ── */}
-            {totalIncome > 0 && totalHousing > 0 && (
-              <Section title="DTI Analysis" subtitle="Debt-to-Income ratios calculated across all applicable programs." icon="📊">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-                  {[
-                    { label: 'Total Qualifying Income', val: fmt$(totalIncome),  sub: '/month',             color: 'emerald' },
-                    { label: 'Total PITI',               val: fmt$(totalHousing), sub: '/month',             color: 'blue'    },
-                    { label: 'Front-End DTI',            val: fmtPct(frontDTI),   sub: 'housing ÷ income',   color: frontDTI > 36 ? 'red' : frontDTI > 28 ? 'amber' : 'emerald' },
-                    { label: 'Back-End DTI',             val: fmtPct(backDTI),    sub: 'all debts ÷ income', color: backDTI > 50 ? 'red' : backDTI > 43 ? 'amber' : 'emerald' },
-                  ].map(item => (
-                    <div key={item.label} className={`rounded-xl p-4 border text-center bg-${item.color}-50 border-${item.color}-200`}>
-                      <div className="text-xs text-slate-500 mb-1">{item.label}</div>
-                      <div className={`text-2xl font-black font-mono text-${item.color}-700`}>{item.val}</div>
-                      <div className="text-xs text-slate-400 mt-0.5">{item.sub}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {slQualPayment > 0 && (
-                  <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2.5 mb-4 flex items-center justify-between">
-                    <p className="text-xs text-indigo-700 font-semibold">🎓 Student loan qualifying payment ({scenario?.loanType || 'current program'}) included in back-end DTI</p>
-                    <span className="text-xs font-black text-indigo-700">{fmt$0(slQualPayment)}/mo</span>
-                  </div>
-                )}
-
-                {totalHousing > 0 && totalIncome > 0 && (
-                  <div className={`mt-2 mb-4 rounded-xl px-4 py-3 border flex items-center justify-between ${incomeGap <= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-                    <div>
-                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Qualifying Income Threshold (43% Back-End)</p>
-                      <p className="text-sm text-slate-600">Required: <span className="font-bold font-mono">{fmt$(requiredIncome43)}/mo</span> · Current: <span className="font-bold font-mono">{fmt$(totalIncome)}/mo</span></p>
-                    </div>
-                    <div className="text-right">
-                      {incomeGap <= 0
-                        ? <p className="text-sm font-bold text-emerald-700">{fmt$(Math.abs(incomeGap))}/mo above threshold</p>
-                        : <p className="text-sm font-bold text-red-700">{fmt$(incomeGap)}/mo short of threshold</p>}
-                    </div>
-                  </div>
-                )}
-
-                <div className="rounded-xl border border-slate-100 overflow-hidden">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-100">
-                        <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Program</th>
-                        <th className="text-center px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Front-End</th>
-                        <th className="text-center px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Back-End</th>
-                        <th className="text-center px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Result</th>
-                        <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Notes</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(PROGRAMS).map(([key, prog]) => (
-                        <ProgramFitRow key={key} progKey={key} prog={prog} frontDTI={frontDTI} backDTI={backDTI} creditScore={parseInt(creditScore)} totalIncome={totalIncome} />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Section>
-            )}
-
-            {/* ── Feature 1: Max Purchase Price ── */}
-            {totalIncome > 0 && baseRate > 0 && monthlyPayFactor > 0 && (
-              <Section title="Maximum Purchase Price" subtitle="How much home can this borrower afford? Calculated per program using back-end DTI limit, existing debts, and down payment." icon="🏡">
-                <div className="grid grid-cols-2 gap-3 mb-4">
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
-                    <p className="text-xs text-slate-400 mb-1">Down Payment</p>
-                    <p className="text-xl font-black text-slate-700">{downPct}%</p>
-                  </div>
-                  <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3">
-                    <p className="text-xs text-indigo-500 mb-1">Rate Used</p>
-                    <p className="text-xl font-black text-indigo-700">{baseRate.toFixed(3)}%</p>
-                  </div>
-                </div>
-                <div className="rounded-xl border border-slate-100 overflow-hidden">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-100">
-                        <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Program</th>
-                        <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Max Loan</th>
-                        <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Max Purchase</th>
-                        <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">vs Current Loan</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {maxPurchasePrices.map(({ key, label, maxLoan, maxPurchase }) => {
-                        const curLoan = parseFloat(loanAmount) || 0;
-                        const diff = maxLoan - curLoan;
-                        const isEligible = programResults.find(r => r.key === key)?.eligible;
-                        return (
-                          <tr key={key} className={`border-b border-slate-50 ${isEligible ? 'hover:bg-emerald-50/30' : 'opacity-60'}`}>
-                            <td className="px-4 py-3 font-semibold text-slate-700">
-                              <div className="flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full ${isEligible ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                                {label}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 text-right font-black font-mono text-slate-800">{maxLoan > 0 ? fmt$0(maxLoan) : '—'}</td>
-                            <td className="px-4 py-3 text-right font-black font-mono text-indigo-700">{maxPurchase > 0 ? fmt$0(maxPurchase) : '—'}</td>
-                            <td className="px-4 py-3 text-right font-semibold">
-                              {curLoan > 0 && maxLoan > 0
-                                ? <span className={diff >= 0 ? 'text-emerald-600' : 'text-red-500'}>{diff >= 0 ? '+' : ''}{fmt$0(diff)}</span>
-                                : <span className="text-slate-300">—</span>}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="text-xs text-slate-400 italic mt-3">Max purchase = max loan ÷ (1 − down payment %). Qualifying payment factors include taxes, insurance, HOA, MI, and all debts. Assumes current interest rate.</p>
-              </Section>
-            )}
-
-            {/* ── Feature 2: Required Income by Program ── */}
-            {totalIncome > 0 && totalHousing > 0 && (
-              <Section title="Required Income by Program" subtitle="What monthly income is needed for each program? Shows the gap or surplus for this borrower." icon="🎯">
-                <div className="rounded-xl border border-slate-100 overflow-hidden">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-100">
-                        <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Program</th>
-                        <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Required Income</th>
-                        <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Current Income</th>
-                        <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Gap / Surplus</th>
-                        <th className="text-center px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {requiredIncomeByProg.map(({ key, label, required, gap, eligible }) => (
-                        <tr key={key} className={`border-b border-slate-50 ${eligible ? 'hover:bg-emerald-50/30' : 'hover:bg-red-50/20'}`}>
-                          <td className="px-4 py-3 font-semibold text-slate-700">{label}</td>
-                          <td className="px-4 py-3 text-right font-mono font-bold text-slate-700">{fmt$(required)}/mo</td>
-                          <td className="px-4 py-3 text-right font-mono text-slate-500">{fmt$(totalIncome)}/mo</td>
-                          <td className="px-4 py-3 text-right font-mono font-black">
-                            <span className={gap <= 0 ? 'text-emerald-600' : 'text-red-600'}>
-                              {gap <= 0 ? '+' : ''}{fmt$(Math.abs(gap))}/mo {gap <= 0 ? 'surplus' : 'short'}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${eligible ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
-                              {eligible ? '✓ Qualifies' : `Need ${fmt$(gap)}/mo more`}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="text-xs text-slate-400 italic mt-3">Required income based on each program's maximum back-end DTI (and front-end where applicable), current PITI, and existing monthly debts.</p>
-              </Section>
-            )}
-
-            {/* ── Feature 3: Rate Sensitivity Table ── */}
-            {rateSensitivity.length > 0 && (
-              <Section title="Rate Sensitivity" subtitle="How does DTI change as rates move? Use this when discussing rate locks, buydowns, or market timing." icon="📉">
+            {/* Rate Sensitivity */}
+            <Section title="Rate Sensitivity" subtitle="DTI and payment impact at ±0.5% and ±1.0% from current rate." icon="📉">
+              {rateSensitivity.length > 0 ? (
                 <div className="rounded-xl border border-slate-100 overflow-hidden">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-100">
                         <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Rate</th>
                         <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">P&I</th>
-                        <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Total PITI</th>
+                        <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">PITI</th>
                         <th className="text-center px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Front DTI</th>
                         <th className="text-center px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Back DTI</th>
-                        <th className="text-center px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Conv Pass?</th>
+                        <th className="text-center px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Conv</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {rateSensitivity.map(({ delta, rate: r, pi, housing, frontDTI: fD, backDTI: bD, isCurrent }) => {
-                        const convPass = bD <= 50;
-                        return (
-                          <tr key={delta} className={`border-b border-slate-50 ${isCurrent ? 'bg-indigo-50 font-bold' : 'hover:bg-slate-50'}`}>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
-                                <span className={`font-mono font-bold ${isCurrent ? 'text-indigo-700' : delta < 0 ? 'text-emerald-600' : 'text-red-500'}`}>{r.toFixed(3)}%</span>
-                                {isCurrent && <span className="text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded font-bold">Current</span>}
-                                {!isCurrent && <span className={`text-xs ${delta < 0 ? 'text-emerald-500' : 'text-red-400'}`}>{delta > 0 ? '+' : ''}{delta}%</span>}
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 text-right font-mono text-slate-700">{fmt$(pi)}</td>
-                            <td className="px-4 py-3 text-right font-mono text-slate-700">{fmt$(housing)}</td>
-                            <td className={`px-4 py-3 text-center font-mono font-bold ${fD > 46.9 ? 'text-red-600' : fD > 36 ? 'text-amber-600' : 'text-emerald-600'}`}>{fmtPct(fD)}</td>
-                            <td className={`px-4 py-3 text-center font-mono font-bold ${bD > 56.9 ? 'text-red-600' : bD > 50 ? 'text-amber-600' : bD > 43 ? 'text-amber-500' : 'text-emerald-600'}`}>{fmtPct(bD)}</td>
-                            <td className="px-4 py-3 text-center">
-                              <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${convPass ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
-                                {convPass ? '✓ Pass' : '✗ Fail'}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                      {rateSensitivity.map(({delta,rate:r,pi:rPi,housing,frontDTI:fD,backDTI:bD,isCurrent})=>(
+                        <tr key={delta} className={`border-b border-slate-50 ${isCurrent?'bg-indigo-50 font-bold':'hover:bg-slate-50'}`}>
+                          <td className="px-4 py-3">
+                            <span className={`font-mono font-bold ${isCurrent?'text-indigo-700':delta<0?'text-emerald-600':'text-red-500'}`}>{r.toFixed(3)}%</span>
+                            {isCurrent && <span className="ml-2 text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded font-bold">Current</span>}
+                            {!isCurrent && <span className={`ml-1 text-xs ${delta<0?'text-emerald-500':'text-red-400'}`}>{delta>0?'+':''}{delta}%</span>}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono text-slate-700">{fmt$(rPi)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-slate-700">{fmt$(housing)}</td>
+                          <td className={`px-4 py-3 text-center font-mono font-bold ${fD>46.9?'text-red-600':fD>36?'text-amber-600':'text-emerald-600'}`}>{fmtPct(fD)}</td>
+                          <td className={`px-4 py-3 text-center font-mono font-bold ${bD>56.9?'text-red-600':bD>50?'text-amber-600':bD>43?'text-amber-500':'text-emerald-600'}`}>{fmtPct(bD)}</td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${bD<=50?'bg-emerald-50 text-emerald-700 border-emerald-200':'bg-red-50 text-red-600 border-red-200'}`}>{bD<=50?'✓':'✗'}</span>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-slate-400 italic mt-3">P&I changes assume same loan amount and term. PITI includes taxes, insurance, HOA, and MI from current inputs.</p>
-              </Section>
-            )}
+              ) : <p className="text-sm text-slate-400 italic text-center py-6">Enter loan amount and interest rate on the Qualify tab.</p>}
+            </Section>
 
-            {/* ── Feature 4: Buydown Qualifying Analysis ── */}
-            {buydownAnalysis && totalIncome > 0 && (
-              <Section title="Buydown Qualifying Analysis" subtitle="Temporary buydown impact on DTI. Fannie/Freddie/VA/USDA require qualifying at the note rate. FHA may allow the buydown rate." icon="📊">
-                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
-                  <p className="text-xs font-bold text-amber-800">⚠ Key Guideline</p>
-                  <p className="text-xs text-amber-700 mt-0.5">Conventional, VA, and USDA: must qualify at the <strong>note rate</strong> regardless of temporary rate. FHA 4000.1: may qualify at the <strong>buydown rate</strong> if properly structured (seller/lender-funded). Always confirm with AUS.</p>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* 2-1 Buydown */}
-                  <div className="border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="bg-slate-800 text-white px-4 py-2.5 flex items-center justify-between">
-                      <span className="text-sm font-bold">2-1 Buydown</span>
-                      <span className="text-xs text-slate-400">Note rate: {buydownAnalysis.twoOne.note.rate.toFixed(3)}%</span>
-                    </div>
-                    <div className="p-3 space-y-2">
-                      {[
-                        { label: `Year 1 — ${buydownAnalysis.twoOne.yr1.rate.toFixed(3)}%`, pi: buydownAnalysis.twoOne.yr1.pi },
-                        { label: `Year 2 — ${buydownAnalysis.twoOne.yr2.rate.toFixed(3)}%`, pi: buydownAnalysis.twoOne.yr2.pi },
-                        { label: `Year 3+ — ${buydownAnalysis.twoOne.note.rate.toFixed(3)}% (note)`, pi: buydownAnalysis.twoOne.note.pi, isNote: true },
-                      ].map(({ label, pi, isNote }) => (
-                        <div key={label} className={`flex justify-between items-center px-3 py-2 rounded-lg ${isNote ? 'bg-slate-50 border border-slate-200' : 'bg-white border border-slate-100'}`}>
-                          <div>
-                            <p className="text-xs font-semibold text-slate-700">{label}</p>
-                            <p className="text-xs text-slate-400 font-mono">P&I: {fmt$(pi)}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-xs text-slate-400">Back DTI</p>
-                            <p className={`text-sm font-black font-mono ${((pi + fixedCosts + totalDebts)/totalIncome*100) > 50 ? 'text-red-600' : 'text-emerald-600'}`}>
-                              {fmtPct((pi + fixedCosts + totalDebts) / totalIncome * 100)}
-                            </p>
-                          </div>
+            {/* Buydown Analysis */}
+            <Section title="Buydown Qualifying Analysis" subtitle="Fannie/Freddie/VA/USDA qualify at note rate. FHA may use temporary rate." icon="📊">
+              {buydownAnalysis ? (
+                <>
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
+                    <p className="text-xs font-bold text-amber-800">⚠ Key Guideline</p>
+                    <p className="text-xs text-amber-700 mt-0.5">Conventional, VA, and USDA must qualify at the <strong>note rate</strong>. FHA 4000.1 may allow qualifying at the temporary buydown rate if seller or lender-funded — always confirm with AUS.</p>
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    {[
+                      { label:'2-1 Buydown', data:buydownAnalysis.twoOne, years:[
+                        {label:`Yr 1 — ${buydownAnalysis.twoOne.yr1.rate.toFixed(3)}%`,pi:buydownAnalysis.twoOne.yr1.pi},
+                        {label:`Yr 2 — ${buydownAnalysis.twoOne.yr2.rate.toFixed(3)}%`,pi:buydownAnalysis.twoOne.yr2.pi},
+                        {label:`Yr 3+ — ${buydownAnalysis.twoOne.note.rate.toFixed(3)}% (note)`,pi:buydownAnalysis.twoOne.note.pi,isNote:true},
+                      ]},
+                      { label:'1-0 Buydown', data:buydownAnalysis.oneZero, years:[
+                        {label:`Yr 1 — ${buydownAnalysis.oneZero.yr1.rate.toFixed(3)}%`,pi:buydownAnalysis.oneZero.yr1.pi},
+                        {label:`Yr 2+ — ${buydownAnalysis.oneZero.note.rate.toFixed(3)}% (note)`,pi:buydownAnalysis.oneZero.note.pi,isNote:true},
+                      ]},
+                    ].map(({label,data,years})=>(
+                      <div key={label} className="border border-slate-200 rounded-2xl overflow-hidden">
+                        <div className="bg-slate-800 text-white px-4 py-2.5 flex justify-between">
+                          <span className="text-sm font-bold">{label}</span>
+                          <span className="text-xs text-slate-400">Note: {data.note.rate.toFixed(3)}%</span>
                         </div>
-                      ))}
-                      <div className="border-t border-slate-100 pt-2 grid grid-cols-2 gap-2">
-                        <div className="bg-blue-50 rounded-lg px-3 py-2 text-center">
-                          <p className="text-xs text-blue-600 font-bold">FHA Qualify</p>
-                          <p className={`text-sm font-black font-mono ${buydownAnalysis.twoOne.fhaDTI.back > 56.9 ? 'text-red-600' : 'text-blue-700'}`}>{fmtPct(buydownAnalysis.twoOne.fhaDTI.back)}</p>
-                          <p className="text-xs text-slate-400">at yr1 rate</p>
-                        </div>
-                        <div className="bg-indigo-50 rounded-lg px-3 py-2 text-center">
-                          <p className="text-xs text-indigo-600 font-bold">Conv Qualify</p>
-                          <p className={`text-sm font-black font-mono ${buydownAnalysis.twoOne.convDTI.back > 50 ? 'text-red-600' : 'text-indigo-700'}`}>{fmtPct(buydownAnalysis.twoOne.convDTI.back)}</p>
-                          <p className="text-xs text-slate-400">at note rate</p>
+                        <div className="p-3 space-y-2">
+                          {years.map(({label:yl,pi:yPi,isNote})=>(
+                            <div key={yl} className={`flex justify-between items-center px-3 py-2 rounded-xl ${isNote?'bg-slate-50 border border-slate-200':'bg-white border border-slate-100'}`}>
+                              <div>
+                                <p className="text-xs font-semibold text-slate-700">{yl}</p>
+                                <p className="text-xs text-slate-400 font-mono">P&I: {fmt$(yPi)}</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-xs text-slate-400">Back DTI</p>
+                                <p className={`text-sm font-black font-mono ${totalIncome>0&&((yPi+fixedCosts+totalDebts)/totalIncome*100)>50?'text-red-600':'text-emerald-600'}`}>
+                                  {totalIncome>0?fmtPct((yPi+fixedCosts+totalDebts)/totalIncome*100):'—'}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+                          <div className="grid grid-cols-2 gap-2 border-t border-slate-100 pt-2">
+                            <div className="bg-blue-50 rounded-xl p-2 text-center">
+                              <p className="text-xs font-bold text-blue-600">FHA (yr1)</p>
+                              <p className={`text-sm font-black font-mono ${data.fhaDTI.back>56.9?'text-red-600':'text-blue-700'}`}>{fmtPct(data.fhaDTI.back)}</p>
+                            </div>
+                            <div className="bg-indigo-50 rounded-xl p-2 text-center">
+                              <p className="text-xs font-bold text-indigo-600">Conv (note)</p>
+                              <p className={`text-sm font-black font-mono ${data.convDTI.back>50?'text-red-600':'text-indigo-700'}`}>{fmtPct(data.convDTI.back)}</p>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    ))}
                   </div>
-                  {/* 1-0 Buydown */}
-                  <div className="border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="bg-slate-800 text-white px-4 py-2.5 flex items-center justify-between">
-                      <span className="text-sm font-bold">1-0 Buydown</span>
-                      <span className="text-xs text-slate-400">Note rate: {buydownAnalysis.oneZero.note.rate.toFixed(3)}%</span>
-                    </div>
-                    <div className="p-3 space-y-2">
-                      {[
-                        { label: `Year 1 — ${buydownAnalysis.oneZero.yr1.rate.toFixed(3)}%`, pi: buydownAnalysis.oneZero.yr1.pi },
-                        { label: `Year 2+ — ${buydownAnalysis.oneZero.note.rate.toFixed(3)}% (note)`, pi: buydownAnalysis.oneZero.note.pi, isNote: true },
-                      ].map(({ label, pi, isNote }) => (
-                        <div key={label} className={`flex justify-between items-center px-3 py-2 rounded-lg ${isNote ? 'bg-slate-50 border border-slate-200' : 'bg-white border border-slate-100'}`}>
-                          <div>
-                            <p className="text-xs font-semibold text-slate-700">{label}</p>
-                            <p className="text-xs text-slate-400 font-mono">P&I: {fmt$(pi)}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-xs text-slate-400">Back DTI</p>
-                            <p className={`text-sm font-black font-mono ${((pi + fixedCosts + totalDebts)/totalIncome*100) > 50 ? 'text-red-600' : 'text-emerald-600'}`}>
-                              {fmtPct((pi + fixedCosts + totalDebts) / totalIncome * 100)}
-                            </p>
-                          </div>
-                        </div>
+                </>
+              ) : <p className="text-sm text-slate-400 italic text-center py-6">Enter loan amount and interest rate on the Qualify tab.</p>}
+            </Section>
+
+            {/* Required Income by Program */}
+            {totalIncome > 0 && totalHousing > 0 && (
+              <Section title="Required Income by Program" subtitle="Exact monthly income needed to qualify — and the gap or surplus for this borrower." icon="🎯">
+                <div className="rounded-xl border border-slate-100 overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-100">
+                        <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Program</th>
+                        <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Required /mo</th>
+                        <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Current /mo</th>
+                        <th className="text-right px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Gap / Surplus</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {requiredIncomeByProg.map(({key,label,required,gap,eligible})=>(
+                        <tr key={key} className={`border-b border-slate-50 ${eligible?'hover:bg-emerald-50/30':'hover:bg-red-50/20'}`}>
+                          <td className="px-4 py-3 font-semibold text-slate-700">{label}</td>
+                          <td className="px-4 py-3 text-right font-mono font-bold text-slate-700">{fmt$(required)}</td>
+                          <td className="px-4 py-3 text-right font-mono text-slate-500">{fmt$(totalIncome)}</td>
+                          <td className={`px-4 py-3 text-right font-mono font-black ${gap<=0?'text-emerald-600':'text-red-500'}`}>
+                            {gap<=0?'+':''}{fmt$(Math.abs(gap))}/mo {gap<=0?'surplus':'short'}
+                          </td>
+                        </tr>
                       ))}
-                      <div className="border-t border-slate-100 pt-2 grid grid-cols-2 gap-2">
-                        <div className="bg-blue-50 rounded-lg px-3 py-2 text-center">
-                          <p className="text-xs text-blue-600 font-bold">FHA Qualify</p>
-                          <p className={`text-sm font-black font-mono ${buydownAnalysis.oneZero.fhaDTI.back > 56.9 ? 'text-red-600' : 'text-blue-700'}`}>{fmtPct(buydownAnalysis.oneZero.fhaDTI.back)}</p>
-                          <p className="text-xs text-slate-400">at yr1 rate</p>
-                        </div>
-                        <div className="bg-indigo-50 rounded-lg px-3 py-2 text-center">
-                          <p className="text-xs text-indigo-600 font-bold">Conv Qualify</p>
-                          <p className={`text-sm font-black font-mono ${buydownAnalysis.oneZero.convDTI.back > 50 ? 'text-red-600' : 'text-indigo-700'}`}>{fmtPct(buydownAnalysis.oneZero.convDTI.back)}</p>
-                          <p className="text-xs text-slate-400">at note rate</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                    </tbody>
+                  </table>
                 </div>
               </Section>
             )}
 
-            {/* ── Compensating Factors ── */}
-            <Section title="Compensating Factors" subtitle="Document all factors that support approval at elevated DTI. Each factor matters in manual underwriting." icon="⚖️">
+          </div>
+        )}
+
+        {/* ════ TAB 2: DOCS & FACTORS ════ */}
+        {activeTab === 2 && (
+          <div className="max-w-4xl space-y-5">
+
+            {/* Compensating Factors */}
+            <Section title="Compensating Factors" subtitle="Document all factors that support approval at elevated DTI." icon="⚖️">
               <div className="space-y-2">
-                {COMP_FACTORS.map(cf => (
-                  <label key={cf.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${compFactors[cf.id] ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200 hover:border-slate-300'}`}>
+                {COMP_FACTORS.map(cf=>(
+                  <label key={cf.id} className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${compFactors[cf.id]?'bg-emerald-50 border-emerald-200':'bg-white border-slate-200 hover:border-slate-300'}`}>
                     <input type="checkbox" checked={!!compFactors[cf.id]}
-                      onChange={e => setCompFactors(p => ({ ...p, [cf.id]: e.target.checked }))}
+                      onChange={e=>setCompFactors(p=>({...p,[cf.id]:e.target.checked}))}
                       className="w-4 h-4 mt-0.5 accent-emerald-600 shrink-0" />
                     <div className="flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`text-sm font-semibold ${compFactors[cf.id] ? 'text-emerald-800' : 'text-slate-700'}`}>{cf.label}</span>
-                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${cf.impact === 'HIGH' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{cf.impact}</span>
+                        <span className={`text-sm font-semibold ${compFactors[cf.id]?'text-emerald-800':'text-slate-700'}`}>{cf.label}</span>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${cf.impact==='HIGH'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700'}`}>{cf.impact}</span>
                       </div>
                       <p className="text-xs text-slate-400 mt-0.5">{cf.detail}</p>
                     </div>
                   </label>
                 ))}
               </div>
-              {cfCount > 0 && (
-                <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5">
-                  <p className="text-sm font-bold text-emerald-700">✓ {cfCount} compensating factor{cfCount !== 1 ? 's' : ''} documented{cfCount >= 2 ? ' — strong manual underwrite position' : ' — continue documenting additional factors'}</p>
+              {cfCount>0 && <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5"><p className="text-sm font-bold text-emerald-700">✓ {cfCount} factor{cfCount!==1?'s':''} documented{cfCount>=2?' — strong manual underwrite position':''}</p></div>}
+            </Section>
+
+            {/* Student Loan */}
+            <Section title="Student Loan Payment Factor" subtitle="Program-aware qualifying payment — automatically included in back-end DTI." icon="🎓">
+              <div className="grid md:grid-cols-3 gap-4 mb-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Total Balance</label>
+                  <div className="relative"><span className="absolute left-3 top-2 text-gray-400 text-sm">$</span>
+                    <input type="number" value={slBalance} onChange={e=>setSlBalance(e.target.value)} placeholder="e.g. 48000"
+                      className="w-full pl-7 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-300"/></div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">Actual Monthly (IBR/IDR)</label>
+                  <div className="relative"><span className="absolute left-3 top-2 text-gray-400 text-sm">$</span>
+                    <input type="number" value={slActualPayment} onChange={e=>setSlActualPayment(e.target.value)} placeholder="0 if deferred"
+                      className="w-full pl-7 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-300"/></div>
+                </div>
+                <div className="pt-1">
+                  <label className="flex items-center gap-2 cursor-pointer mt-5">
+                    <input type="checkbox" checked={slDeferred} onChange={e=>setSlDeferred(e.target.checked)} className="accent-indigo-600 w-4 h-4"/>
+                    <span className="text-xs font-semibold text-slate-600">Deferred / IBR / $0</span>
+                  </label>
+                  {slDeferred && <input type="number" value={slDeferMonths} onChange={e=>setSlDeferMonths(e.target.value)} placeholder="Months remaining" className="w-full mt-2 border border-slate-200 rounded-lg px-3 py-2 text-sm"/>}
+                </div>
+              </div>
+              {parseFloat(slBalance)>0 && (
+                <div className={`rounded-xl border p-4 ${slQualPayment===0?'bg-emerald-50 border-emerald-200':'bg-amber-50 border-amber-200'}`}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-0.5">Qualifying Payment — {scenario?.loanType||'current program'}</p>
+                      <p className="text-xs text-slate-500">{slResult.rule}</p>
+                    </div>
+                    <div className="text-right">
+                      <div className={`text-2xl font-black ${slQualPayment===0?'text-emerald-600':'text-amber-600'}`}>{fmt$0(slQualPayment)}/mo</div>
+                      <div className="text-xs text-slate-400">Added to DTI</div>
+                    </div>
+                  </div>
                 </div>
               )}
             </Section>
 
-            {/* ── Income Documentation Checklist ── */}
-            <Section title="Income Documentation Checklist" subtitle="Check off each item as it is obtained and added to the file." icon="📎">
+            {/* Income Doc Checklist */}
+            <Section title="Income Documentation Checklist" subtitle="Check off each item as obtained and added to the file." icon="📎">
               <div className="mb-4">
-                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Income Types Present in This File</p>
-                <p className="text-xs text-slate-400 mb-3">Select all that apply — documentation requirements and calculation rules will appear for each.</p>
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Income Types Present</p>
                 <div className="flex flex-wrap gap-2">
-                  {INCOME_TYPES.map(t => (
-                    <label key={t.id} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border cursor-pointer text-xs font-semibold transition-all ${incomeTypes[t.id] ? t.grossUp ? 'bg-purple-600 text-white border-purple-600' : 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-500 border-slate-200 hover:border-indigo-300'}`}>
-                      <input type="checkbox" checked={!!incomeTypes[t.id]} onChange={e => setIncomeTypes(p => ({ ...p, [t.id]: e.target.checked }))} className="hidden" />
-                      {t.label}{t.grossUp && <span className="ml-1 text-xs opacity-80">↑25%</span>}
+                  {INCOME_TYPES.map(t=>(
+                    <label key={t.id} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border cursor-pointer text-xs font-semibold transition-all ${incomeTypes[t.id]?t.grossUp?'bg-purple-600 text-white border-purple-600':'bg-indigo-600 text-white border-indigo-600':'bg-white text-slate-500 border-slate-200 hover:border-indigo-300'}`}>
+                      <input type="checkbox" checked={!!incomeTypes[t.id]} onChange={e=>setIncomeTypes(p=>({...p,[t.id]:e.target.checked}))} className="hidden"/>
+                      {t.label}
                     </label>
                   ))}
                 </div>
               </div>
-              {INCOME_TYPES.filter(t => incomeTypes[t.id]).length === 0 && (
-                <div className="text-center py-6 border-2 border-dashed border-slate-100 rounded-xl">
-                  <p className="text-sm text-slate-400">Select income types above to see documentation requirements.</p>
-                </div>
-              )}
               <div className="space-y-4">
-                {INCOME_TYPES.filter(t => incomeTypes[t.id]).map(t => {
-                  const checkedKey  = `docs_${t.id}`;
-                  const checkedDocs = incomeTypes[checkedKey] || {};
-                  const allChecked  = t.docs.every((_, i) => checkedDocs[i]);
+                {INCOME_TYPES.filter(t=>incomeTypes[t.id]).map(t=>{
+                  const ck=`docs_${t.id}`,cd=incomeTypes[ck]||{},allCk=t.docs.every((_,i)=>cd[i]);
                   return (
-                    <div key={t.id} className={`rounded-xl border overflow-hidden ${t.grossUp ? 'border-purple-200' : t.stable ? 'border-emerald-200' : 'border-amber-200'}`}>
-                      <div className={`flex items-center justify-between px-4 py-3 ${t.grossUp ? 'bg-purple-50' : t.stable ? 'bg-emerald-50' : 'bg-amber-50'}`}>
+                    <div key={t.id} className={`rounded-xl border overflow-hidden ${t.grossUp?'border-purple-200':t.stable?'border-emerald-200':'border-amber-200'}`}>
+                      <div className={`flex items-center justify-between px-4 py-3 ${t.grossUp?'bg-purple-50':t.stable?'bg-emerald-50':'bg-amber-50'}`}>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`w-2 h-2 rounded-full shrink-0 ${t.grossUp ? 'bg-purple-500' : t.stable ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                          <span className={`w-2 h-2 rounded-full ${t.grossUp?'bg-purple-500':t.stable?'bg-emerald-500':'bg-amber-500'}`}/>
                           <span className="text-sm font-bold text-slate-800">{t.label}</span>
-                          {t.grossUp     && <span className="text-xs bg-purple-100 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full font-bold">Non-Taxable — Gross Up 25%</span>}
+                          {t.grossUp && <span className="text-xs bg-purple-100 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full font-bold">Gross Up 25%</span>}
                           {t.continuance && <span className="text-xs bg-blue-100 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full font-semibold">Continuance Required</span>}
-                          {!t.stable && !t.grossUp && <span className="text-xs bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-semibold">History Required</span>}
                         </div>
-                        {allChecked && <span className="text-xs bg-emerald-100 text-emerald-700 border border-emerald-300 px-2 py-0.5 rounded-full font-bold shrink-0">✓ Docs Complete</span>}
+                        {allCk && <span className="text-xs bg-emerald-100 text-emerald-700 border border-emerald-300 px-2 py-0.5 rounded-full font-bold shrink-0">✓ Complete</span>}
                       </div>
-                      <div className="px-4 py-3 bg-white space-y-3">
-                        {t.grossUpNote && <div className="bg-purple-50 border border-purple-100 rounded-lg px-3 py-2"><p className="text-xs font-semibold text-purple-700">💡 Gross-Up Calculation</p><p className="text-xs text-purple-600 mt-0.5">{t.grossUpNote}</p></div>}
-                        <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2"><p className="text-xs font-semibold text-blue-700">📐 How to Calculate</p><p className="text-xs text-blue-600 mt-0.5">{t.calcRule}</p></div>
-                        {t.warning   && <div className="bg-red-50 border border-red-100 rounded-lg px-3 py-2"><p className="text-xs font-semibold text-red-700">⚠ Important</p><p className="text-xs text-red-600 mt-0.5">{t.warning}</p></div>}
-                        {t.continuance && <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2"><p className="text-xs font-semibold text-blue-700">📅 Continuance</p><p className="text-xs text-blue-600 mt-0.5">Must document that this income will continue for at least 3 years beyond closing.</p></div>}
-                        <div>
-                          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Required Documents</p>
-                          <div className="space-y-1.5">
-                            {t.docs.map((docItem, i) => {
-                              const isChecked = !!checkedDocs[i];
-                              return (
-                                <label key={i} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-all text-xs ${isChecked ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200 hover:border-slate-300'}`}>
-                                  <input type="checkbox" checked={isChecked}
-                                    onChange={e => setIncomeTypes(p => ({ ...p, [checkedKey]: { ...(p[checkedKey] || {}), [i]: e.target.checked } }))}
-                                    className="w-3.5 h-3.5 accent-emerald-600 shrink-0" />
-                                  <span className={isChecked ? 'text-emerald-700 font-medium line-through opacity-60' : 'text-slate-600'}>{docItem}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                          <div className="mt-2 flex items-center gap-2">
-                            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                              <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${(Object.values(checkedDocs).filter(Boolean).length / t.docs.length) * 100}%` }} />
-                            </div>
-                            <span className="text-xs text-slate-400">{Object.values(checkedDocs).filter(Boolean).length}/{t.docs.length} obtained</span>
-                          </div>
+                      <div className="px-4 py-3 bg-white">
+                        {t.grossUpNote && <div className="bg-purple-50 border border-purple-100 rounded-lg px-3 py-2 mb-2"><p className="text-xs text-purple-700">{t.grossUpNote}</p></div>}
+                        {t.calcRule && <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 mb-2"><p className="text-xs font-semibold text-blue-700">📐 How to Calculate</p><p className="text-xs text-blue-600 mt-0.5">{t.calcRule}</p></div>}
+                        <div className="space-y-1.5">
+                          {t.docs.map((docItem,i)=>{
+                            const isChecked=!!(cd[i]);
+                            return (
+                              <label key={i} className={`flex items-start gap-2.5 px-3 py-2 rounded-lg cursor-pointer ${isChecked?'bg-emerald-50':'hover:bg-slate-50'}`}>
+                                <input type="checkbox" checked={isChecked}
+                                  onChange={e=>setIncomeTypes(prev=>({...prev,[ck]:{...(prev[ck]||{}),[i]:e.target.checked}}))}
+                                  className="mt-0.5 w-3.5 h-3.5 accent-emerald-600 shrink-0"/>
+                                <span className={`text-xs ${isChecked?'line-through text-slate-400':'text-slate-600'}`}>{docItem}</span>
+                              </label>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>
@@ -1624,126 +1603,20 @@ export default function QualifyingIntel() {
               </div>
             </Section>
 
-            {/* ── LO Notes ── */}
-            <Section title="LO Notes" subtitle="Qualifying notes, compensating factor details, or documentation references." icon="📝">
-              <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={4}
-                placeholder="Document qualifying rationale, compensating factors, unusual income types, or underwriter notes..."
-                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-700 focus:ring-2 focus:ring-indigo-300 resize-none" />
+            {/* LO Notes + Save */}
+            <Section title="LO Notes" icon="📝">
+              <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={4}
+                placeholder="DTI rationale, compensating factor details, program recommendations, underwriter notes…"
+                className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-300 resize-none"/>
+              <button onClick={handleSaveToRecord} disabled={recordSaving}
+                className="mt-3 px-5 py-2.5 bg-indigo-600 text-white text-sm font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50">
+                {recordSaving?'⏳ Saving…':'💾 Save to Decision Record'}
+              </button>
             </Section>
 
           </div>
+        )}
 
-          {/* ── Right Panel ── */}
-          <div className="space-y-4">
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Income Summary</h3>
-              <div className="space-y-2 text-xs">
-                {[
-                  ['Borrower Income',    fmt$(totalBorrowerIncome)   + '/mo'],
-                  ['Co-Borrower Income', totalCoBorrowerIncome > 0 ? fmt$(totalCoBorrowerIncome) + '/mo' : '—'],
-                  ['Total Qualifying',   fmt$(totalIncome)           + '/mo'],
-                  ['Annual (×12)',       fmt$(totalIncome * 12)],
-                ].map(([l, v]) => (
-                  <div key={l} className="flex justify-between">
-                    <span className="text-slate-400">{l}</span>
-                    <span className="font-bold text-slate-700">{v}</span>
-                  </div>
-                ))}
-                {[...incomes, ...coborrowerIncomes].some(i => { const t = INCOME_TYPES.find(t => t.id === i.type); return t?.grossUp && i.nonTaxableConfirmed; }) && (
-                  <div className="pt-2 mt-1 border-t border-slate-100">
-                    <p className="text-purple-600 font-semibold">↑ Includes non-taxable gross-up</p>
-                    <p className="text-slate-400 mt-0.5">Qualifying income is higher than raw award letter amounts</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {parseFloat(slBalance) > 0 && (
-              <div className={`rounded-xl border p-4 ${slQualPayment === 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
-                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">🎓 Student Loan</h3>
-                <div className="text-2xl font-black text-amber-600">{fmt$0(slQualPayment)}<span className="text-sm font-normal text-slate-400">/mo</span></div>
-                <p className="text-xs text-slate-500 mt-1">{slResult.label} — {scenario?.loanType || 'no program'}</p>
-                <p className="text-xs text-slate-400 mt-0.5 italic">Included in back-end DTI</p>
-              </div>
-            )}
-
-            {totalIncome > 0 && (
-              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">DTI Summary</h3>
-                <div className="space-y-3">
-                  {[
-                    { label: 'Front-End DTI', val: frontDTI, guideline: 28, max: 46.9 },
-                    { label: 'Back-End DTI',  val: backDTI,  guideline: 43, max: 56.9 },
-                  ].map(item => (
-                    <div key={item.label}>
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="text-xs text-slate-500">{item.label}</span>
-                        <span className={`text-sm font-black font-mono ${dtiColor(item.val, item.max)}`}>{fmtPct(item.val)}</span>
-                      </div>
-                      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full transition-all ${item.val > item.max ? 'bg-red-500' : item.val > item.guideline ? 'bg-amber-400' : 'bg-emerald-500'}`}
-                          style={{ width: `${Math.min(item.val / item.max * 100, 100)}%` }} />
-                      </div>
-                      <div className="flex justify-between text-xs text-slate-300 mt-0.5">
-                        <span>0%</span><span>Guideline {item.guideline}%</span><span>Max {item.max}%</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {totalIncome > 0 && (
-              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Program Eligibility</h3>
-                <div className="space-y-1.5">
-                  {programResults.map(({ key, prog, eligible }) => (
-                    <div key={key} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs ${eligible ? 'bg-emerald-50 border border-emerald-100' : 'bg-slate-50 border border-slate-100'}`}>
-                      <span className={`font-semibold ${eligible ? 'text-emerald-700' : 'text-slate-400'}`}>{prog.label}</span>
-                      <span className={eligible ? 'text-emerald-600 font-bold' : 'text-red-400 font-bold'}>{eligible ? '✓' : '✗'}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {cfCount > 0 && (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
-                <h3 className="text-xs font-bold text-emerald-700 uppercase tracking-wide mb-2">Compensating Factors</h3>
-                <div className="text-2xl font-black text-emerald-600 mb-1">{cfCount}</div>
-                <p className="text-xs text-emerald-600">factor{cfCount !== 1 ? 's' : ''} documented</p>
-              </div>
-            )}
-
-            {totalIncome > 0 && baseRate > 0 && monthlyPayFactor > 0 && (() => {
-              const best = maxPurchasePrices.filter(p => p.maxPurchase > 0).sort((a,b) => b.maxPurchase - a.maxPurchase)[0];
-              return best ? (
-                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
-                  <h3 className="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-1">🏡 Max Purchase</h3>
-                  <div className="text-2xl font-black text-indigo-700 font-mono">{fmt$0(best.maxPurchase)}</div>
-                  <p className="text-xs text-indigo-500 mt-0.5">{best.label} · {downPct}% down</p>
-                  <p className="text-xs text-slate-400 mt-1">Max loan: <span className="font-mono font-semibold">{fmt$0(best.maxLoan)}</span></p>
-                </div>
-              ) : null;
-            })()}
-
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-              <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2">⚠️ Key Rules</h3>
-              <div className="text-xs text-amber-700 space-y-1.5">
-                <p>• FHA back-end max: 56.9% with AUS approval</p>
-                <p>• Conventional back-end max: 50% (DU/LPA)</p>
-                <p>• HomeReady / Home Possible: income ≤ 80% AMI</p>
-                <p>• VA: no hard DTI — residual income governs</p>
-                <p>• USDA: 29% front / 41% back — both required</p>
-                <p>• Student loans (FHA): 1% floor if IBR below 1%</p>
-                <p>• Non-taxable income: gross up 25% (÷ 0.75)</p>
-                <p>• Overtime / bonus: 2-year history required</p>
-                <p>• Commission &gt;25% of income: 2-year average</p>
-                <p>• Self-employed: 2-year tax return average only</p>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );
