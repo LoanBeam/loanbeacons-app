@@ -12,6 +12,7 @@ import { db } from '../firebase/config';
 import { useDecisionRecord } from '../hooks/useDecisionRecord';
 import ModuleNav from '../components/ModuleNav';
 import { useNextStepIntelligence } from '../hooks/useNextStepIntelligence';
+import NextStepCard from '../components/NextStepCard';
 
 // ─── Program DTI Limits ───────────────────────────────────────────────────────
 const PROGRAMS = {
@@ -1391,6 +1392,20 @@ export default function QualifyingIntel() {
               </div>
             </div>
 
+            {/* ── Next Step Intelligence™ — renders after Save to Decision Record ── */}
+            {findingsReported && primarySuggestion && (
+              <div className="xl:col-span-2">
+                <NextStepCard
+                  suggestion={primarySuggestion}
+                  secondarySuggestions={secondarySuggestions}
+                  onFollow={logFollow}
+                  onOverride={logOverride}
+                  loanPurpose={loanPurpose}
+                  scenarioId={scenarioId}
+                />
+              </div>
+            )}
+
             {/* Right sidebar */}
             <div className="space-y-4">
               {/* DTI Summary */}
@@ -1522,28 +1537,18 @@ export default function QualifyingIntel() {
                 )}
               </div>
 
-              {/* Next Step Intelligence — appears after save */}
-              {findingsReported && primarySuggestion?.path && (
-                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-4 text-white">
-                  <p className="text-xs font-bold text-blue-200 uppercase tracking-wide mb-2">⚡ Next Suggested Step</p>
-                  <p className="text-sm font-bold text-white mb-1">{primarySuggestion.moduleLabel || primarySuggestion.moduleName}</p>
-                  {primarySuggestion.reason && <p className="text-xs text-blue-200 mb-3 leading-relaxed">{primarySuggestion.reason}</p>}
-                  <button
-                    onClick={() => { logFollow(); navigate(`${primarySuggestion.path}?scenarioId=${scenarioId}`); }}
-                    className="w-full py-2 bg-white/20 hover:bg-white/30 border border-white/30 text-white text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2">
-                    Go to {primarySuggestion.moduleLabel || 'Next Module'} →
-                  </button>
-                  {secondarySuggestions?.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-blue-500 space-y-1.5">
-                      <p className="text-xs text-blue-300 font-semibold">Also consider:</p>
-                      {secondarySuggestions.slice(0, 2).map((s, i) => (
-                        <button key={i} onClick={() => { logOverride(); navigate(`${s.path}?scenarioId=${scenarioId}`); }}
-                          className="w-full text-left text-xs text-blue-200 hover:text-white flex items-center gap-1.5 transition-colors">
-                          <span className="text-blue-400">→</span> {s.moduleLabel || s.moduleName}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+              {/* Next Step Intelligence — compact sidebar pointer (full card renders in left column) */}
+              {findingsReported && primarySuggestion && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-3 flex items-center gap-3">
+                  <div className="w-8 h-8 bg-indigo-100 rounded-xl flex items-center justify-center shrink-0">
+                    <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-indigo-700">Next Step Intelligence™</p>
+                    <p className="text-xs text-indigo-500">↓ See recommendation below</p>
+                  </div>
                 </div>
               )}
 
