@@ -469,13 +469,20 @@ export default function QualifyingIntel() {
           }
         }
 
-        // ── Restore previously saved user inputs (overrides scenario defaults) ──
+        // ── Restore previously saved user inputs ──────────────────────────────
+        // INCOME: only restore from localStorage if LO actually entered non-zero amounts.
+        // Blank localStorage entries (gross:'') must NOT overwrite M02 imported income.
+        // NON-INCOME fields (loan amount, rate, debts, etc.) always restore from localStorage.
         try {
           const saved = localStorage.getItem(`lb_qualifying_intel_${snap.id}`);
           if (saved) {
             const p = JSON.parse(saved);
-            if (p.incomes?.length)              setIncomes(p.incomes);
-            if (p.coborrowerIncomes?.length)     setCoborrowerIncomes(p.coborrowerIncomes);
+            const lsHasRealIncome   = p.incomes?.some(i => parseFloat(i.gross) > 0);
+            const lsHasRealCoBorr   = p.coborrowerIncomes?.some(i => parseFloat(i.gross) > 0);
+            // Only let localStorage income win if the LO actually typed real numbers in M03
+            if (lsHasRealIncome)                 setIncomes(p.incomes);
+            if (lsHasRealCoBorr)                 setCoborrowerIncomes(p.coborrowerIncomes);
+            // Non-income fields always restore — these don't come from M02
             if (p.loanAmount)                    setLoanAmount(p.loanAmount);
             if (p.rate)                          setRate(p.rate);
             if (p.term)                          setTerm(p.term);
