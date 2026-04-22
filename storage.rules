@@ -1,0 +1,44 @@
+rules_version = '2';
+
+// LoanBeacons Storage Rules
+// PRD v3.1 §3 — Surface A: public /lender-intake uploads + authenticated admin reads
+// Deployed: April 2026
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ─── Lender intake PDFs (guidelines + rate matrices) ──────────────────
+    // Public writes from the /lender-intake form (unauthenticated AEs).
+    // Reads restricted to authenticated users (LoanBeacons admins).
+    // Session-scoped paths prevent cross-session file listing.
+    match /lenderDocs/{sessionId}/{fileName} {
+      allow create: if
+        request.resource.size < 25 * 1024 * 1024                       // 25MB cap
+        && request.resource.contentType == 'application/pdf'            // PDF only
+        && sessionId.matches('^li_[0-9]+_[a-z0-9]{7}$');               // enforce session ID format
+      allow read: if request.auth != null;                              // admins only
+      allow update, delete: if false;                                   // immutable after upload
+    }
+
+    // ─── Lender logos ────────────────────────────────────────────────────
+    // Same public write policy as PDFs, image types only, 5MB cap.
+    match /lenderLogos/{fileName} {
+      allow create: if
+        request.resource.size < 5 * 1024 * 1024                        // 5MB cap
+        && request.resource.contentType.matches('image/(jpeg|jpg|png|svg\\+xml|webp)')
+        && fileName.matches('^li_[0-9]+_[a-z0-9]{7}\\..+$');           // session-prefixed filename
+      allow read: if true;                                              // logos are public (shown on lender cards)
+      allow update, delete: if false;
+    }
+
+    // ─── Admin archive (for deprecated uploads) ──────────────────────────
+    match /lenderDocs-archived/{allPaths=**} {
+      allow read, write: if request.auth != null
+        && request.auth.token.admin == true;                            // custom claim required
+    }
+
+    // ─── Deny everything else by default ─────────────────────────────────
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
