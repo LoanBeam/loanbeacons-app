@@ -51,15 +51,11 @@ const initialState = {
   guidelinesChecksum: "",
   guidelinesUploadedAt: null,
   guidelinesExtracted: null,
-  guidelinesCategory: "",          // agency | non_qm | hard_money | mixed
-  guidelinesCategoryDismissed: false,
   matrixUrl: "",
   matrixFileName: "",
   matrixChecksum: "",
   matrixUploadedAt: null,
   matrixExtracted: null,
-  matrixCategory: "",              // agency | non_qm | hard_money | mixed
-  matrixCategoryDismissed: false,
 
   // Category
   lenderType: "",
@@ -184,24 +180,6 @@ const initialState = {
   hm_preferredExitStrategies: [], hm_marketsActivelySought: "", hm_dealTypesToAvoid: "",
 };
 
-// ── CATEGORY TAG HELPERS (PRD v3.1 per-doc tagging) ────────
-// Agency lenders often also offer Non-QM products (UWM, Rocket, Kind, ClicknClose).
-// Each uploaded PDF gets tagged so schema routing is explicit, not inferred.
-const DOC_CATEGORY_OPTIONS = [
-  { value: "agency",      label: "Agency / Conventional",   hint: "FHA, VA, USDA, Fannie, Freddie, HomeReady, Home Possible, agency Jumbo" },
-  { value: "non_qm",      label: "Non-QM / Alternative",    hint: "DSCR, bank statement, P&L only, asset depletion, foreign national, ITIN" },
-  { value: "hard_money",  label: "Hard Money / Bridge",     hint: "Fix & Flip, BRRRR, new construction, commercial bridge" },
-  { value: "mixed",       label: "Mixed — multiple channels", hint: "Document covers two or more of the above" },
-];
-
-// Pre-select category dropdown from the Step 0 lender type choice.
-function defaultCategoryFor(lenderType) {
-  if (lenderType === "conventional") return "agency";
-  if (lenderType === "nonqm")        return "non_qm";
-  if (lenderType === "hard_money")   return "hard_money";
-  return "agency";
-}
-
 // ── MAIN COMPONENT ─────────────────────────────────────────
 
 const LenderIntakeForm = ({ prefillToken }) => {
@@ -248,18 +226,6 @@ const LenderIntakeForm = ({ prefillToken }) => {
     };
     fetchPrefill();
   }, [prefillToken]);
-
-  // Auto-default the document category dropdowns when the Step 0 lender type is picked.
-  // Only fills empties — never overwrites a user's explicit choice.
-  useEffect(() => {
-    if (!formData.lenderType) return;
-    const def = defaultCategoryFor(formData.lenderType);
-    setFormData((prev) => ({
-      ...prev,
-      guidelinesCategory: prev.guidelinesCategory || def,
-      matrixCategory: prev.matrixCategory || def,
-    }));
-  }, [formData.lenderType]);
 
   const getSteps = (type) => {
     if (type === "conventional") return ["type","basic_info","core_qual","overlays","niches_conv","comp_conv","operations","submission"];
@@ -325,25 +291,18 @@ const LenderIntakeForm = ({ prefillToken }) => {
     return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
   };
 
-  // ── PDF EXTRACTION (claude-haiku-4-5 direct API, category-aware) ──
-  // category: "agency" | "non_qm" | "hard_money" | "mixed"
-  // Returns extracted JSON with a detectedCategory field Haiku self-assigns
-  // from PDF content — used downstream for mismatch detection.
-  const extractPDF = async (base64, docType, category) => {
-    // Every prompt asks Haiku to self-classify into detectedCategory
-    // so we can flag mismatches between user tag and AI reading.
-    const detectInstruction = `\n\nALSO include a top-level field "detectedCategory" with value exactly one of: "agency" | "non_qm" | "hard_money" | "mixed". Choose based on the content of this PDF only. "agency" = FHA, VA, USDA, Fannie/Freddie conforming. "non_qm" = DSCR, bank statement, P&L only, asset depletion, foreign national, ITIN, jumbo non-QM. "hard_money" = short-term fix-and-flip, bridge, ARV-based investor loans. "mixed" = document covers multiple categories.`;
-
-    const agencyPrompt = `You are a mortgage lending expert analyzing an AGENCY / CONVENTIONAL lender document (FHA, VA, USDA, Fannie Mae, Freddie Mac, HomeReady, Home Possible, or agency Jumbo). Extract overlay data — where this lender's guidelines are stricter than the published agency baseline. Return ONLY valid JSON, no markdown, no preamble:
+  // ── PDF EXTRACTION (claude-haiku-4-5 direct API) ──
+  const extractPDF = async (base64, docType, lenderType) => {
+    const guidelinesPrompt = `You are a mortgage lending expert analyzing a lender's published guidelines, overlay memo, or program summary. The lender category is "${lenderType || "unspecified"}". Extract structured data from this PDF. Return ONLY valid JSON, no markdown fences, no preamble, matching this exact schema:
 
 {
   "effectiveDate": "YYYY-MM-DD or null",
   "lenderName": "string or null",
   "lenderNMLS": "string or null",
   "documentType": "guidelines | overlay_memo | program_summary | term_sheet",
-  "loanTypesCovered": ["list of loan types in document — e.g. FHA, VA, Conventional, USDA"],
+  "loanTypesCovered": ["list of loan types in document"],
   "overlays": {
-    "minFICO": {"FHA": number_or_null, "Conventional": number_or_null, "VA": number_or_null, "USDA": number_or_null, "Jumbo": number_or_null},
+    "minFICO": {"FHA": number_or_null, "Conventional": number_or_null, "VA": number_or_null, "USDA": number_or_null, "NonQM": number_or_null, "HardMoney": number_or_null},
     "maxDTI": {"FHA": number_or_null, "Conventional": number_or_null, "VA": number_or_null, "USDA": number_or_null},
     "maxLTV": {"purchase_primary": number_or_null, "rateterm": number_or_null, "cashout": number_or_null, "investment": number_or_null, "secondHome": number_or_null},
     "reservesRequired": "string or null",
@@ -357,14 +316,14 @@ const LenderIntakeForm = ({ prefillToken }) => {
   "propertyTypesAccepted": ["list"],
   "occupancyTypesAccepted": ["list"],
   "statesLicensed": ["list of state abbreviations"],
-  "specialPrograms": ["list of specialty programs — 203k, HomeStyle, CHOICERenovation, One-Time Close, etc."],
+  "specialPrograms": ["list of specialty programs identified"],
   "keyRestrictions": "string — notable overlays stricter than agency",
   "notes": "anything else material to LO placement decisions"
 }
 
-If a field is not in the PDF, use null. Do not infer values not present in the document.${detectInstruction}`;
+If a field is not in the PDF, use null. Do not infer values not present in the document.`;
 
-    const nonQMPrompt = `You are a mortgage lending expert analyzing a NON-QM / ALTERNATIVE lender document (DSCR, bank statement, P&L only, asset depletion, foreign national, ITIN, jumbo non-QM, credit event programs). Extract products and pricing. Return ONLY valid JSON, no markdown, no preamble:
+    const matrixPrompt = `You are a mortgage lending expert. Extract ALL guideline and product data from this lender rate matrix, pricing sheet, fee schedule, or term sheet. The lender category is "${lenderType || "unspecified"}". Return ONLY valid JSON, no markdown fences, no preamble:
 {
   "effectiveDate": "string or null",
   "lenderName": "string or null",
@@ -388,74 +347,9 @@ If a field is not in the PDF, use null. Do not infer values not present in the d
   }],
   "llpas": [{"factor": "description", "adjustment": "+/-X.XXX"}],
   "generalNotes": "lender-wide requirements or special programs"
-}${detectInstruction}`;
-
-    const hardMoneyPrompt = `You are a mortgage lending expert analyzing a HARD MONEY / PRIVATE / BRIDGE lender document. Extract deal structure parameters, not conventional qualification criteria. Return ONLY valid JSON, no markdown, no preamble:
-{
-  "effectiveDate": "string or null",
-  "lenderName": "string or null",
-  "dealStructures": [{
-    "name": "e.g. Fix & Flip, Bridge, New Construction, BRRRR, Commercial Bridge",
-    "lendingBasis": "purchase_price | arv | ltc | hybrid",
-    "maxLTV": number_or_null,
-    "maxARV": number_or_null,
-    "maxLTC": number_or_null,
-    "minFICO": number_or_null,
-    "termMonths": "range or null",
-    "rateRange": "string or null",
-    "points": "string or null",
-    "prepay": "string or null",
-    "experienceRequired": "string or null",
-    "personalGuarantee": true_or_false_or_null,
-    "llcRequired": true_or_false_or_null,
-    "crossCollateral": true_or_false_or_null,
-    "propertyTypes": ["list"],
-    "exitStrategies": ["list"],
-    "notes": "key restrictions or requirements"
-  }],
-  "fees": [{"name": "fee name", "amount": "string"}],
-  "generalNotes": "lender-wide requirements or special programs"
-}${detectInstruction}`;
-
-    const mixedPrompt = `You are a mortgage lending expert analyzing a MIXED-CHANNEL lender document that covers MULTIPLE categories — likely some combination of Agency (FHA/VA/USDA/Conventional), Non-QM (DSCR, bank statement, etc.), and/or Hard Money. Many wholesale lenders publish single rate sheets covering all their channels at once.
-
-Extract data into BOTH schemas so the match engine can route correctly. Return ONLY valid JSON, no markdown, no preamble:
-{
-  "effectiveDate": "string or null",
-  "lenderName": "string or null",
-  "lenderNMLS": "string or null",
-  "channelsCovered": ["list — e.g. 'agency', 'non_qm', 'hard_money'"],
-  "agencyOverlays": {
-    "loanTypesCovered": ["list"],
-    "overlays": {
-      "minFICO": {"FHA": number_or_null, "Conventional": number_or_null, "VA": number_or_null, "USDA": number_or_null, "Jumbo": number_or_null},
-      "maxDTI": {"FHA": number_or_null, "Conventional": number_or_null, "VA": number_or_null, "USDA": number_or_null},
-      "maxLTV": {"purchase_primary": number_or_null, "rateterm": number_or_null, "cashout": number_or_null, "investment": number_or_null, "secondHome": number_or_null}
-    }
-  },
-  "nonQMProducts": [{
-    "name": "string", "minFICO": number_or_null,
-    "maxLTV": {"purchase": number_or_null, "rateterm": number_or_null, "cashout": number_or_null},
-    "dscrMin": number_or_null, "noRatioDSCR": true_or_false_or_null,
-    "notes": "string"
-  }],
-  "hardMoneyStructures": [{
-    "name": "string", "lendingBasis": "string", "maxLTV": number_or_null, "maxARV": number_or_null,
-    "termMonths": "string", "rateRange": "string", "points": "string", "notes": "string"
-  }],
-  "llpas": [{"factor": "description", "adjustment": "+/-X.XXX"}],
-  "generalNotes": "string"
 }
 
-Only populate sections for channels actually present in the PDF. Use empty array [] if a channel is not covered.${detectInstruction}`;
-
-    // Pick prompt by category tag
-    let prompt;
-    if (category === "agency") prompt = agencyPrompt;
-    else if (category === "non_qm") prompt = nonQMPrompt;
-    else if (category === "hard_money") prompt = hardMoneyPrompt;
-    else if (category === "mixed") prompt = mixedPrompt;
-    else prompt = agencyPrompt; // fallback if somehow unset
+For Hard Money lenders: products[] should capture deal structures (Fix & Flip, Bridge, New Construction, etc.) with their LTV/ARV/rate/points/term parameters.`;
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -472,7 +366,7 @@ Only populate sections for channels actually present in the PDF. Use empty array
           role: "user",
           content: [
             { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
-            { type: "text", text: prompt },
+            { type: "text", text: docType === "guidelines" ? guidelinesPrompt : matrixPrompt },
           ],
         }],
       }),
@@ -483,15 +377,13 @@ Only populate sections for channels actually present in the PDF. Use empty array
     return JSON.parse(clean);
   };
 
-  // ── Shared PDF upload logic (parameterized by doc type + state setters + category) ──
-  const uploadPDF = async (file, docType, storagePrefix, setters, category) => {
+  // ── Shared PDF upload logic (parameterized by doc type + state setters) ──
+  const uploadPDF = async (file, docType, storagePrefix, setters) => {
     const { setFile, setUploading, setProgress, setError, setExtracting } = setters;
     if (!file) return;
     if (file.type !== "application/pdf") { setError("PDF files only."); return; }
     if (file.size > 25 * 1024 * 1024) { setError("File must be under 25MB."); return; }
     setError(""); setFile(file); setUploading(true); setProgress(0);
-    // Persist the category used for this upload so schema routing + mismatch banner work
-    set(`${storagePrefix}Category`, category);
     try {
       const checksum = await computeSHA256(file);
       const storageRef = ref(storage, `lenderDocs/${sessionId}/${storagePrefix}_${file.name}`);
@@ -513,10 +405,8 @@ Only populate sections for channels actually present in the PDF. Use empty array
           reader.onload = async () => {
             const base64 = reader.result.split(",")[1];
             try {
-              const extracted = await extractPDF(base64, docType, category);
+              const extracted = await extractPDF(base64, docType, formData.lenderType);
               set(`${storagePrefix}Extracted`, extracted);
-              // Reset the dismissed flag so mismatch banner can re-show for this new file
-              set(`${storagePrefix}CategoryDismissed`, false);
             } catch (extractErr) {
               console.warn(`${docType} extraction failed (non-blocking):`, extractErr);
               set(`${storagePrefix}Extracted`, { error: "extraction_failed", message: String(extractErr) });
@@ -536,14 +426,12 @@ Only populate sections for channels actually present in the PDF. Use empty array
   const handleGuidelinesUpload = useCallback((file) => uploadPDF(file, "guidelines", "guidelines", {
     setFile: setGuidelinesFile, setUploading: setGuidelinesUploading, setProgress: setGuidelinesProgress,
     setError: setGuidelinesError, setExtracting: setGuidelinesExtracting,
-  }, formData.guidelinesCategory || defaultCategoryFor(formData.lenderType)),
-  [sessionId, formData.guidelinesCategory, formData.lenderType]);
+  }), [sessionId, formData.lenderType]);
 
   const handleMatrixUpload = useCallback((file) => uploadPDF(file, "matrix", "matrix", {
     setFile: setMatrixFile, setUploading: setMatrixUploading, setProgress: setMatrixProgress,
     setError: setMatrixError, setExtracting: setMatrixExtracting,
-  }, formData.matrixCategory || defaultCategoryFor(formData.lenderType)),
-  [sessionId, formData.matrixCategory, formData.lenderType]);
+  }), [sessionId, formData.lenderType]);
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -627,7 +515,76 @@ Only populate sections for channels actually present in the PDF. Use empty array
         {currentStep === 1 && (
           <FormSection title="Basic Information" subtitle="Tell us about your organization, primary contact, and brand">
 
-            {/* ── 1. CONTACT + LICENSING FIELDS (fast data entry first) ── */}
+            {/* ── LOGO UPLOAD ── */}
+            <div style={{ marginBottom: "28px" }}>
+              <Label>Company Logo</Label>
+              <div style={{ color: "#64748b", fontSize: "11px", marginBottom: "10px" }}>
+                Used to identify your organization in the LoanBeacons Lender Library. JPG, PNG, SVG or WebP — max 5MB. Recommended: square or landscape, min 200×80px.
+              </div>
+              <DragDropLogo
+                preview={logoPreview}
+                uploading={logoUploading}
+                progress={logoUploadProgress}
+                error={logoError}
+                onFile={handleLogoUpload}
+                onRemove={() => { setLogoPreview(""); setLogoFile(null); set("logoUrl", ""); setLogoUploadProgress(0); }}
+              />
+            </div>
+
+            {/* ── GUIDELINES + MATRIX UPLOAD (PRD v3.1 §3 — Surface A pre-fill) ── */}
+            <div style={{ marginBottom: "28px" }}>
+              <Label>Lender Guidelines &amp; Rate Matrix (Optional)</Label>
+              <div style={{ color: "#64748b", fontSize: "11px", marginBottom: "10px" }}>
+                Upload your published guidelines and rate matrix. Claude AI will read both PDFs and pre-populate structured data for LoanBeacons Admin to review. Your original files are preserved alongside the extracted data. Accepted: PDF, max 25MB each.
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
+                <DragDropPDF
+                  title="Lender Guidelines"
+                  subtitle="Published guidelines, overlay memo, or program summary"
+                  icon="📋"
+                  filename={formData.guidelinesFileName}
+                  uploading={guidelinesUploading}
+                  progress={guidelinesProgress}
+                  extracting={guidelinesExtracting}
+                  extracted={formData.guidelinesExtracted}
+                  error={guidelinesError}
+                  onFile={handleGuidelinesUpload}
+                  onRemove={() => {
+                    setGuidelinesFile(null); setGuidelinesProgress(0);
+                    set("guidelinesUrl", ""); set("guidelinesFileName", "");
+                    set("guidelinesChecksum", ""); set("guidelinesUploadedAt", null);
+                    set("guidelinesExtracted", null);
+                  }}
+                />
+                <DragDropPDF
+                  title={
+                    formData.lenderType === "hard_money" ? "Fee Schedule / Term Sheet" :
+                    formData.lenderType === "nonqm" ? "Rate Matrix / Product Spec" :
+                    "Rate Sheet / Pricing Matrix"
+                  }
+                  subtitle={
+                    formData.lenderType === "hard_money" ? "Points, rates, fees, deal structure" :
+                    formData.lenderType === "nonqm" ? "DSCR, bank stmt, LLPAs, prepay" :
+                    "Par rates, LLPAs, comp tiers"
+                  }
+                  icon="📊"
+                  filename={formData.matrixFileName}
+                  uploading={matrixUploading}
+                  progress={matrixProgress}
+                  extracting={matrixExtracting}
+                  extracted={formData.matrixExtracted}
+                  error={matrixError}
+                  onFile={handleMatrixUpload}
+                  onRemove={() => {
+                    setMatrixFile(null); setMatrixProgress(0);
+                    set("matrixUrl", ""); set("matrixFileName", "");
+                    set("matrixChecksum", ""); set("matrixUploadedAt", null);
+                    set("matrixExtracted", null);
+                  }}
+                />
+              </div>
+            </div>
+
             <Grid2>
               <Field label="Lender / Company Name *" value={formData.lenderName} onChange={(v) => set("lenderName", v)} placeholder="e.g. Apex Bridge Capital" />
               <Field label="Primary Contact Name *" value={formData.contactName} onChange={(v) => set("contactName", v)} placeholder="Full name" />
@@ -666,110 +623,6 @@ Only populate sections for channels actually present in the PDF. Use empty array
               onToggle={(s) => handleStateToggle("pendingStateLicenses", s)}
               note="Optional — helps LOs plan ahead for future submissions"
             />
-
-            {/* ── 2. LOGO UPLOAD (branding asset) ── */}
-            <div style={{ marginTop: "28px", marginBottom: "28px" }}>
-              <Label>Company Logo</Label>
-              <div style={{ color: "#64748b", fontSize: "11px", marginBottom: "10px" }}>
-                Used to identify your organization in the LoanBeacons Lender Library. JPG, PNG, SVG or WebP — max 5MB. Recommended: square or landscape, min 200×80px.
-              </div>
-              <DragDropLogo
-                preview={logoPreview}
-                uploading={logoUploading}
-                progress={logoUploadProgress}
-                error={logoError}
-                onFile={handleLogoUpload}
-                onRemove={() => { setLogoPreview(""); setLogoFile(null); set("logoUrl", ""); setLogoUploadProgress(0); }}
-              />
-            </div>
-
-            {/* ── 3. GUIDELINES + MATRIX UPLOAD (PRD v3.1 §3 — Surface A pre-fill) ── */}
-            <div style={{ marginBottom: "28px" }}>
-              <Label>Lender Guidelines &amp; Rate Matrix (Optional)</Label>
-              <div style={{ color: "#64748b", fontSize: "11px", marginBottom: "14px" }}>
-                Upload your published guidelines and rate matrix. <strong style={{ color: "#cbd5e1" }}>Tag each document by channel</strong> so Claude AI reads it with the right lens — agency overlays are read differently than Non-QM matrices. Multi-channel lenders (agency + Non-QM) use both zones. Max 25MB per PDF.
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
-                <div>
-                  <DocCategorySelect
-                    value={formData.guidelinesCategory || defaultCategoryFor(formData.lenderType)}
-                    onChange={(v) => { set("guidelinesCategory", v); set("guidelinesCategoryDismissed", false); }}
-                    disabled={guidelinesUploading || guidelinesExtracting}
-                  />
-                  <DragDropPDF
-                    title="Lender Guidelines"
-                    subtitle="Published guidelines, overlay memo, or program summary"
-                    icon="📋"
-                    filename={formData.guidelinesFileName}
-                    uploading={guidelinesUploading}
-                    progress={guidelinesProgress}
-                    extracting={guidelinesExtracting}
-                    extracted={formData.guidelinesExtracted}
-                    error={guidelinesError}
-                    onFile={handleGuidelinesUpload}
-                    onRemove={() => {
-                      setGuidelinesFile(null); setGuidelinesProgress(0);
-                      set("guidelinesUrl", ""); set("guidelinesFileName", "");
-                      set("guidelinesChecksum", ""); set("guidelinesUploadedAt", null);
-                      set("guidelinesExtracted", null); set("guidelinesCategoryDismissed", false);
-                    }}
-                  />
-                  <CategoryMismatchBanner
-                    userCategory={formData.guidelinesCategory}
-                    extracted={formData.guidelinesExtracted}
-                    dismissed={formData.guidelinesCategoryDismissed}
-                    onSwitch={(newCat) => {
-                      set("guidelinesCategory", newCat);
-                      set("guidelinesCategoryDismissed", true);
-                    }}
-                    onKeep={() => set("guidelinesCategoryDismissed", true)}
-                  />
-                </div>
-                <div>
-                  <DocCategorySelect
-                    value={formData.matrixCategory || defaultCategoryFor(formData.lenderType)}
-                    onChange={(v) => { set("matrixCategory", v); set("matrixCategoryDismissed", false); }}
-                    disabled={matrixUploading || matrixExtracting}
-                  />
-                  <DragDropPDF
-                    title={
-                      formData.lenderType === "hard_money" ? "Fee Schedule / Term Sheet" :
-                      formData.lenderType === "nonqm" ? "Rate Matrix / Product Spec" :
-                      "Rate Sheet / Pricing Matrix"
-                    }
-                    subtitle={
-                      formData.lenderType === "hard_money" ? "Points, rates, fees, deal structure" :
-                      formData.lenderType === "nonqm" ? "DSCR, bank stmt, LLPAs, prepay" :
-                      "Par rates, LLPAs, comp tiers"
-                    }
-                    icon="📊"
-                    filename={formData.matrixFileName}
-                    uploading={matrixUploading}
-                    progress={matrixProgress}
-                    extracting={matrixExtracting}
-                    extracted={formData.matrixExtracted}
-                    error={matrixError}
-                    onFile={handleMatrixUpload}
-                    onRemove={() => {
-                      setMatrixFile(null); setMatrixProgress(0);
-                      set("matrixUrl", ""); set("matrixFileName", "");
-                      set("matrixChecksum", ""); set("matrixUploadedAt", null);
-                      set("matrixExtracted", null); set("matrixCategoryDismissed", false);
-                    }}
-                  />
-                  <CategoryMismatchBanner
-                    userCategory={formData.matrixCategory}
-                    extracted={formData.matrixExtracted}
-                    dismissed={formData.matrixCategoryDismissed}
-                    onSwitch={(newCat) => {
-                      set("matrixCategory", newCat);
-                      set("matrixCategoryDismissed", true);
-                    }}
-                    onKeep={() => set("matrixCategoryDismissed", true)}
-                  />
-                </div>
-              </div>
-            </div>
           </FormSection>
         )}
 
@@ -1472,112 +1325,6 @@ const DragDropPDF = ({ title, subtitle, icon, filename, uploading, progress, ext
         <div style={{ color: "#334155", fontSize: "9px", marginTop: "8px" }}>PDF only · Max 25MB · AI parses on upload</div>
       </div>
       {error && <div style={{ color: "#ef4444", fontSize: "11px", marginTop: "6px" }}>{error}</div>}
-    </div>
-  );
-};
-
-// ── DOCUMENT CATEGORY SELECT (PRD v3.1 — per-document tagging) ──
-// Small dropdown rendered above each upload zone. Pre-selected from Step 0
-// category, editable so multi-channel lenders (UWM-style agency + Non-QM)
-// can tag each PDF independently.
-const DocCategorySelect = ({ value, onChange, disabled }) => {
-  const opt = DOC_CATEGORY_OPTIONS.find((o) => o.value === value);
-  return (
-    <div style={{ marginBottom: "10px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-        <span style={{ color: "#94a3b8", fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-          This document covers
-        </span>
-        <span style={{ color: "#64748b", fontSize: "10px" }}>— tag before upload</span>
-      </div>
-      <select
-        value={value || ""}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        style={{
-          width: "100%",
-          background: "#141824",
-          color: "#f1f5f9",
-          border: "1px solid #2d3548",
-          borderRadius: "6px",
-          padding: "8px 10px",
-          fontSize: "12px",
-          fontWeight: "600",
-          cursor: disabled ? "not-allowed" : "pointer",
-          opacity: disabled ? 0.5 : 1,
-        }}
-      >
-        {DOC_CATEGORY_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-      {opt && (
-        <div style={{ color: "#64748b", fontSize: "10px", marginTop: "4px", lineHeight: "1.4" }}>
-          {opt.hint}
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ── CATEGORY MISMATCH BANNER (AI safety-net confirmation) ──
-// Shown after extraction if Haiku's self-reported detectedCategory disagrees
-// with the tag the user selected. Non-blocking, one-click resolution.
-const CategoryMismatchBanner = ({ userCategory, extracted, dismissed, onSwitch, onKeep }) => {
-  if (!extracted || extracted.error) return null;
-  if (dismissed) return null;
-  const detected = extracted.detectedCategory;
-  if (!detected || detected === userCategory) return null;
-
-  const userLabel = (DOC_CATEGORY_OPTIONS.find((o) => o.value === userCategory) || {}).label || userCategory;
-  const detectedLabel = (DOC_CATEGORY_OPTIONS.find((o) => o.value === detected) || {}).label || detected;
-
-  return (
-    <div style={{
-      marginTop: "10px",
-      padding: "12px",
-      background: "#78350f33",
-      border: "1px solid #f59e0b",
-      borderRadius: "8px",
-    }}>
-      <div style={{ color: "#fbbf24", fontSize: "11px", fontWeight: "700", marginBottom: "6px" }}>
-        🤖 Possible category mismatch
-      </div>
-      <div style={{ color: "#fde68a", fontSize: "11px", lineHeight: "1.5", marginBottom: "10px" }}>
-        You tagged this as <strong>{userLabel}</strong>, but the content looks more like <strong>{detectedLabel}</strong>. Your tag controls how this data is routed in LoanBeacons.
-      </div>
-      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-        <button
-          onClick={() => onSwitch(detected)}
-          style={{
-            background: "#f59e0b",
-            color: "#1a1410",
-            border: "none",
-            borderRadius: "5px",
-            padding: "6px 10px",
-            fontSize: "11px",
-            fontWeight: "700",
-            cursor: "pointer",
-          }}
-        >
-          Switch to {detectedLabel}
-        </button>
-        <button
-          onClick={onKeep}
-          style={{
-            background: "transparent",
-            color: "#fbbf24",
-            border: "1px solid #f59e0b",
-            borderRadius: "5px",
-            padding: "6px 10px",
-            fontSize: "11px",
-            fontWeight: "700",
-            cursor: "pointer",
-          }}
-        >
-          Keep as {userLabel}
-        </button>
-      </div>
     </div>
   );
 };
