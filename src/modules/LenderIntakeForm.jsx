@@ -32,12 +32,17 @@ const LENDER_TYPES = [
   { id: "hard_money",   label: "Hard Money / Private / Bridge", icon: "🔥" },
 ];
 
-const US_STATES = [
+// 50 U.S. states (the Select All target)
+const US_50_STATES = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
   "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
   "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
   "VA","WA","WV","WI","WY",
 ];
+// DC + U.S. territories (rendered for licensing but NOT swept by Select All)
+const US_TERRITORIES = ["DC","PR","VI","GU","AS","MP"];
+// Combined rendering order — states first, territories last
+const US_STATES = [...US_50_STATES, ...US_TERRITORIES];
 
 // ── INITIAL FORM STATE ─────────────────────────────────────
 
@@ -66,9 +71,29 @@ const initialState = {
 
   // Section 1 — Basic Info (all types)
   lenderName: "",
+  lenderNMLS: "",                  // [NEW] Company NMLS# — primary dedup key per PRD v3.1 §4.1
+  brokerApplicationUrl: "",        // [NEW] Link to broker-portal signup / TPO application page
   contactName: "",
   contactEmail: "",
   contactPhone: "",
+
+  // Primary, Backup & Escalation AE contacts (PRD v3.1 §4.4 + extension)
+  primaryAE: {
+    name: "", email: "", phone: "", title: "", preferredContact: "",
+    setBy: "intake",
+  },
+  backupAE: {
+    name: "", email: "", phone: "", title: "", preferredContact: "",
+    setBy: "intake",
+  },
+  escalationContact: {
+    name: "", email: "", phone: "", title: "", preferredContact: "",
+    setBy: "intake",
+  },
+
+  // Source tag (PRD v3.1 — Item 6 Stage A routing)
+  source: "intake_submission",     // intake_submission | seed | community | private | api_verified
+
   lenderEntityType: "",
   statesLicensed: [],
   statesActive: [],
@@ -79,6 +104,7 @@ const initialState = {
   aeContactName: "",
   aeContactEmail: "",
   aeContactPhone: "",
+  // Legacy escalation fields kept for prefill-token compatibility only — Step 6 no longer renders them
   escalationContactName: "",
   escalationContactEmail: "",
   thirdPartyProcessingAllowed: "",
@@ -201,6 +227,22 @@ function defaultCategoryFor(lenderType) {
   if (lenderType === "hard_money")   return "hard_money";
   return "agency";
 }
+
+// NMLS# validator — numeric only, 1–8 digits (NMLS format)
+function validateNMLS(value) {
+  if (!value) return { valid: false, message: "NMLS# is required" };
+  if (!/^\d+$/.test(value)) return { valid: false, message: "Numbers only" };
+  if (value.length < 1 || value.length > 8) return { valid: false, message: "1–8 digits" };
+  return { valid: true, message: "" };
+}
+
+const PREFERRED_CONTACT_OPTIONS = [
+  { value: "email",  label: "Email" },
+  { value: "phone",  label: "Phone" },
+  { value: "text",   label: "Text / SMS" },
+  { value: "slack",  label: "Slack" },
+  { value: "teams",  label: "MS Teams" },
+];
 
 // ── MAIN COMPONENT ─────────────────────────────────────────
 
@@ -630,9 +672,21 @@ Only populate sections for channels actually present in the PDF. Use empty array
             {/* ── 1. CONTACT + LICENSING FIELDS (fast data entry first) ── */}
             <Grid2>
               <Field label="Lender / Company Name *" value={formData.lenderName} onChange={(v) => set("lenderName", v)} placeholder="e.g. Apex Bridge Capital" />
-              <Field label="Primary Contact Name *" value={formData.contactName} onChange={(v) => set("contactName", v)} placeholder="Full name" />
-              <Field label="Contact Email *" value={formData.contactEmail} onChange={(v) => set("contactEmail", v)} type="email" placeholder="email@company.com" />
-              <Field label="Contact Phone" value={formData.contactPhone} onChange={(v) => set("contactPhone", v)} placeholder="(555) 000-0000" />
+              <NMLSField
+                label="Company NMLS # *"
+                value={formData.lenderNMLS}
+                onChange={(v) => set("lenderNMLS", v.replace(/\D/g, "").slice(0, 8))}
+                placeholder="e.g. 2611"
+              />
+              <Field label="Submission Contact Name *" value={formData.contactName} onChange={(v) => set("contactName", v)} placeholder="Person filling out this form" />
+              <Field label="Submission Contact Email *" value={formData.contactEmail} onChange={(v) => set("contactEmail", v)} type="email" placeholder="email@company.com" />
+              <Field label="Submission Contact Phone" value={formData.contactPhone} onChange={(v) => set("contactPhone", v)} placeholder="(555) 000-0000" />
+              <Field
+                label="Broker Application URL"
+                value={formData.brokerApplicationUrl}
+                onChange={(v) => set("brokerApplicationUrl", v)}
+                placeholder="https://yourlender.com/broker-application  (optional)"
+              />
               <Select
                 label="Lender Entity Type *"
                 value={formData.lenderEntityType}
@@ -642,6 +696,10 @@ Only populate sections for channels actually present in the PDF. Use empty array
               <Field label="Typical Funding / Turn Time (days) *" value={formData.typicalFundingDays} onChange={(v) => set("typicalFundingDays", v)} type="number" placeholder="e.g. 7" />
             </Grid2>
 
+            <div style={{ color: "#64748b", fontSize: "11px", marginTop: "-8px", marginBottom: "20px", fontStyle: "italic" }}>
+              The Submission Contact is the person filling out this form — LoanBeacons uses this to reach you about the profile itself. Brokers contact your AEs directly (below), not this field.
+            </div>
+
             <RadioGroup
               label="Are you currently accepting new brokers? *"
               value={formData.acceptingNewBrokers}
@@ -649,22 +707,61 @@ Only populate sections for channels actually present in the PDF. Use empty array
               options={["Yes", "No", "Case by Case"]}
             />
 
+            {/* ── AE CONTACT TIERS (PRD v3.1 §4.4 + Escalation extension) ── */}
+            <div style={{ marginTop: "24px", marginBottom: "8px" }}>
+              <Label>Tier 1 · Primary Account Executive — Day-to-day contact for brokers</Label>
+              <div style={{ color: "#64748b", fontSize: "11px", marginBottom: "10px" }}>
+                The AE a broker calls first for scenarios, pricing, and routine questions. Appears on every lender card in LoanBeacons.
+              </div>
+              <AEContactGrid
+                contact={formData.primaryAE}
+                onChange={(field, val) => setFormData((prev) => ({ ...prev, primaryAE: { ...prev.primaryAE, [field]: val } }))}
+              />
+            </div>
+
+            <div style={{ marginTop: "20px", marginBottom: "8px" }}>
+              <Label>Tier 2 · Backup AE — In case primary AE is unavailable or leaves</Label>
+              <div style={{ color: "#64748b", fontSize: "11px", marginBottom: "10px" }}>
+                Covers vacations, PTO, and staffing transitions. Surfaces automatically if the primary AE becomes unresponsive.
+              </div>
+              <AEContactGrid
+                contact={formData.backupAE}
+                onChange={(field, val) => setFormData((prev) => ({ ...prev, backupAE: { ...prev.backupAE, [field]: val } }))}
+              />
+            </div>
+
+            <div style={{ marginTop: "20px", marginBottom: "20px" }}>
+              <Label>Tier 3 · Escalation Contact — Manager for disputes or stuck files <span style={{ color: "#475569", fontWeight: "400", textTransform: "none", letterSpacing: "normal" }}>(optional)</span></Label>
+              <div style={{ color: "#64748b", fontSize: "11px", marginBottom: "10px" }}>
+                Sales manager, regional VP, or decision-maker a broker reaches when they need to appeal a pricing exception, rescue a stuck file, or escalate past the AE. Leave blank if your AE handles escalations directly.
+              </div>
+              <AEContactGrid
+                contact={formData.escalationContact}
+                onChange={(field, val) => setFormData((prev) => ({ ...prev, escalationContact: { ...prev.escalationContact, [field]: val } }))}
+              />
+            </div>
+
             <StateSelector
               label="States Licensed *"
               selected={formData.statesLicensed}
               onToggle={(s) => handleStateToggle("statesLicensed", s)}
+              onReplaceAll={(list) => set("statesLicensed", list)}
             />
             <StateSelector
               label="States Currently Active (lending now)"
               selected={formData.statesActive}
               onToggle={(s) => handleStateToggle("statesActive", s)}
               note="Select only states where you are actively taking new submissions"
+              onReplaceAll={(list) => set("statesActive", list)}
+              copyFromLabel="Licensed"
+              copyFromList={formData.statesLicensed}
             />
             <StateSelector
               label="Pending State Licenses (applied, not yet approved)"
               selected={formData.pendingStateLicenses}
               onToggle={(s) => handleStateToggle("pendingStateLicenses", s)}
               note="Optional — helps LOs plan ahead for future submissions"
+              onReplaceAll={(list) => set("pendingStateLicenses", list)}
             />
 
             {/* ── 2. LOGO UPLOAD (branding asset) ── */}
@@ -1187,11 +1284,6 @@ Only populate sections for channels actually present in the PDF. Use empty array
             )}
 
             <Grid2>
-              <Field label="Escalation Contact Name (stuck deals)" value={formData.escalationContactName} onChange={(v) => set("escalationContactName", v)} />
-              <Field label="Escalation Contact Email" value={formData.escalationContactEmail} onChange={(v) => set("escalationContactEmail", v)} type="email" />
-            </Grid2>
-
-            <Grid2>
               <Select
                 label="Third Party Processing Allowed"
                 value={formData.thirdPartyProcessingAllowed}
@@ -1261,10 +1353,27 @@ Only populate sections for channels actually present in the PDF. Use empty array
               {[
                 ["Lender Type",          LENDER_TYPES.find((t) => t.id === formData.lenderType)?.label],
                 ["Company",              formData.lenderName || "—"],
-                ["Contact",              `${formData.contactName} · ${formData.contactEmail}`],
-                ["Licensed States",      formData.statesLicensed.length ? `${formData.statesLicensed.length} states` : "Not specified"],
-                ["Active States",        formData.statesActive.length ? formData.statesActive.join(", ") : "Not specified"],
+                ["Company NMLS #",       formData.lenderNMLS || "—"],
+                ["Submission Contact",   `${formData.contactName || "—"} · ${formData.contactEmail || "—"}`],
+                ["Broker Application",   formData.brokerApplicationUrl || "Not provided"],
+                ["Tier 1 · Primary AE",  formData.primaryAE?.name ? `${formData.primaryAE.name} · ${formData.primaryAE.email || ""}` : "Not provided"],
+                ["Tier 2 · Backup AE",   formData.backupAE?.name ? `${formData.backupAE.name} · ${formData.backupAE.email || ""}` : "Not provided"],
+                ["Tier 3 · Escalation",  formData.escalationContact?.name ? `${formData.escalationContact.name} · ${formData.escalationContact.email || ""}` : "Not provided (optional)"],
+                ["Licensed States",      (() => {
+                  const s = formData.statesLicensed.filter((x) => US_50_STATES.includes(x)).length;
+                  const t = formData.statesLicensed.filter((x) => US_TERRITORIES.includes(x)).length;
+                  if (!s && !t) return "Not specified";
+                  return `${s} of 50${t ? ` + ${t} territor${t === 1 ? "y" : "ies"}` : ""}`;
+                })()],
+                ["Active States",        (() => {
+                  const s = formData.statesActive.filter((x) => US_50_STATES.includes(x)).length;
+                  const t = formData.statesActive.filter((x) => US_TERRITORIES.includes(x)).length;
+                  if (!s && !t) return "Not specified";
+                  return `${s} of 50${t ? ` + ${t} territor${t === 1 ? "y" : "ies"}` : ""}`;
+                })()],
                 ["Accepting New Brokers",formData.acceptingNewBrokers || "—"],
+                ["Guidelines PDF",       formData.guidelinesFileName ? `${formData.guidelinesFileName} (tagged ${formData.guidelinesCategory || "—"})` : "Not uploaded"],
+                ["Rate Matrix PDF",      formData.matrixFileName ? `${formData.matrixFileName} (tagged ${formData.matrixCategory || "—"})` : "Not uploaded"],
               ].map(([label, value]) => (
                 <div key={label} style={styles.reviewItem}>
                   <span style={styles.reviewLabel}>{label}</span>
@@ -1734,23 +1843,91 @@ const CheckboxRow = ({ items, selected, onToggle }) => (
   </div>
 );
 
-const StateSelector = ({ label, selected, onToggle, note }) => (
-  <div style={{ marginBottom: "20px" }}>
-    <Label>{label}</Label>
-    {note && <div style={{ color: "#64748b", fontSize: "11px", marginBottom: "8px" }}>{note}</div>}
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-      {US_STATES.map((state) => {
-        const isSelected = selected.includes(state);
-        return (
-          <div key={state} onClick={() => onToggle(state)} style={{ width: "38px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "4px", border: `1px solid ${isSelected ? "#e8531a" : "#1e2535"}`, background: isSelected ? "#e8531a" : "#1a1f2e", color: isSelected ? "#fff" : "#475569", fontSize: "10px", fontWeight: "600", cursor: "pointer" }}>
-            {state}
+const StateSelector = ({ label, selected, onToggle, note, onReplaceAll, copyFromLabel, copyFromList }) => {
+  const all50Selected = US_50_STATES.every((s) => selected.includes(s));
+  // Select All 50 States: adds all 50, preserves any territories already selected
+  const handleSelectAll50 = () => {
+    if (!onReplaceAll) return;
+    const territoriesAlreadySelected = selected.filter((s) => US_TERRITORIES.includes(s));
+    onReplaceAll([...US_50_STATES, ...territoriesAlreadySelected]);
+  };
+  const handleClear = () => onReplaceAll && onReplaceAll([]);
+  const handleCopyFrom = () => onReplaceAll && onReplaceAll([...(copyFromList || [])]);
+  const stateCount = selected.filter((s) => US_50_STATES.includes(s)).length;
+  const territoryCount = selected.filter((s) => US_TERRITORIES.includes(s)).length;
+  return (
+    <div style={{ marginBottom: "20px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginBottom: "4px" }}>
+        <Label>{label}</Label>
+        {onReplaceAll && (
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+            {copyFromList && copyFromList.length > 0 && (
+              <button
+                type="button"
+                onClick={handleCopyFrom}
+                style={ssBtn}
+                title={`Copy all jurisdictions from ${copyFromLabel}`}
+              >
+                ⎘ Copy from {copyFromLabel}
+              </button>
+            )}
+            <button type="button" onClick={handleSelectAll50} style={ssBtn} disabled={all50Selected}>
+              {all50Selected ? "✓ All 50 States" : "Select All 50 States"}
+            </button>
+            {selected.length > 0 && (
+              <button type="button" onClick={handleClear} style={{ ...ssBtn, color: "#ef4444", borderColor: "#b91c1c55" }}>
+                Clear
+              </button>
+            )}
           </div>
-        );
-      })}
+        )}
+      </div>
+      {note && <div style={{ color: "#64748b", fontSize: "11px", marginBottom: "8px" }}>{note}</div>}
+      {/* 50 states — swept by Select All */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+        {US_50_STATES.map((state) => {
+          const isSelected = selected.includes(state);
+          return (
+            <div key={state} onClick={() => onToggle(state)} style={{ width: "38px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "4px", border: `1px solid ${isSelected ? "#e8531a" : "#1e2535"}`, background: isSelected ? "#e8531a" : "#1a1f2e", color: isSelected ? "#fff" : "#475569", fontSize: "10px", fontWeight: "600", cursor: "pointer" }}>
+              {state}
+            </div>
+          );
+        })}
+      </div>
+      {/* Territories — separate row, individually clickable only */}
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "10px", flexWrap: "wrap" }}>
+        <span style={{ color: "#475569", fontSize: "10px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.04em", marginRight: "4px" }}>
+          DC + Territories
+        </span>
+        {US_TERRITORIES.map((state) => {
+          const isSelected = selected.includes(state);
+          return (
+            <div key={state} onClick={() => onToggle(state)} style={{ width: "38px", height: "28px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "4px", border: `1px solid ${isSelected ? "#e8531a" : "#1e2535"}`, background: isSelected ? "#e8531a" : "#1a1f2e", color: isSelected ? "#fff" : "#475569", fontSize: "10px", fontWeight: "600", cursor: "pointer" }}>
+              {state}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ color: "#475569", fontSize: "11px", marginTop: "8px" }}>
+        {stateCount} of 50 states
+        {territoryCount > 0 && ` + ${territoryCount} territor${territoryCount === 1 ? "y" : "ies"}`} selected
+      </div>
     </div>
-    <div style={{ color: "#475569", fontSize: "11px", marginTop: "6px" }}>{selected.length} state{selected.length !== 1 ? "s" : ""} selected</div>
-  </div>
-);
+  );
+};
+
+const ssBtn = {
+  background: "transparent",
+  border: "1px solid #2d3548",
+  color: "#cbd5e1",
+  borderRadius: "4px",
+  padding: "3px 10px",
+  fontSize: "10px",
+  fontWeight: "700",
+  cursor: "pointer",
+  textTransform: "uppercase",
+  letterSpacing: "0.03em",
+};
 
 const NicheGrid = ({ niches, selected, details, onToggle, onDetail }) => (
   <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -1788,6 +1965,53 @@ const FormSection = ({ title, subtitle, children }) => (
 
 const Label = ({ children }) => (
   <div style={{ color: "#94a3b8", fontSize: "12px", fontWeight: "600", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.4px" }}>{children}</div>
+);
+
+// ── NMLS FIELD (numeric-only + inline validation, PRD v3.1 §4 primary key) ──
+const NMLSField = ({ label, value, onChange, placeholder }) => {
+  const touched = value && value.length > 0;
+  const validation = validateNMLS(value);
+  const showError = touched && !validation.valid;
+  return (
+    <div>
+      <Label>{label}</Label>
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{
+          ...styles.input,
+          borderColor: showError ? "#b91c1c" : (touched && validation.valid ? "#16a34a" : "#2d3548"),
+        }}
+      />
+      <div style={{ minHeight: "14px", fontSize: "10px", marginTop: "4px", color: showError ? "#ef4444" : "#64748b" }}>
+        {showError ? validation.message : (touched && validation.valid ? "✓ Valid NMLS format" : "Numeric only, 1–8 digits")}
+      </div>
+    </div>
+  );
+};
+
+// ── AE CONTACT GRID (reusable for primary + backup, PRD v3.1 §4.4) ──
+const AEContactGrid = ({ contact, onChange }) => (
+  <div>
+    <Grid2>
+      <Field label="AE Full Name" value={contact.name || ""} onChange={(v) => onChange("name", v)} placeholder="Full name" />
+      <Field label="AE Title" value={contact.title || ""} onChange={(v) => onChange("title", v)} placeholder="e.g. Senior Account Executive" />
+      <Field label="AE Email" value={contact.email || ""} onChange={(v) => onChange("email", v)} type="email" placeholder="ae@company.com" />
+      <Field label="AE Phone" value={contact.phone || ""} onChange={(v) => onChange("phone", v)} placeholder="(555) 000-0000" />
+    </Grid2>
+    <div style={{ marginTop: "8px" }}>
+      <Select
+        label="Preferred Contact Method"
+        value={contact.preferredContact || ""}
+        onChange={(v) => onChange("preferredContact", v)}
+        options={PREFERRED_CONTACT_OPTIONS}
+      />
+    </div>
+  </div>
 );
 
 const SectionSubhead = ({ children }) => (
