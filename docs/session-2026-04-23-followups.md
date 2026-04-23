@@ -164,3 +164,21 @@ Tonight closes cleanly when:
 At that point: git + production rules are in sync for the first time since Wave 1 began. Track B resumes fresh tomorrow.
 
 Remaining tech debt (TD-1 through TD-3, plus all items from the original proposal's Follow-up Technical Debt section) rolls forward to Track B.
+
+---
+
+## Morning priority — 2026-04-24
+
+**TDR-1 (architectural tier): Lender Guideline Retrieval Spine.**
+
+The guidelines documents uploaded into each LenderProfile must become the authoritative source of truth for every downstream module that makes placement, structuring, or "next best action" decisions. Current state: modules rely on hardcoded assumptions and general-knowledge pattern matching, not the actual uploaded lender guidelines. This is a trust-critical gap — one confidently wrong placement driven by stale or misparsed overlays breaks LO trust permanently.
+
+**Consumer modules that must read from the spine:** LenderMatch (overlay-aware fit scoring), AUS Rescue (Non-QM placement ranking + program migration feasibility), Smart Chat (scenario-qualified lender answers), Rate Intel, Compliance, Collateral flip rules, and any future "next action" prompt.
+
+**Scoping questions to answer in the PRD:** (1) storage shape — raw PDFs in Firebase Storage vs extracted structured JSON in Firestore vs hybrid, (2) query surface — shared retrieval service vs per-module retrieval, (3) freshness — re-upload/versioning pattern so stale guidelines never feed live answers, (4) citation trail — two-layer visible citations with inline answer badge + PDF viewer yellow highlight + margin note showing system interpretation, (5) failure mode — when confidence is insufficient, system refuses to answer rather than guesses. Three-color palette proposed for citations: yellow (primary source), green (corroborating), red/orange (conflicting language resolved — critical for compliance defensibility).
+
+**Materials George brings to kickoff:** 3–5 real lender guideline PDFs from LenderProfiles (variety: overlay matrix, program guide, rate sheet with scenario desk, Non-QM sheet); 3–5 worked placement examples with known-correct answers from last 90 days; 1 hard edge case where two lenders both looked viable on paper but only one closed it.
+
+**Materials Claude brings to kickoff:** PRD skeleton covering all five scoping questions above, with every assumption flagged explicitly (same protocol as the 2026-04-23 rules proposal).
+
+**Not to be conflated with the 7 tech-debt hygiene items from the rules proposal doc.** Those remain separately queued. This is architectural tier and likely a multi-session build.
