@@ -115,6 +115,27 @@ service cloud.firestore {
       allow write: if isAuth() && request.auth.uid == uid;
     }
 
+    // ── Processor Shares ────────────────────────────────────────────────────
+    // HOTFIX 2026-04-23: Added to restore processor share functionality
+    // broken by Wave 1 rules deploy (which removed the catch-all that was
+    // previously permitting writes to this collection).
+    //
+    // Architecture note: ProcessorSharePage.jsx reads Firestore directly
+    // with an unauthenticated processor. Rule permits public `get` by
+    // exact token but denies `list` to prevent enumeration. Unlike AE
+    // shares (which route through a Cloud Function), this is direct
+    // client-to-Firestore access — hence the narrower `get` permission
+    // instead of broad `read`.
+    //
+    // See Track B follow-up tech debt for consideration of refactoring to
+    // Cloud Function HTTP endpoint to mirror the AE share architecture.
+    match /processorShares/{shareId} {
+      allow get: if true;            // Public read by exact token (token IS the doc ID)
+      allow list: if false;          // No enumeration of share IDs
+      allow create: if isAuth();     // Authenticated LOs create shares
+      allow update, delete: if isAdmin();
+    }
+
     // ── Existing Platform Collections (unchanged) ───────────────────────────
     match /scenarios/{scenarioId} {
       allow read, write: if isAuth();
