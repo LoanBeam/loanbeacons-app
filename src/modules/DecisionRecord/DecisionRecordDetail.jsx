@@ -170,7 +170,7 @@ const LABEL_MAP = {
   buildingCoverage:'Building Coverage', minCoverage:'Min Required', rehabCost:'Renovation Cost',
   arv:'After-Repair Value', profitMargin:'Profit Margin', ltv:'LTV', dti:'DTI',
   criticalIssueCount:'Critical Issues', highIssueCount:'High Issues', lienCount:'Liens',
-  totalLienAmount:'Total Lien Amount', issuedCount:'Issued', pendingCount:'Pending',
+  totalLienAmount:'Total Lien Amount', pendingCount:'Pending',
   // Asset Analyzer fields
   reserveMonths:'Reserve Months', largeDepRequiringSourcing:'Large Deposits to Source',
   nsfEventCount:'NSF Events', totalFlagCount:'Flags Raised', nonBorrowerFlagsResolved:'Flags Resolved',

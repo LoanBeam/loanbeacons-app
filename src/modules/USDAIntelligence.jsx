@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { db } from "../firebase/config";
-import { collection, doc, getDoc, serverTimestamp } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, serverTimestamp } from "firebase/firestore";
 import { useDecisionRecord } from "../hooks/useDecisionRecord";
 import DecisionRecordBanner from "../components/DecisionRecordBanner";
 import { useNextStepIntelligence } from "../hooks/useNextStepIntelligence";
 import NextStepCard from "../components/NextStepCard";
 import ModuleNav from "../components/ModuleNav";
+import ScenarioHeader from "../components/ScenarioHeader";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const GUARANTEE_FEE_PCT = 1.00;
@@ -135,12 +136,18 @@ const Card = ({ children, className = "" }) => (
 export default function USDAIntelligence() {
   const [searchParams] = useSearchParams();
   const scenarioId = searchParams.get("scenarioId");
+  const navigate = useNavigate();
 
   const { reportFindings, savedRecordId, setSavedRecordId } = useDecisionRecord("USDA_INTELLIGENCE", scenarioId);
 
   const [step, setStep] = useState(1);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  // Landing page scenario picker
+  const [scenarios, setScenarios] = useState([]);
+  const [search, setSearch] = useState("");
+  const [showAll, setShowAll] = useState(false);
 
   // Step 1
   const [address, setAddress] = useState("");
@@ -188,7 +195,13 @@ export default function USDAIntelligence() {
 
   // ─── Scenario Pre-load ────────────────────────────────────────────────────
   useEffect(() => {
-    if (!scenarioId) return;
+    if (!scenarioId) {
+      // Landing page: load all scenarios for the picker
+      getDocs(collection(db, "scenarios"))
+        .then(snap => setScenarios(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+        .catch(err => console.error("Scenario list load error:", err));
+      return;
+    }
     const load = async () => {
       try {
         const snap = await getDoc(doc(db, "scenarios", scenarioId));
@@ -377,12 +390,147 @@ export default function USDAIntelligence() {
     }
   };
 
+  // ─── STATE A: No scenario selected — Landing Page ─────────────────────────
+  if (!scenarioId) {
+    const q = search.toLowerCase().trim();
+    const sorted = [...scenarios].sort((a, b) => {
+      const tA = a.updatedAt?.seconds || a.updated_at?.seconds || a.createdAt?.seconds || a.created_at?.seconds || 0;
+      const tB = b.updatedAt?.seconds || b.updated_at?.seconds || b.createdAt?.seconds || b.created_at?.seconds || 0;
+      return tB - tA;
+    });
+    const filtered = q ? sorted.filter(s => {
+      const name = (s.scenarioName || `${s.firstName || ""} ${s.lastName || ""}`.trim()).toLowerCase();
+      return name.includes(q);
+    }) : sorted;
+    const displayed = q ? filtered : showAll ? filtered : filtered.slice(0, 5);
+    const hasMore = !q && !showAll && filtered.length > 5;
+
+    return (
+      <div style={{ fontFamily: "'DM Sans', sans-serif" }} className="min-h-screen bg-slate-50">
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+
+        {/* ── Hero (landing) ── */}
+        <div style={{ background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)", padding: "28px 32px 24px" }}>
+          <button
+            onClick={() => navigate("/")}
+            style={{ display: "flex", alignItems: "center", gap: 6, color: "#4ade80", fontSize: 12, fontWeight: 600, marginBottom: 20, background: "none", border: "none", cursor: "pointer" }}
+          >
+            ← Back to Dashboard
+          </button>
+          <p style={{ fontSize: 10, fontWeight: 600, color: "#64748b", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
+            Stage 2 — Lender Fit
+          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, background: "#16a34a", borderRadius: 8, fontSize: 11, fontWeight: 700, color: "#fff" }}>
+              M13
+            </span>
+            <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 26, color: "#f8fafc", lineHeight: 1.15 }}>
+              USDA Intelligence™
+            </h1>
+          </div>
+          <p style={{ fontSize: 13, color: "#94a3b8", lineHeight: 1.65, maxWidth: 560, marginBottom: 14 }}>
+            Rural Development Guaranteed Loan · 7 CFR Part 3555 · Full eligibility analysis across property, household, income, loan setup, guarantee fee, and qualifying — with FHA vs USDA comparison and Rescue™ strategies.
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {["Rural Eligibility", "Household Income", "Guarantee Fee", "DTI Analysis", "GUS Simulation", "Comparison Matrix", "Rescue™"].map(tag => (
+              <span key={tag} style={{ padding: "3px 11px", borderRadius: 20, border: "1px solid #334155", fontSize: 11, fontWeight: 500, color: "#cbd5e1" }}>{tag}</span>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Scenario Selector ── */}
+        <div style={{ maxWidth: 640, margin: "0 auto", padding: "28px 24px" }}>
+          <h2 style={{ fontSize: 11, fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: 4 }}>Select a Scenario</h2>
+          <p style={{ fontSize: 12, color: "#94a3b8", marginBottom: 14 }}>Search by name or pick from your most recent files.</p>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "9px 14px", marginBottom: 14 }}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+              <circle cx="6.5" cy="6.5" r="5" stroke="#94a3b8" strokeWidth="1.6" />
+              <path d="M10.5 10.5L14 14" stroke="#94a3b8" strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+            <input
+              type="text"
+              value={search}
+              onChange={e => { setSearch(e.target.value); setShowAll(false); }}
+              placeholder="Search borrower name…"
+              style={{ border: "none", outline: "none", fontSize: 13, color: "#475569", width: "100%", background: "transparent", fontFamily: "inherit" }}
+            />
+            {search && <button onClick={() => setSearch("")} style={{ color: "#94a3b8", background: "none", border: "none", cursor: "pointer", fontSize: 14 }}>✕</button>}
+          </div>
+
+          {scenarios.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-3xl mb-3">📂</p>
+              <p className="text-sm font-semibold text-slate-600">No scenarios found</p>
+              <p className="text-xs text-slate-400 mt-1">Create one in Scenario Creator first.</p>
+              <button onClick={() => navigate("/scenario-creator")} className="mt-4 text-xs font-bold text-green-600 hover:text-green-800 underline">→ Go to Scenario Creator</button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-10 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-2xl mb-2">🔍</p>
+              <p className="text-sm font-semibold text-slate-600">No matches for "{search}"</p>
+              <button onClick={() => setSearch("")} className="mt-2 text-xs text-green-600 hover:underline">Clear search</button>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {!q && !showAll && (
+                <p style={{ fontSize: 9, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: 7 }}>Recently Updated</p>
+              )}
+              {displayed.map(s => {
+                const name = s.scenarioName || `${s.firstName || ""} ${s.lastName || ""}`.trim() || "Unnamed Scenario";
+                const amount = parseFloat(s.loanAmount || 0);
+                const program = s.loanType || null;
+                const credit = s.creditScore || null;
+                const stage = s.stage || null;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => navigate(`/usda-intelligence?scenarioId=${s.id}`)}
+                    className="w-full text-left bg-white border border-slate-200 rounded-2xl px-5 py-4 hover:border-green-300 hover:shadow-md hover:bg-green-50/30 transition-all group"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-slate-800 text-sm truncate group-hover:text-green-700 transition-colors">{name}</div>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                          {amount > 0 && <span className="text-xs text-slate-500 font-mono">${amount.toLocaleString()}</span>}
+                          {program && <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-medium">{program}</span>}
+                          {credit && <span className="text-xs bg-green-50 text-green-700 border border-green-100 px-2 py-0.5 rounded-full font-mono">FICO {credit}</span>}
+                          {stage && <span className="text-xs bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full font-medium">{stage}</span>}
+                        </div>
+                      </div>
+                      <span className="text-slate-300 group-hover:text-green-500 text-lg transition-colors shrink-0">→</span>
+                    </div>
+                  </button>
+                );
+              })}
+              {hasMore && (
+                <button onClick={() => setShowAll(true)} className="w-full text-center text-xs font-bold text-green-600 hover:text-green-800 py-3 border border-dashed border-green-200 rounded-2xl hover:bg-green-50 transition-all">
+                  View all {filtered.length} scenarios
+                </button>
+              )}
+              {showAll && filtered.length > 5 && (
+                <button onClick={() => setShowAll(false)} className="w-full text-center text-xs font-semibold text-slate-400 hover:text-slate-600 py-2 transition-colors">↑ Show less</button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── STATE B: Scenario loaded — Active Module ─────────────────────────────
   return (
     <div style={{ fontFamily: "'DM Sans', sans-serif" }} className="min-h-screen bg-slate-50">
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
 
       {/* ① DecisionRecordBanner */}
-      <DecisionRecordBanner savedRecordId={savedRecordId} moduleKey="USDA_INTELLIGENCE" />
+      <DecisionRecordBanner
+        recordId={savedRecordId}
+        moduleName="USDA Intelligence"
+        moduleKey="USDA_INTELLIGENCE"
+        onSave={handleSave}
+        saving={saving}
+      />
 
       {/* ② ModuleNav */}
       <ModuleNav moduleNumber={13} />
@@ -390,10 +538,7 @@ export default function USDAIntelligence() {
       {/* ③ Hero */}
       <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl mx-4 mt-4 mb-6 p-8 print:hidden">
         <div className="flex items-start justify-between gap-6 flex-wrap">
-          <div>
-            <p className="text-orange-400 text-xs font-bold uppercase tracking-widest mb-1.5">
-              Module 13 · Stage 2: Lender Fit
-            </p>
+          <div className="flex-1 min-w-0">
             <h1 className="text-white font-bold text-3xl mb-2" style={{ fontFamily: "'DM Serif Display', Georgia, serif" }}>
               USDA Intelligence™
             </h1>
@@ -402,15 +547,34 @@ export default function USDAIntelligence() {
             </p>
           </div>
           <div className="flex flex-col items-end gap-2 flex-shrink-0">
+            <span className="bg-orange-500/20 text-orange-300 text-xs font-bold uppercase tracking-widest px-3 py-1 rounded-full border border-orange-500/30">
+              Stage 2 · Lender Fit
+            </span>
+            <span className="bg-slate-700/60 text-slate-200 text-xs font-bold px-3 py-1 rounded-full border border-slate-600">
+              Module 13
+            </span>
             <span className="bg-green-500 text-white text-xs font-bold px-3 py-1 rounded-full">LIVE</span>
             {verdict && (
               <Chip status={verdict === "ELIGIBLE" ? "pass" : verdict === "BORDERLINE" ? "warn" : "fail"}>
                 {verdict === "ELIGIBLE" ? "✓ ELIGIBLE" : verdict === "BORDERLINE" ? "⚠ BORDERLINE" : "✗ NOT ELIGIBLE"}
               </Chip>
             )}
+            {(address || purchasePrice) && (
+              <div className="mt-2 bg-slate-800/60 border border-slate-700 rounded-xl px-4 py-3 text-right min-w-[220px]">
+                {address && (
+                  <div className="text-slate-300 text-xs font-semibold truncate max-w-[260px]">{address}</div>
+                )}
+                {purchasePrice && (
+                  <div className="text-white text-sm font-bold mt-1">{fmt(n(purchasePrice))}</div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {/* ④ ScenarioHeader */}
+      <ScenarioHeader scenarioId={scenarioId} />
 
       {/* Step tabs */}
       <div className="bg-white border-b border-slate-200 print:hidden">
