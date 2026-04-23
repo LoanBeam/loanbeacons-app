@@ -30,7 +30,9 @@ service cloud.firestore {
 
     // ── Lender Profiles ─────────────────────────────────────────────────────
     // One canonical document per company NMLS# (enforced by Cloud Function).
-    // Created and deleted only by Cloud Functions (Admin SDK bypasses rules).
+    // Created only by Cloud Functions (Admin SDK bypasses rules).
+    // Deleted by admin from client (paranoid typed-name confirmation) or
+    // by Cloud Functions.
     match /lenderProfiles/{profileId} {
 
       // All authenticated users may read
@@ -48,11 +50,14 @@ service cloud.firestore {
             .affectedKeys()
             .hasAny(['backupAE', 'nmls']);
 
-      // Admin may update any field including backupAE
+      // Admin may update any field including backupAE (covers edit + archive)
       allow update: if isAdmin();
 
-      // Create + delete: Cloud Functions (Admin SDK) only — deny from client
-      allow create, delete: if false;
+      // Create: Cloud Functions (Admin SDK) only — deny from client
+      allow create: if false;
+
+      // Delete: Admin only (paranoid typed-name confirmation in UI)
+      allow delete: if isAdmin();
     }
 
     // ── Lender Invites ──────────────────────────────────────────────────────
@@ -79,6 +84,35 @@ service cloud.firestore {
         || (isAuth() && resource.data.uid == request.auth.uid);
       allow create: if isAnyLender();
       allow update, delete: if isAdmin();
+    }
+
+    // ── Audit Log ───────────────────────────────────────────────────────────
+    // Immutable append-only audit trail for admin actions on lenderProfiles
+    // (edit, archive, hard-delete). Each entry records:
+    //   uid, email, timestamp, action, targetCollection, targetDocId,
+    //   targetName, reason (edit+delete only), before (edit+delete only),
+    //   after (edit only).
+    // Once written, entries are never modified — compliance/forensics grade.
+    match /auditLog/{entryId} {
+
+      // Admin may read the full audit trail
+      allow read: if isAdmin();
+
+      // Admin may create entries — but only under their own uid (no forging)
+      allow create: if isAdmin()
+        && request.resource.data.uid == request.auth.uid;
+
+      // Immutable — no updates, no deletes, ever
+      allow update, delete: if false;
+    }
+
+    // ── Users (canonical Firebase Auth user doc) ────────────────────────────
+    // Stores per-user settings including `acknowledgedTerms` (TOS gate) and
+    // `acknowledgedAt`. Each user reads/writes only their own doc.
+    // Admin may read any user doc for admin panel purposes.
+    match /users/{uid} {
+      allow read: if isAuth() && (request.auth.uid == uid || isAdmin());
+      allow write: if isAuth() && request.auth.uid == uid;
     }
 
     // ── Existing Platform Collections (unchanged) ───────────────────────────
