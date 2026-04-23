@@ -254,7 +254,7 @@ export default function IntelligentChecklist() {
     if (!scenarioIdParam) return
     setSharing(true)
     try {
-      const token = `ps-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
+      const token = `ps-${crypto.randomUUID()}`
       const shareData = {
         token, scenarioId: scenarioIdParam, createdAt: serverTimestamp(),
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
