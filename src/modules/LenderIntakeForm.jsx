@@ -13,11 +13,14 @@
 // ============================================================
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useParams } from "react-router-dom";
 import { db, storage } from "../firebase/config";
 import {
   collection, addDoc, doc, getDoc, serverTimestamp,
 } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { getFunctions, httpsCallable } from "firebase/functions";
+import { getAuth } from "firebase/auth";
 
 // ── SESSION UUID ───────────────────────────────────────────
 function generateSessionId() {
@@ -246,7 +249,13 @@ const PREFERRED_CONTACT_OPTIONS = [
 
 // ── MAIN COMPONENT ─────────────────────────────────────────
 
-const LenderIntakeForm = ({ prefillToken }) => {
+const LenderIntakeForm = ({ prefillToken: prefillTokenProp }) => {
+  // Accept token from either prop OR URL param (/lender-intake/:token)
+  // This makes the component self-sufficient regardless of how App.jsx
+  // wires the route. Prop takes precedence for backwards compatibility.
+  const params = useParams();
+  const prefillToken = prefillTokenProp || params.token || null;
+
   const [sessionId] = useState(() => generateSessionId());
   const [formData, setFormData] = useState(initialState);
   const [currentStep, setCurrentStep] = useState(0);
@@ -275,6 +284,14 @@ const LenderIntakeForm = ({ prefillToken }) => {
   const [matrixError, setMatrixError] = useState("");
   const [matrixExtracting, setMatrixExtracting] = useState(false);
 
+  // Invite AE modal state (Phase 1 — partial-fill invite flow)
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteSent, setInviteSent] = useState(false);
+  const [inviteUrl, setInviteUrl] = useState("");
+  const [inviteError, setInviteError] = useState("");
+  const [invitePersonalMsg, setInvitePersonalMsg] = useState("");
+
   // Prefill from token
   useEffect(() => {
     if (!prefillToken) return;
@@ -282,7 +299,13 @@ const LenderIntakeForm = ({ prefillToken }) => {
       try {
         const snap = await getDoc(doc(db, "lenderIntakePrefills", prefillToken));
         if (snap.exists()) {
-          setFormData((prev) => ({ ...prev, ...snap.data() }));
+          const data = snap.data();
+          setFormData((prev) => ({ ...prev, ...data }));
+          // Auto-advance past Step 0 if LO already picked the lender type.
+          // Saves the AE a redundant click on an already-highlighted card.
+          if (data.lenderType) {
+            setCurrentStep(1);
+          }
         }
       } catch (e) {
         console.warn("Prefill fetch failed:", e);
@@ -587,6 +610,40 @@ Only populate sections for channels actually present in the PDF. Use empty array
   }, formData.matrixCategory || defaultCategoryFor(formData.lenderType)),
   [sessionId, formData.matrixCategory, formData.lenderType]);
 
+  // ── INVITE AE HANDLER (Phase 1 — partial-fill invite flow) ──
+  // Enabled once LO has provided the 4 minimum fields. LO can skip everything
+  // else and let the AE complete the remaining form themselves.
+  const canInviteAE = Boolean(
+    formData.lenderName?.trim() &&
+    formData.lenderNMLS?.trim() &&
+    formData.primaryAE?.name?.trim() &&
+    formData.primaryAE?.email?.trim()
+  );
+
+  const handleSendInvite = async () => {
+    setInviteSending(true);
+    setInviteError("");
+    try {
+      const auth = getAuth();
+      const loName = auth.currentUser?.displayName || auth.currentUser?.email || "A broker";
+      const functions = getFunctions();
+      const createInvite = httpsCallable(functions, "createLenderIntakePrefill");
+      const result = await createInvite({
+        prefillData: formData,
+        aeName: formData.primaryAE.name,
+        aeEmail: formData.primaryAE.email,
+        loName,
+        personalMessage: invitePersonalMsg,
+      });
+      setInviteUrl(result.data.inviteUrl);
+      setInviteSent(true);
+    } catch (err) {
+      console.error("Invite send failed:", err);
+      setInviteError(err.message || "Failed to send invite. Please try again.");
+    }
+    setInviteSending(false);
+  };
+
   const handleSubmit = async () => {
     setSubmitting(true);
     setError("");
@@ -622,6 +679,89 @@ Only populate sections for channels actually present in the PDF. Use empty array
           All fields are self-reported and can be updated at any time.
         </div>
       </div>
+
+      {/* ── INVITE AE BANNER (Phase 1 — partial-fill invite flow) ── */}
+      {/* Hidden when prefillToken is set — AE viewing from prefill URL should
+          not see option to invite themselves. Only shown to the originating LO. */}
+      {canInviteAE && !inviteSent && currentStep >= 1 && !prefillToken && (
+        <div style={{ maxWidth: "800px", margin: "16px auto 0", padding: "0 24px" }}>
+          <div style={{ background: "#1a2a1f", border: "1px solid #16a34a44", borderRadius: "12px", padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "16px", flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 300px" }}>
+              <div style={{ color: "#4ade80", fontSize: "11px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "4px" }}>
+                You have enough to invite the AE
+              </div>
+              <div style={{ color: "#cbd5e1", fontSize: "13px" }}>
+                Let {formData.primaryAE.name} at {formData.lenderName} finish the profile themselves.
+              </div>
+            </div>
+            <button onClick={() => setInviteOpen(true)} style={{ background: "#16a34a", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 20px", fontSize: "13px", fontWeight: "700", cursor: "pointer", whiteSpace: "nowrap" }}>
+              Send invite →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── INVITE AE MODAL ── */}
+      {inviteOpen && (
+        <div onClick={() => !inviteSending && !inviteSent && setInviteOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: "#141824", border: "1px solid #2d3548", borderRadius: "16px", padding: "32px", maxWidth: "560px", width: "100%", color: "#f1f5f9", maxHeight: "90vh", overflowY: "auto" }}>
+            {!inviteSent ? (
+              <>
+                <h3 style={{ fontSize: "22px", fontWeight: "700", margin: "0 0 8px", color: "#f1f5f9" }}>Invite AE to finish the profile</h3>
+                <p style={{ color: "#64748b", fontSize: "13px", margin: "0 0 24px" }}>
+                  We'll email {formData.primaryAE.name} at <strong style={{ color: "#94a3b8" }}>{formData.primaryAE.email}</strong> a secure link to complete this profile for {formData.lenderName}.
+                </p>
+                <div style={{ background: "#0d1117", border: "1px solid #1e2535", borderRadius: "8px", padding: "16px", marginBottom: "20px" }}>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: "8px" }}>What they'll see pre-filled</div>
+                  <div style={{ color: "#cbd5e1", fontSize: "13px", lineHeight: "1.6" }}>
+                    • Lender: <strong>{formData.lenderName}</strong><br />
+                    • NMLS: <strong>#{formData.lenderNMLS}</strong><br />
+                    • Primary AE: <strong>{formData.primaryAE.name}</strong><br />
+                    {formData.statesLicensed?.length > 0 && <>• States licensed: <strong>{formData.statesLicensed.length}</strong><br /></>}
+                    {formData.lenderType && <>• Category: <strong>{formData.lenderType}</strong></>}
+                  </div>
+                </div>
+                <div style={{ marginBottom: "20px" }}>
+                  <label style={{ color: "#94a3b8", fontSize: "12px", fontWeight: "600", marginBottom: "6px", display: "block", textTransform: "uppercase", letterSpacing: "0.4px" }}>Personal note (optional)</label>
+                  <textarea value={invitePersonalMsg} onChange={(e) => setInvitePersonalMsg(e.target.value)} rows={3} placeholder="e.g. Hey Sarah, finished our call and wanted to get your profile on the platform. Grab a coffee and knock this out when you have 15 min — George" style={{ width: "100%", background: "#1a1f2e", border: "1px solid #2d3548", borderRadius: "6px", color: "#f1f5f9", padding: "10px 12px", fontSize: "13px", resize: "vertical", fontFamily: "inherit", boxSizing: "border-box" }} />
+                </div>
+                {inviteError && (
+                  <div style={{ background: "#3d1a1a", border: "1px solid #b91c1c", borderRadius: "8px", padding: "12px", marginBottom: "16px", color: "#fca5a5", fontSize: "13px" }}>
+                    {inviteError}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+                  <button onClick={() => setInviteOpen(false)} disabled={inviteSending} style={{ background: "transparent", color: "#94a3b8", border: "1px solid #2d3548", borderRadius: "8px", padding: "10px 20px", fontSize: "13px", cursor: inviteSending ? "not-allowed" : "pointer" }}>
+                    Cancel
+                  </button>
+                  <button onClick={handleSendInvite} disabled={inviteSending} style={{ background: inviteSending ? "#166534" : "#16a34a", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 20px", fontSize: "13px", fontWeight: "700", cursor: inviteSending ? "not-allowed" : "pointer" }}>
+                    {inviteSending ? "Sending..." : "Send invite →"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: "36px", textAlign: "center", marginBottom: "16px" }}>✓</div>
+                <h3 style={{ fontSize: "22px", fontWeight: "700", margin: "0 0 8px", color: "#4ade80", textAlign: "center" }}>Invite sent</h3>
+                <p style={{ color: "#cbd5e1", fontSize: "13px", margin: "0 0 24px", textAlign: "center" }}>
+                  {formData.primaryAE.name} will receive an email at {formData.primaryAE.email} within a few minutes with a link to finish the {formData.lenderName} profile.
+                </p>
+                <div style={{ background: "#0d1117", border: "1px solid #1e2535", borderRadius: "8px", padding: "16px", marginBottom: "20px" }}>
+                  <div style={{ color: "#94a3b8", fontSize: "11px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: "8px" }}>Backup invite link (copy & text/Slack)</div>
+                  <div style={{ color: "#4ade80", fontSize: "12px", fontFamily: "monospace", wordBreak: "break-all", padding: "8px", background: "#0a0d12", borderRadius: "4px", userSelect: "all" }}>
+                    {inviteUrl}
+                  </div>
+                </div>
+                <div style={{ textAlign: "center" }}>
+                  <button onClick={() => { setInviteOpen(false); }} style={{ background: "#16a34a", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 24px", fontSize: "13px", fontWeight: "700", cursor: "pointer" }}>
+                    Done
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── PROGRESS BAR ── */}
       {formData.lenderType && (

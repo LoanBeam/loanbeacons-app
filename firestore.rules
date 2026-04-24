@@ -69,6 +69,32 @@ service cloud.firestore {
       allow update, delete: if isAdmin();          // Cloud Functions update status via Admin SDK
     }
 
+    // ── Lender Intake Prefills ──────────────────────────────────────────────
+    // Token documents written by createLenderIntakePrefill Cloud Function
+    // when an LO partial-fills the intake form and invites the AE to finish.
+    // Public read by token (AE lands on /lender-intake/{token} unauthenticated
+    // and the form fetches prefill data to hydrate). Immutable once created.
+    // Separate from lenderInvites: this is form-state prefill, not account
+    // enrollment. Admin cleanup only.
+    match /lenderIntakePrefills/{tokenId} {
+      allow read:   if true;                       // public — token is the secret
+      allow create: if isLO();                     // LOs generate prefill invites
+      allow update: if false;                      // immutable after creation
+      allow delete: if isAdmin();                  // admin cleanup only
+    }
+
+    // ── Lender Intake Submissions ───────────────────────────────────────────
+    // Completed intake forms. Created by anyone (AE with prefill URL, or LO
+    // filling the form directly) — unauthenticated access is intentional since
+    // the AE may not have a LoanBeacons account yet. Admin reviews and
+    // promotes to lenderProfiles (Phase 2). Immutable once submitted.
+    match /lenderIntakeSubmissions/{submissionId} {
+      allow read:   if isAdmin();                  // admin review only
+      allow create: if true;                       // public submit (AE may be unauthed)
+      allow update: if isAdmin();                  // admin can change status (pending_review → promoted/rejected)
+      allow delete: if isAdmin();
+    }
+
     // ── Lender Accounts ─────────────────────────────────────────────────────
     // Written exclusively by Cloud Functions (Admin SDK). Contains role,
     // lenderNmls, lenderProfileId. Client reads only their own doc.

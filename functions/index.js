@@ -938,3 +938,91 @@ exports.completeLenderRegistration = onCall(
     return { success: true, status: "primary", lenderProfileId: profileRef.id, lenderName };
   }
 );
+
+// ===========================================================================
+// FUNCTION 11: createLenderIntakePrefill
+// Writes lenderIntakePrefills token doc, returns invite URL.
+// LO calls this after partial-filling an intake form — AE receives email with
+// link to /lender-intake/{token} where form loads with LO's partial data
+// pre-populated. Minimum required fields: lenderName, lenderNMLS, aeName,
+// aeEmail. LO can skip everything else. Separate collection from lenderInvites
+// (which handles AE account creation); this is pure form state prefill.
+// SendGrid send gated behind SENDGRID_READY env flag.
+// ===========================================================================
+exports.createLenderIntakePrefill = onCall(
+  { secrets: [SENDGRID_API_KEY], timeoutSeconds: 30 },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Must be signed in to send an intake invite.");
+    }
+
+    const {
+      prefillData,        // Full formData snapshot from LenderIntakeForm
+      aeName,             // Primary AE name (for email greeting)
+      aeEmail,            // Primary AE email (SendGrid target)
+      loName,             // LO who initiated (for email attribution)
+      personalMessage,    // Optional note from LO to AE
+    } = request.data;
+
+    // ── Minimum required fields ──
+    if (!prefillData?.lenderName || !prefillData?.lenderNMLS) {
+      throw new HttpsError("invalid-argument", "lenderName and lenderNMLS are required in prefillData.");
+    }
+    if (!aeEmail || !aeName) {
+      throw new HttpsError("invalid-argument", "aeName and aeEmail are required.");
+    }
+
+    // NMLS format check (1–8 digits, matches client validator)
+    const cleanNmls = String(prefillData.lenderNMLS).trim();
+    if (!/^\d{1,8}$/.test(cleanNmls)) {
+      throw new HttpsError("invalid-argument", "NMLS must be 1–8 digits.");
+    }
+
+    // ── Generate token + 30-day expiry (matches createLenderInvite pattern) ──
+    const token = crypto.randomUUID();
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 30);
+
+    // ── Write prefill doc ──
+    await db.collection("lenderIntakePrefills").doc(token).set({
+      ...prefillData,
+      lenderNMLS: cleanNmls,
+      createdBy: request.auth.uid,
+      createdByName: loName || "",
+      aeEmail: aeEmail.trim().toLowerCase(),
+      aeName: aeName.trim(),
+      personalMessage: personalMessage || "",
+      status: "pending",
+      createdAt: FieldValue.serverTimestamp(),
+      expiresAt,
+    });
+
+    const inviteUrl = `https://loanbeacons.com/lender-intake/${token}`;
+
+    // ── SendGrid send — only active when SENDGRID_READY=true env var is set ──
+    const SENDGRID_READY = process.env.SENDGRID_READY === "true";
+    if (SENDGRID_READY) {
+      try {
+        sgMail.setApiKey(SENDGRID_API_KEY.value());
+        await sgMail.send({
+          to: aeEmail,
+          from: { email: "george@cvls.loans", name: "LoanBeacons™" },
+          subject: `${loName || "A broker"} started a LoanBeacons™ profile for ${prefillData.lenderName}`,
+          html: `
+            <p>Hi ${aeName},</p>
+            <p>${loName || "A broker"} on LoanBeacons™ has started a lender profile for <strong>${prefillData.lenderName}</strong> (NMLS #${cleanNmls}) and filled in what they know.</p>
+            <p>They're asking you to complete the remaining fields — guidelines, matrix, overlays — so their team can accurately match scenarios to your programs.</p>
+            ${personalMessage ? `<p style="padding:12px;background:#f8fafc;border-left:3px solid #16a34a;font-style:italic;">${personalMessage}</p>` : ""}
+            <p><a href="${inviteUrl}" style="display:inline-block;padding:12px 24px;background:#16a34a;color:#fff;text-decoration:none;border-radius:8px;font-weight:700;">Finish the profile →</a></p>
+            <p style="font-size:12px;color:#64748b;">Takes ~10–15 minutes. Your information pre-populates from what ${loName || "the broker"} entered. Link expires in 30 days.</p>
+            <p style="font-size:11px;color:#94a3b8;margin-top:24px;">LoanBeacons™ · Patent Pending · Questions? george@cvls.loans</p>
+          `,
+        });
+      } catch (emailErr) {
+        console.error("SendGrid send failed (non-blocking):", emailErr);
+      }
+    }
+
+    return { success: true, token, inviteUrl, sendgridActive: SENDGRID_READY };
+  }
+);
